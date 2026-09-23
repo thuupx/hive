@@ -177,3 +177,38 @@ bridges) while running agent turns:
 | **total** | **~92 MB** |
 
 CPU is about 0% when idle and peaks near 2% during a turn.
+
+
+## Agent authentication
+
+An agent may advertise auth methods, and Hive does not send one preemptively.
+
+That is deliberate, and it is the difference between one browser window and one
+per agent launch. Credentials are the agent's to keep: an agent that already has
+them is refused nothing, and sending the method anyway runs its whole flow again.
+An agent whose method opens a browser opened one every time it was started, even
+though the credentials it had just saved were sitting on disk.
+
+The protocol lets an agent refuse a session when it needs authentication, so Hive
+waits to be told:
+
+- An agent that has credentials is never sent through the flow.
+- An agent that does not gets authenticated once, and the session is retried.
+
+```toml
+[agents.devin]
+protocol = "acp"
+command = ["devin", "acp"]
+auth_method = ""            # empty uses the first method the agent offers
+api_key_env = "DEVIN_API_KEY"   # for a method that authenticates with a key
+```
+
+A method that needs a browser is yours to complete. When one is tried and fails,
+the error names the method, so it is clear which flow the agent wanted.
+
+## What an agent launch costs
+
+An agent process lives as long as the plugin that started it, and it ends with
+it. A plugin that exits without ending its agent leaves it running: it holds a
+session, its memory, and whatever authentication state it has, and nothing will
+ever collect it.
