@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -352,5 +353,46 @@ func TestEveryRenderedActionHasAnOperation(t *testing.T) {
 		if Actions[action] == "" {
 			t.Errorf("action %q is rendered but maps to no operation", action)
 		}
+	}
+}
+
+// A click on a card Hive rendered carries an id Hive can look up.
+//
+// Found in a live conversation: three clicks reached Hive and every one was
+// refused, because the value the card carried had the request id's JSON quotes
+// still on it. The id that comes back has to be the id that was stored.
+func TestAClickCarriesAnIDHiveCanLookUp(t *testing.T) {
+	// The value is what the renderer puts on a button, from a clean request id.
+	value := `{"agentRequestId":"03b7dd82-eb1b-4362-bb6e-a269f0818cd3","approved":true}`
+
+	envelope := Parser{}.ParseInteraction(ActionPayload{
+		Type:     "block_actions",
+		ActionTS: "1700000000.000300",
+		Actions: []struct {
+			ActionID string `json:"action_id"`
+			Value    string `json:"value"`
+		}{{ActionID: "permission_allow", Value: value}},
+	})
+
+	if envelope.Interaction == nil {
+		t.Fatal("the click produced no interaction")
+	}
+	if envelope.Interaction.Method != v1.MethodPermissionRespond {
+		t.Fatalf("method = %q, want permission.respond", envelope.Interaction.Method)
+	}
+
+	var decoded struct {
+		AgentRequestID string `json:"agentRequestId"`
+		Approved       bool   `json:"approved"`
+	}
+	if err := json.Unmarshal([]byte(envelope.Interaction.Value), &decoded); err != nil {
+		t.Fatalf("the value could not be read: %v", err)
+	}
+
+	if decoded.AgentRequestID != "03b7dd82-eb1b-4362-bb6e-a269f0818cd3" {
+		t.Fatalf("the id is %q, which is not the id that was stored", decoded.AgentRequestID)
+	}
+	if !decoded.Approved {
+		t.Fatal("Allow should be an approval")
 	}
 }
