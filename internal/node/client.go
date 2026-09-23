@@ -63,6 +63,15 @@ func New(opts Options) *Client {
 	}
 }
 
+// Call invokes a method on the coordinator over the current link.
+func (c *Client) Call(ctx context.Context, method string, params, result any) error {
+	peer := c.currentPeer()
+	if peer == nil {
+		return v1.Unavailable("node is not connected to the coordinator")
+	}
+	return peer.Call(ctx, method, params, result)
+}
+
 // ConnectionGeneration returns the current link's generation, or 0 when
 // disconnected.
 func (c *Client) ConnectionGeneration() int64 {

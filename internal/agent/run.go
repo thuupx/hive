@@ -30,10 +30,16 @@ const (
 // interrupted has no outgoing edge on purpose. Recovering an interrupted run
 // requires an explicit decision that creates a new execution generation, so
 // it goes through Recover rather than Transition.
+//
+// starting may go straight to completed. The coordinator's view is derived from
+// what the node reports, and a report of "running" can be coalesced away or lost
+// while the terminal report survives. Refusing a terminal report because
+// "running" was never observed would leave the run stuck in starting, which is
+// worse than accepting that it finished quickly.
 var transitions = map[State][]State{
 	StateCreated:     {StateQueued, StateStarting, StateCancelled, StateFailed},
 	StateQueued:      {StateStarting, StateCancelled, StateFailed},
-	StateStarting:    {StateRunning, StateFailed, StateCancelled, StateInterrupted},
+	StateStarting:    {StateRunning, StateCompleted, StateFailed, StateCancelled, StateInterrupted},
 	StateRunning:     {StateCompleted, StateFailed, StateCancelled, StateInterrupted},
 	StateCompleted:   nil,
 	StateCancelled:   nil,

@@ -67,7 +67,9 @@ func (p *Publisher) Run(ctx context.Context) error {
 	defer ticker.Stop()
 
 	for {
-		if _, err := p.Drain(ctx); err != nil && p.OnError != nil {
+		if _, err := p.Drain(ctx); err != nil && p.OnError != nil && ctx.Err() == nil {
+			// A cancelled context is an ordinary shutdown, not a delivery
+			// failure worth reporting.
 			p.OnError(err)
 		}
 		select {

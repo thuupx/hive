@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -40,6 +41,11 @@ type Config struct {
 	Security   SecurityConfig             `toml:"security"`
 	Agents     map[string]AgentConfig     `toml:"agents"`
 	Transports map[string]TransportConfig `toml:"transport"`
+
+	// DefaultAgent names the agent used when a session does not choose one.
+	// Empty falls back to the only configured agent, or the first in name
+	// order when several exist.
+	DefaultAgent string `toml:"default_agent"`
 }
 
 // ClusterConfig holds cluster role configuration.
@@ -48,6 +54,31 @@ type Config struct {
 // settings are intentionally absent.
 type ClusterConfig struct {
 	Role Role `toml:"role"`
+
+	// NodeID is the stable node identity. Empty uses the hostname.
+	NodeID string `toml:"node_id"`
+
+	// Listen is the coordinator's node link address, for example
+	// "127.0.0.1:0". Empty uses a loopback default on an ephemeral port.
+	Listen string `toml:"listen"`
+
+	// CoordinatorURL is the coordinator's node link URL, for example
+	// "wss://127.0.0.1:7433". A node uses it to connect.
+	CoordinatorURL string `toml:"coordinator_url"`
+
+	// SpawnNode makes a coordinator start a node child process. It defaults to
+	// true, which is the single-machine installation: one command runs the
+	// whole stack.
+	SpawnNode *bool `toml:"spawn_node"`
+
+	// LeaseSeconds is the node liveness claim. Empty uses the built-in
+	// default.
+	LeaseSeconds int `toml:"lease_seconds"`
+}
+
+// SpawnsNode reports whether a coordinator should start a node child process.
+func (c ClusterConfig) SpawnsNode() bool {
+	return c.SpawnNode == nil || *c.SpawnNode
 }
 
 // LogConfig holds logging configuration.
@@ -147,6 +178,16 @@ func (c Config) Validate() error {
 		return fmt.Errorf("cluster.role: unknown role %q", c.Cluster.Role)
 	}
 
+	if c.Cluster.LeaseSeconds < 0 {
+		return errors.New("cluster.lease_seconds: must not be negative")
+	}
+
+	// A node has nowhere to go without a coordinator, so fail before starting
+	// rather than reconnecting in a loop.
+	if c.Cluster.Role == RoleNode && c.Cluster.CoordinatorURL == "" {
+		return errors.New("cluster.coordinator_url: required when cluster.role is node")
+	}
+
 	switch c.Log.Format {
 	case "text", "json":
 	default:
@@ -190,6 +231,71 @@ func (c Config) Validate() error {
 	}
 
 	return nil
+}
+
+// EffectiveNodeID resolves the node identity, falling back to the hostname.
+func (c Config) EffectiveNodeID() (string, error) {
+	if c.Cluster.NodeID != "" {
+		return c.Cluster.NodeID, nil
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("resolve hostname for the node id: %w", err)
+	}
+	return host, nil
+}
+
+// EffectiveRole resolves "auto" into a concrete role.
+//
+// A node needs a coordinator to connect to, so the presence of a coordinator
+// URL decides: with one, this process is a node; without one, it is the
+// coordinator.
+func (c Config) EffectiveRole() Role {
+	if c.Cluster.Role != RoleAuto {
+		return c.Cluster.Role
+	}
+	if c.Cluster.CoordinatorURL != "" {
+		return RoleNode
+	}
+	return RoleCoordinator
+}
+
+// EffectiveDefaultAgent resolves which agent a session uses by default.
+func (c Config) EffectiveDefaultAgent() (string, error) {
+	if c.DefaultAgent != "" {
+		if _, ok := c.Agents[c.DefaultAgent]; !ok {
+			return "", fmt.Errorf("default_agent: %q is not a configured agent", c.DefaultAgent)
+		}
+		return c.DefaultAgent, nil
+	}
+
+	switch len(c.Agents) {
+	case 0:
+		return "", errors.New("no agents are configured")
+	case 1:
+		for name := range c.Agents {
+			return name, nil
+		}
+	}
+
+	// Several agents and no explicit default: pick deterministically rather
+	// than by map iteration order.
+	names := make([]string, 0, len(c.Agents))
+	for name := range c.Agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names[0], nil
+}
+
+// AgentNames returns the configured agent names in a stable order.
+func (c Config) AgentNames() []string {
+	names := make([]string, 0, len(c.Agents))
+	for name := range c.Agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // EffectiveDataDir resolves the data directory, creating nothing.

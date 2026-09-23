@@ -104,7 +104,14 @@ type Bridge struct {
 
 type run struct {
 	agentRunID string
-	sessionID  string
+
+	// sessionID is the ACP session id. It belongs to this agent runtime and is
+	// never interchangeable with another runtime's session id.
+	sessionID string
+
+	// hiveSessionID is the Hive session the run belongs to, used to attribute
+	// published events.
+	hiveSessionID string
 }
 
 // pendingPermission keeps what is needed to answer an ACP permission request in
@@ -163,7 +170,11 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 	}
 
 	b.mu.Lock()
-	b.runs[req.AgentRunID] = &run{agentRunID: req.AgentRunID, sessionID: sessionID}
+	b.runs[req.AgentRunID] = &run{
+		agentRunID:    req.AgentRunID,
+		sessionID:     sessionID,
+		hiveSessionID: req.SessionID,
+	}
 	b.mu.Unlock()
 
 	_ = b.report(ctx, req.AgentRunID, req.Generation, "starting", sessionID, "")
@@ -293,12 +304,15 @@ func (b *Bridge) pump(client *acp.Client) {
 }
 
 func (b *Bridge) publish(update acp.Update) {
-	agentRunID := b.runIDFor(update.SessionID)
-	if agentRunID == "" {
+	r := b.runFor(update.SessionID)
+	if r == nil {
 		return
 	}
+	// No event id is set here on purpose: the node owns the buffer and the
+	// durable upload, so it assigns a stable id that survives a replay.
 	_ = b.host.Call(context.Background(), v1.MethodEventPublish, v1.PublishEventParams{
-		AgentRunID: agentRunID,
+		AgentRunID: r.agentRunID,
+		SessionID:  r.hiveSessionID,
 		Type:       "agent.raw",
 		Protocol:   "acp",
 		Method:     update.Method,
@@ -307,8 +321,8 @@ func (b *Bridge) publish(update acp.Update) {
 }
 
 func (b *Bridge) forwardPermission(perm acp.PermissionRequest) {
-	agentRunID := b.runIDFor(perm.SessionID)
-	if agentRunID == "" {
+	r := b.runFor(perm.SessionID)
+	if r == nil {
 		return
 	}
 
@@ -326,7 +340,8 @@ func (b *Bridge) forwardPermission(perm acp.PermissionRequest) {
 
 	ctx := context.Background()
 	err = b.host.Call(ctx, v1.MethodPermissionRequest, v1.PermissionRequestParams{
-		AgentRunID:     agentRunID,
+		AgentRunID:     r.agentRunID,
+		SessionID:      r.hiveSessionID,
 		AgentRequestID: string(perm.RequestID),
 		Payload:        payload,
 	}, nil)
@@ -337,15 +352,15 @@ func (b *Bridge) forwardPermission(perm acp.PermissionRequest) {
 	}
 }
 
-func (b *Bridge) runIDFor(sessionID string) string {
+func (b *Bridge) runFor(sessionID string) *run {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for id, r := range b.runs {
+	for _, r := range b.runs {
 		if r.sessionID == sessionID {
-			return id
+			return r
 		}
 	}
-	return ""
+	return nil
 }
 
 func (b *Bridge) report(ctx context.Context, agentRunID string, generation int64, state, runtimeSessionID, reason string) error {

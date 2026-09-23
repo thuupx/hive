@@ -102,6 +102,23 @@ func (s *Store) EventCount(ctx context.Context, sessionID string) (int64, error)
 	return n, nil
 }
 
+// HasEvent reports whether an event id is already durable.
+//
+// This is what makes buffered-event replay idempotent: a node asks about the
+// events it still holds, and the coordinator requests only the ones it does not
+// have.
+func (s *Store) HasEvent(ctx context.Context, eventID string) (bool, error) {
+	var found int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM events WHERE id = ?`, eventID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("storage: check event %s: %w", eventID, err)
+	}
+	return true, nil
+}
+
 // PendingOutbox returns durable events that have not been published to the
 // event bus yet, in stream order.
 func (s *Store) PendingOutbox(ctx context.Context, limit int) ([]*event.Event, error) {

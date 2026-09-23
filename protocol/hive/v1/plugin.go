@@ -185,6 +185,11 @@ type ExecutionReportParams struct {
 // Protocol-specific data travels in Payload unmodified, so a new agent protocol
 // feature does not require a new core event type.
 type PublishEventParams struct {
+	// EventID is the producer's stable event identity. The coordinator
+	// persists an event at most once by id, so a redelivery is deduplicated
+	// rather than duplicated.
+	EventID string `json:"eventId"`
+
 	AgentRunID string          `json:"agentRunId"`
 	SessionID  string          `json:"sessionId"`
 	Type       string          `json:"type"`

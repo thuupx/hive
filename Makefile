@@ -1,12 +1,17 @@
 GO ?= go
-BIN := bin/hive
+BINDIR := bin
+HIVE := $(BINDIR)/hive
+PLUGIN_ACP := $(BINDIR)/hive-plugin-acp
 
 .PHONY: all build test vet fmt tidy run clean ci
 
 all: build
 
+# The plugin binary ships next to hive: the daemon resolves it from the
+# executable directory unless HIVE_PLUGIN_DIR overrides it.
 build:
-	$(GO) build -o $(BIN) ./cmd/hive
+	$(GO) build -o $(HIVE) ./cmd/hive
+	$(GO) build -o $(PLUGIN_ACP) ./cmd/hive-plugin-acp
 
 test:
 	$(GO) test ./...
@@ -21,9 +26,9 @@ tidy:
 	$(GO) mod tidy
 
 run: build
-	$(BIN) serve
+	$(HIVE) serve
 
 clean:
-	rm -rf bin
+	rm -rf $(BINDIR)
 
 ci: vet test build

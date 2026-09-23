@@ -12,7 +12,10 @@ import (
 )
 
 //go:embed migrations/*.sql
-var migrationFS embed.FS
+var coordinatorMigrations embed.FS
+
+//go:embed nodemigrations/*.sql
+var nodeMigrations embed.FS
 
 // migration is a single forward-only schema change.
 type migration struct {
@@ -21,11 +24,23 @@ type migration struct {
 	body    string
 }
 
-// Migrate applies every pending migration in version order.
+// Migrate applies every pending coordinator migration in version order.
 //
 // Migrations are forward-only: there are no down migrations. Applying is
 // idempotent, so Migrate may run on every start.
 func (s *Store) Migrate(ctx context.Context) error {
+	return s.migrate(ctx, coordinatorMigrations, "migrations")
+}
+
+// migrateNode applies every pending node migration in version order.
+//
+// A node database is local execution state and an event buffer. It is not an
+// independent authoritative copy of sessions, permissions, or handoff state.
+func (s *Store) migrateNode(ctx context.Context) error {
+	return s.migrate(ctx, nodeMigrations, "nodemigrations")
+}
+
+func (s *Store) migrate(ctx context.Context, fsys fs.FS, dir string) error {
 	if _, err := s.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    INTEGER PRIMARY KEY,
@@ -40,7 +55,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 
-	migrations, err := loadMigrations()
+	migrations, err := loadMigrationsFrom(fsys, dir)
 	if err != nil {
 		return err
 	}
@@ -132,9 +147,13 @@ func (s *Store) applyMigration(ctx context.Context, m migration) error {
 }
 
 func loadMigrations() ([]migration, error) {
-	entries, err := fs.ReadDir(migrationFS, "migrations")
+	return loadMigrationsFrom(coordinatorMigrations, "migrations")
+}
+
+func loadMigrationsFrom(fsys fs.FS, dir string) ([]migration, error) {
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		return nil, fmt.Errorf("storage: read migrations: %w", err)
+		return nil, fmt.Errorf("storage: read %s: %w", dir, err)
 	}
 
 	var out []migration
@@ -146,7 +165,7 @@ func loadMigrations() ([]migration, error) {
 		if err != nil {
 			return nil, err
 		}
-		body, err := migrationFS.ReadFile(path.Join("migrations", e.Name()))
+		body, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("storage: read %s: %w", e.Name(), err)
 		}
@@ -156,7 +175,7 @@ func loadMigrations() ([]migration, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
 	for i, m := range out {
 		if m.version != i+1 {
-			return nil, fmt.Errorf("storage: migrations must be numbered contiguously from 1; got %d at position %d", m.version, i+1)
+			return nil, fmt.Errorf("storage: %s migrations must be numbered contiguously from 1; got %d at position %d", dir, m.version, i+1)
 		}
 	}
 	return out, nil

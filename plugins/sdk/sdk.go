@@ -166,25 +166,36 @@ func (h *Host) Ack(ctx context.Context, subscriptionID string, sequence int64) e
 }
 
 // Run serves until ctx is cancelled or the connection ends.
+//
+// A connection that ends because the core went away is an ordinary shutdown, so
+// it returns nil rather than an error.
 func (h *Host) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-h.peer.Done():
-			return h.peer.Err()
+			return closedOr(h.peer.Err())
 		case req, ok := <-h.peer.Requests():
 			if !ok {
-				return h.peer.Err()
+				return closedOr(h.peer.Err())
 			}
 			h.handleRequest(ctx, req)
 		case note, ok := <-h.peer.Notifications():
 			if !ok {
-				return h.peer.Err()
+				return closedOr(h.peer.Err())
 			}
 			h.handleNotification(note)
 		}
 	}
+}
+
+// closedOr maps a closed connection to a nil error.
+func closedOr(err error) error {
+	if v1.IsClosed(err) {
+		return nil
+	}
+	return err
 }
 
 // Close ends the connection.

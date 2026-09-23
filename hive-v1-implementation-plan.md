@@ -478,17 +478,34 @@ Deliberately not in M5, stated so it is not mistaken for done:
       interrupted and starts **no** replacement execution
 - [x] Stale connection generation rejected; a new authenticated connection
       invalidates the previous one
-- [ ] `hive` role selection and spawning the node child process
-- [ ] Node-local database for the event buffer
+- [x] `hive` role selection (`coordinator`, `node`, `auto`) and spawning the
+      node child process
+- [x] Node-local database for execution evidence and the event buffer
+- [x] Node executor wired to the plugin supervisor, so a node runs an ACP
+      agent
+- [x] Coordinator composition: event ingest, permission ingest, execution
+      reports, lease sweep
 - [x] Tests: reconnect creates no duplicate execution, lease expiry reports
       without replacing, stale generation rejected, sync requests only
-      missing events
+      missing events, full stack end to end
 
 **Exit criteria:** §42 "Reconnect safety" and "Execution fencing" have
 passing tests; killing the node child does not kill the coordinator.
 
-Status: the node link is met; the daemon wiring is not. `make ci` is green
-with 176 passing tests; the suite is clean under `-race`.
+Status: met. `make ci` is green with 175 passing tests; the suite is clean
+under `-race`. One `hive serve` brings up the coordinator, a node child
+process, and the agent plugin, and they connect and synchronize.
+
+Verified by running it, not only by tests:
+
+```text
+coordinator listening url=wss://127.0.0.1:58848/node
+node child started pid=80419
+node starting node=... agent=claude plugins=1
+plugin ready plugin=claude type=agent instance=claude#1 generation=1
+node connected node=... generation=1
+node synchronized generation=1 active=0 buffered=0
+```
 
 Implementation notes:
 
@@ -501,25 +518,37 @@ Implementation notes:
 - A new authenticated connection increments the connection generation and
   invalidates the previous one, so a delayed packet from the old link cannot be
   treated as a current node link. The superseded `Node` refuses commands.
-- `WatchLeases` reports every expired execution on every tick rather than
-  deduplicating internally, because the domain transition it drives is already
-  idempotent. The callback must not start work.
-- Reconnect reconciliation is idempotent by construction: it only reports what
-  the coordinator is missing, and replaying a buffered event is deduplicated by
-  `event_id` in the store.
-- The node's executor is an interface. Tests drive it with a fake, so the link
-  is verified independently of any particular agent runtime.
+- The node owns the event buffer and the durable upload, so it assigns the
+  stable event id that survives a replay. The id carries a per-process random
+  prefix: a bare counter would restart at 1 after a node restart and a new event
+  could be deduplicated as a duplicate of an old one.
+- An event is buffered durably **before** the upload is attempted, so a node
+  never loses an event merely because the coordinator is unreachable. A failed
+  upload is not an error for the agent; the buffer replays.
+- Permission requests are deliberately **not** buffered. A request that cannot
+  be relayed must fail closed rather than be answered from a stale local view.
+- Lease expiry classifies a run as interrupted and never starts a replacement.
+  `WatchLeases` reports every expired execution on every tick because the
+  transition it drives is already idempotent.
+- Composition lives in `internal/daemon`, not in `main`, so the whole stack is
+  testable in process.
+
+One domain rule changed while wiring this up, and it is worth recording:
+`starting` may now transition straight to `completed`. The coordinator's view is
+derived from what the node reports, and a "running" report can be coalesced away
+or lost while the terminal report survives. Refusing the terminal report would
+have left the run stuck in `starting`, which is worse than accepting that it
+finished quickly. The previous table was too strict and the end-to-end test
+caught it.
 
 Deliberately not in M6:
 
-- `hive` does not yet select a role or spawn a node child process, so the
-  one-command UX from §44 is not delivered. The node link works against a
-  listening coordinator.
-- The node event buffer is in memory, not in the node database. A node restart
-  therefore loses buffered events that were never uploaded. The durable buffer
-  belongs with the daemon lifecycle, together with role selection.
-- The node's executor is not yet wired to the plugin supervisor, so a node does
-  not yet run an ACP agent end to end. That composition is the next step.
+- Remote nodes and node enrollment. v1 runs the node on the same machine and
+  shares the locally generated certificate, so node identity enrollment,
+  revocation, and key rotation are not implemented. §18.2 requires the
+  documentation to say so.
+- Coordinator failover, and therefore any term or connection-generation fencing
+  beyond the node link's own generation.
 
 ### M7 — Control API and gateway
 

@@ -61,6 +61,28 @@ is an example of the internal form.
 - Replay decisions use `Store.PrunedThrough`, never `Store.EarliestSequence`:
   a fully pruned stream has no events left and would otherwise look empty.
 
+### Composition
+
+- `internal/daemon` is the composition root for the coordinator and the node.
+  Keep wiring there rather than in `main`, so the whole stack is testable in
+  process.
+- `cmd/hive serve` resolves the role from `cluster.role` (`auto` means "node if
+  a coordinator URL is configured, otherwise coordinator"). A coordinator starts
+  a node child process by default, which is the single-machine installation.
+- Plugin binaries ship next to the `hive` binary. `HIVE_PLUGIN_DIR` overrides
+  the lookup directory, which is what makes `go run` and tests workable.
+
+### Event ownership
+
+- The **node** owns the event buffer and the durable upload, so the node assigns
+  the stable event id that survives a replay. The id carries a per-process
+  random prefix: a bare counter would restart at 1 after a restart and a new
+  event could be deduplicated as a duplicate of an old one.
+- An event is buffered durably before the upload is attempted. A failed upload
+  is not an error for the agent.
+- Permission requests are never buffered: a request that cannot be relayed must
+  fail closed.
+
 ### Layering
 
 Domain packages own the entity types; storage is an adapter over them.

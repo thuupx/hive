@@ -3,10 +3,22 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 )
+
+// IsClosed reports whether err means the connection ended, rather than a
+// protocol-level failure.
+//
+// A caller that treats a closed connection as an ordinary shutdown uses this
+// instead of matching on io.EOF, which is an implementation detail of the
+// framing.
+func IsClosed(err error) bool {
+	return err == nil || errors.Is(err, ErrPeerClosed) || errors.Is(err, io.EOF)
+}
 
 // Peer correlates JSON-RPC requests and responses over a Stream.
 //

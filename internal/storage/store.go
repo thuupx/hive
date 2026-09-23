@@ -61,9 +61,35 @@ type Store struct {
 	writeMu sync.Mutex
 }
 
-// Open opens or creates the database at path, applies migrations, and
-// returns a ready store.
+// Open opens or creates the coordinator database at path, applies coordinator
+// migrations, and returns a ready store.
 func Open(ctx context.Context, path string) (*Store, error) {
+	s, err := openStore(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Migrate(ctx); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// OpenNode opens or creates the node database at path and applies node
+// migrations.
+func OpenNode(ctx context.Context, path string) (*Store, error) {
+	s, err := openStore(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.migrateNode(ctx); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func openStore(ctx context.Context, path string) (*Store, error) {
 	dsn := "file:" + path
 	base, err := openConnector(dsn)
 	if err != nil {
@@ -76,10 +102,6 @@ func Open(ctx context.Context, path string) (*Store, error) {
 
 	s := &Store{db: pool}
 	if err := s.enableWAL(ctx); err != nil {
-		pool.Close()
-		return nil, err
-	}
-	if err := s.Migrate(ctx); err != nil {
 		pool.Close()
 		return nil, err
 	}

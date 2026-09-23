@@ -99,6 +99,33 @@ func (s *Store) ListAgentRuns(ctx context.Context, sessionID string) ([]*agent.A
 	return out, nil
 }
 
+// ListAgentRunsByNode returns the runs assigned to a node, oldest first.
+func (s *Store) ListAgentRunsByNode(ctx context.Context, nodeID string) ([]*agent.AgentRun, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, session_id, agent_id, node_id, protocol, runtime_session_id,
+		       execution_generation, node_execution_id, state, started_at, ended_at
+		FROM agent_runs
+		WHERE node_id = ?
+		ORDER BY rowid`, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list agent runs for node %s: %w", nodeID, err)
+	}
+	defer rows.Close()
+
+	var out []*agent.AgentRun
+	for rows.Next() {
+		run, err := scanAgentRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("storage: scan agent run: %w", err)
+		}
+		out = append(out, run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: list agent runs for node %s: %w", nodeID, err)
+	}
+	return out, nil
+}
+
 func scanAgentRun(row scanner) (*agent.AgentRun, error) {
 	var (
 		run       agent.AgentRun
