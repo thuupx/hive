@@ -1,0 +1,10 @@
+/bin/
+*.test
+coverage.out
+
+# libSQL / SQLite databases (M1+)
+*.db
+*.db-shm
+*.db-wal
+
+.DS_Store
