@@ -18,6 +18,7 @@ import (
 const (
 	connectionsOpenURL = "https://slack.com/api/apps.connections.open"
 	postMessageURL     = "https://slack.com/api/chat.postMessage"
+	updateMessageURL   = "https://slack.com/api/chat.update"
 	addReactionURL     = "https://slack.com/api/reactions.add"
 )
 
@@ -32,6 +33,11 @@ type Client interface {
 
 	// PostMessage posts a message and returns its timestamp.
 	PostMessage(ctx context.Context, req PostMessageRequest) (string, error)
+
+	// UpdateMessage replaces the content of a message already posted.
+	//
+	// It is what keeps a tool call to one message instead of one per update.
+	UpdateMessage(ctx context.Context, req UpdateMessageRequest) error
 
 	// AddReaction adds a reaction to a message. It is best-effort: a failure must
 	// not fail the underlying Hive operation.
@@ -53,6 +59,13 @@ type PostMessageRequest struct {
 	Channel  string
 	ThreadTS string
 	Message  Message
+}
+
+// UpdateMessageRequest replaces a posted message.
+type UpdateMessageRequest struct {
+	Channel   string
+	Timestamp string
+	Message   Message
 }
 
 // ReactionRequest is a reaction to add.
@@ -234,6 +247,34 @@ func (c *SocketClient) PostMessage(ctx context.Context, req PostMessageRequest) 
 	return response.Timestamp, nil
 }
 
+// UpdateMessage edits a message through the Web API.
+func (c *SocketClient) UpdateMessage(ctx context.Context, req UpdateMessageRequest) error {
+	body := map[string]any{
+		"channel": req.Channel,
+		"ts":      req.Timestamp,
+		"text":    req.Message.Text,
+	}
+	if len(req.Message.Blocks) > 0 {
+		blocks, err := json.Marshal(req.Message.Blocks)
+		if err != nil {
+			return err
+		}
+		body["blocks"] = json.RawMessage(blocks)
+	}
+
+	var response struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := c.post(ctx, updateMessageURL, body, &response); err != nil {
+		return err
+	}
+	if !response.OK {
+		return fmt.Errorf("slack: chat.update failed: %s", response.Error)
+	}
+	return nil
+}
+
 // AddReaction adds a reaction through the Web API.
 func (c *SocketClient) AddReaction(ctx context.Context, req ReactionRequest) error {
 	body := map[string]any{
@@ -312,6 +353,8 @@ func (c *SocketClient) endpoint(fallback string) string {
 		return c.config.BaseURL + "/apps.connections.open"
 	case postMessageURL:
 		return c.config.BaseURL + "/chat.postMessage"
+	case updateMessageURL:
+		return c.config.BaseURL + "/chat.update"
 	case addReactionURL:
 		return c.config.BaseURL + "/reactions.add"
 	default:

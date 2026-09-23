@@ -140,12 +140,31 @@ type TransportConfig struct {
 	Acknowledgement AcknowledgementConfig `toml:"acknowledgement"`
 }
 
-// AcknowledgementConfig configures optional message acknowledgement. It is
+// AcknowledgementConfig configures message acknowledgement. It is
 // transport/plugin configuration, not Session or Command state.
+//
+// Acknowledgement means "Hive received this" and nothing more. It is not "the
+// agent started" and not "the agent finished", and its failure never fails the
+// operation.
 type AcknowledgementConfig struct {
-	Enabled  bool   `toml:"enabled"`
+	// Enabled is a pointer so that unset means on. A user should not have to
+	// discover that the received signal exists before it works.
+	Enabled  *bool  `toml:"enabled"`
 	Mode     string `toml:"mode"`
 	Reaction string `toml:"reaction"`
+}
+
+// EnabledOr reports whether acknowledgement is on. Unset means on.
+func (a AcknowledgementConfig) EnabledOr() bool {
+	return a.Enabled == nil || *a.Enabled
+}
+
+// ReactionOr is the reaction to add, with the default when unset.
+func (a AcknowledgementConfig) ReactionOr() string {
+	if a.Reaction == "" {
+		return "eyes"
+	}
+	return a.Reaction
 }
 
 // Default returns the built-in configuration.
@@ -275,7 +294,7 @@ func (c Config) Validate() error {
 	}
 
 	for name, t := range c.Transports {
-		if !t.Acknowledgement.Enabled {
+		if !t.Acknowledgement.EnabledOr() {
 			continue
 		}
 		switch t.Acknowledgement.Mode {

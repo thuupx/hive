@@ -100,6 +100,13 @@ type Bridge struct {
 	caps   *acp.Capabilities
 	runs   map[string]*run
 
+	// tools tracks which tool calls have been seen per run, so the first update is
+	// distinguishable from the rest.
+	tools map[string]map[string]bool
+
+	// toolTitles remembers a tool call title, because a later update may omit it.
+	toolTitles map[string]map[string]string
+
 	// pending permission requests, keyed by the agent request id
 	perms map[string]pendingPermission
 }
@@ -146,11 +153,13 @@ type Options struct {
 // New returns a bridge over a connected host.
 func New(host *sdk.Host, launcher Launcher, opts Options) *Bridge {
 	return &Bridge{
-		host:     host,
-		launcher: launcher,
-		opts:     opts,
-		runs:     make(map[string]*run),
-		perms:    make(map[string]pendingPermission),
+		host:       host,
+		launcher:   launcher,
+		opts:       opts,
+		runs:       make(map[string]*run),
+		perms:      make(map[string]pendingPermission),
+		tools:      make(map[string]map[string]bool),
+		toolTitles: make(map[string]map[string]string),
 	}
 }
 
@@ -424,6 +433,22 @@ func (b *Bridge) publish(update acp.Update) {
 		r.answer.WriteString(text)
 		b.mu.Unlock()
 	}
+
+	// Tool activity is the one thing normalized out of the stream, because it is
+	// what makes an agent observable.
+	if call, ok := b.toolCall(r, update.Payload); ok {
+		if payload, err := json.Marshal(call); err == nil {
+			_ = b.host.Call(context.Background(), v1.MethodEventPublish, v1.PublishEventParams{
+				AgentRunID: r.agentRunID,
+				SessionID:  r.hiveSessionID,
+				Type:       v1.EventTool,
+				Protocol:   "acp",
+				Method:     update.Method,
+				Payload:    payload,
+			}, nil)
+		}
+	}
+
 	// No event id is set here on purpose: the node owns the buffer and the
 	// durable upload, so it assigns a stable id that survives a replay.
 	_ = b.host.Call(context.Background(), v1.MethodEventPublish, v1.PublishEventParams{
@@ -434,6 +459,90 @@ func (b *Bridge) publish(update acp.Update) {
 		Method:     update.Method,
 		Payload:    update.Payload,
 	}, nil)
+}
+
+// toolCall normalizes a tool call or one of its updates.
+//
+// The first sighting of a tool call id is marked, so a client knows when to create
+// the message it will keep updating rather than posting one per update.
+func (b *Bridge) toolCall(r *run, payload json.RawMessage) (v1.ToolCall, bool) {
+	var update struct {
+		SessionUpdate string `json:"sessionUpdate"`
+		ToolCallID    string `json:"toolCallId"`
+		Title         string `json:"title"`
+		Kind          string `json:"kind"`
+		Status        string `json:"status"`
+	}
+
+	if err := json.Unmarshal(payload, &update); err != nil {
+		return v1.ToolCall{}, false
+	}
+	switch update.SessionUpdate {
+	case "tool_call", "tool_call_update":
+	default:
+		return v1.ToolCall{}, false
+	}
+	if update.ToolCallID == "" {
+		return v1.ToolCall{}, false
+	}
+
+	b.mu.Lock()
+	seen, ok := b.tools[r.agentRunID][update.ToolCallID]
+	if !ok {
+		if b.tools[r.agentRunID] == nil {
+			b.tools[r.agentRunID] = make(map[string]bool)
+		}
+		b.tools[r.agentRunID][update.ToolCallID] = true
+	}
+	if update.Title != "" {
+		// A later update may omit the title, so remember it.
+		if titles := b.toolTitles[r.agentRunID]; titles != nil {
+			if previous := titles[update.ToolCallID]; previous != "" {
+				update.Title = previous
+			}
+		}
+	}
+	if update.Title != "" {
+		if b.toolTitles[r.agentRunID] == nil {
+			b.toolTitles[r.agentRunID] = make(map[string]string)
+		}
+		b.toolTitles[r.agentRunID][update.ToolCallID] = update.Title
+	}
+	b.mu.Unlock()
+
+	status := update.Status
+	if status == "" {
+		status = v1.ToolPending
+	}
+
+	return v1.ToolCall{
+		ToolCallID: update.ToolCallID,
+		Title:      update.Title,
+		Kind:       update.Kind,
+		Status:     status,
+		Summary:    toolSummary(update.Title, update.Kind, status),
+		Started:    !seen,
+	}, true
+}
+
+// toolSummary renders one short line for a conversation.
+func toolSummary(title, kind, status string) string {
+	label := title
+	if label == "" {
+		label = kind
+	}
+	if label == "" {
+		label = "a tool"
+	}
+
+	switch status {
+	case v1.ToolCompleted:
+		return label + " — done"
+	case v1.ToolFailed:
+		return label + " — failed"
+	default:
+		return label
+	}
 }
 
 // publishAnswer surfaces the agent's answer to the turn that just ended.

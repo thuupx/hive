@@ -140,13 +140,13 @@ func renderTransports(b *strings.Builder, cfg Config) {
 	b.WriteString("#   SLACK_APP_TOKEN=xapp-...   Socket Mode connection\n")
 	b.WriteString("#   SLACK_BOT_TOKEN=xoxb-...   Web API calls\n")
 	b.WriteString("#\n")
-	b.WriteString("# Acknowledgement is optional presentation feedback. It means \"received\",\n")
-	b.WriteString("# never \"started\" or \"finished\", and its failure never fails the operation.\n")
+	b.WriteString("# Acknowledgement means \"received\", never \"started\" or \"finished\". It is\n")
+	b.WriteString("# on by default and its failure never fails the operation.\n")
 	b.WriteString("#\n")
 	b.WriteString("# [transport.slack.acknowledgement]\n")
-	fmt.Fprintf(b, "# enabled = %t\n", cfg.Transports["slack"].Acknowledgement.Enabled)
+	fmt.Fprintf(b, "# enabled = %t\n", cfg.Transports["slack"].Acknowledgement.EnabledOr())
 	fmt.Fprintf(b, "# mode = %q\n", "reaction")
-	fmt.Fprintf(b, "# reaction = %q\n", "eyes")
+	fmt.Fprintf(b, "# reaction = %q\n", cfg.Transports["slack"].Acknowledgement.ReactionOr())
 }
 
 func renderStrings(values []string) string {

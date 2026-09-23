@@ -54,6 +54,10 @@ type Plugin struct {
 
 	mu    sync.Mutex
 	bound map[string]string // conversation id to session id
+
+	// toolMessages maps a tool call to the message that represents it, so the
+	// call is one message instead of one per update.
+	toolMessages map[string]string
 }
 
 // New returns a Slack plugin over a connected host.
@@ -64,12 +68,13 @@ func New(host *sdk.Host, client Client, opts Options) *Plugin {
 	}
 
 	return &Plugin{
-		host:   host,
-		client: client,
-		parser: Parser{BotUserID: opts.BotUserID, RequireMention: opts.RequireMention},
-		opts:   opts,
-		log:    log,
-		bound:  make(map[string]string),
+		host:         host,
+		client:       client,
+		parser:       Parser{BotUserID: opts.BotUserID, RequireMention: opts.RequireMention},
+		opts:         opts,
+		log:          log,
+		bound:        make(map[string]string),
+		toolMessages: make(map[string]string),
 	}
 }
 
@@ -208,6 +213,10 @@ func (p *Plugin) renderEvents(ctx context.Context, subscriptionID string) {
 			rendered, ok := renderer.RenderEvent(delivered.Event)
 			if ok {
 				for _, conversation := range conversations {
+					if rendered.ToolCallID != "" {
+						p.renderTool(ctx, conversation, rendered)
+						continue
+					}
 					p.post(ctx, conversation, "", rendered.Message)
 				}
 			}
@@ -227,6 +236,45 @@ func (p *Plugin) renderEvents(ctx context.Context, subscriptionID string) {
 				}
 			}
 		}
+	}
+}
+
+// renderTool keeps one message per tool call.
+//
+// A tool call produces many updates. Posting each one would bury the conversation,
+// so the message is created once and then replaced, and any detail goes in its
+// thread.
+func (p *Plugin) renderTool(ctx context.Context, conversation string, rendered Rendered) {
+	p.mu.Lock()
+	timestamp := p.toolMessages[rendered.ToolCallID]
+	p.mu.Unlock()
+
+	if timestamp == "" {
+		ts, err := p.client.PostMessage(ctx, PostMessageRequest{
+			Channel: conversation,
+			Message: rendered.Message,
+		})
+		if err != nil {
+			p.log.Warn("could not post a tool call", "conversation", conversation, "error", err)
+			return
+		}
+
+		p.mu.Lock()
+		p.toolMessages[rendered.ToolCallID] = ts
+		p.mu.Unlock()
+		return
+	}
+
+	if err := p.client.UpdateMessage(ctx, UpdateMessageRequest{
+		Channel:   conversation,
+		Timestamp: timestamp,
+		Message:   rendered.Message,
+	}); err != nil {
+		p.log.Warn("could not update a tool call", "conversation", conversation, "error", err)
+	}
+
+	if rendered.Detail != "" {
+		p.post(ctx, conversation, timestamp, textMessage(rendered.Detail))
 	}
 }
 

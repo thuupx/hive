@@ -22,11 +22,17 @@ type Renderer struct {
 	SessionID string
 }
 
-// Rendered is a message to post.
+// Rendered is a message to post or replace.
 type Rendered struct {
 	Message Message
-	// ThreadKey groups related messages. Empty posts to the conversation.
-	ThreadKey string
+
+	// ToolCallID identifies a tool call whose message is kept and updated rather
+	// than reposted. Empty means an ordinary message.
+	ToolCallID string
+
+	// Detail is posted as a reply in the message's thread, so a long tool output
+	// does not bury the conversation.
+	Detail string
 }
 
 // RenderEvent renders one Hive event, reporting false when it has no Slack
@@ -61,6 +67,9 @@ func (r Renderer) RenderEvent(ev v1.Event) (Rendered, bool) {
 
 	case v1.EventStatus:
 		return Rendered{Message: textMessage(renderText(ev))}, true
+
+	case v1.EventTool:
+		return renderTool(ev)
 
 	default:
 		// agent.raw and anything unrecognized stay out of the conversation.
@@ -128,6 +137,44 @@ func RenderOutcome(outcome v1.TransportOutcome) Message {
 		// that without leaking the protocol into the conversation.
 		return textMessage("Done.")
 	}
+}
+
+// renderTool turns a normalized tool call into a card.
+//
+// One tool call produces many updates. The card is the one message a client keeps
+// and replaces, and the agent's output goes in its thread.
+func renderTool(ev v1.Event) (Rendered, bool) {
+	var call v1.ToolCall
+	if err := json.Unmarshal(ev.Payload, &call); err != nil || call.ToolCallID == "" {
+		return Rendered{}, false
+	}
+
+	icon := ":wrench:"
+	switch call.Status {
+	case v1.ToolCompleted:
+		icon = ":white_check_mark:"
+	case v1.ToolFailed:
+		icon = ":x:"
+	case v1.ToolInProgress:
+		icon = ":hourglass_flowing_sand:"
+	}
+
+	label := call.Title
+	if label == "" {
+		label = call.Kind
+	}
+	if label == "" {
+		label = "tool"
+	}
+
+	rendered := Rendered{
+		Message:    textMessage(fmt.Sprintf("%s %s", icon, label)),
+		ToolCallID: call.ToolCallID,
+	}
+	if call.Status == v1.ToolFailed && call.Summary != "" {
+		rendered.Detail = call.Summary
+	}
+	return rendered, true
 }
 
 func permissionMessage(ev v1.Event) Message {

@@ -442,11 +442,64 @@ func (c *Coordinator) handleEventPublish(ctx context.Context, call node.Call) (a
 		return nil, v1.Unavailable("event could not be persisted: %s", err.Error())
 	}
 
+	// A log that shows only lifecycle events is not enough to diagnose anything.
+	// The agent's activity is what a user needs to see, so it is logged as it
+	// becomes durable.
+	if inserted > 0 {
+		c.logAgentActivity(ev)
+	}
+
 	return map[string]any{
 		"accepted":  true,
 		"duplicate": inserted == 0,
 		"sequence":  ev.Sequence,
 	}, nil
+}
+
+// logAgentActivity reports what an agent is doing.
+//
+// The agent's own stream is preserved as raw data, which is right for storage and
+// wrong for a human reading a log. This is the readable form of the same activity.
+func (c *Coordinator) logAgentActivity(ev *event.Event) {
+	switch ev.Type {
+	case v1.EventTool:
+		var call v1.ToolCall
+		if err := json.Unmarshal(ev.Payload, &call); err != nil {
+			return
+		}
+
+		attrs := []any{"run", ev.RunID, "tool", call.ToolCallID, "status", call.Status}
+		if call.Kind != "" {
+			attrs = append(attrs, "kind", call.Kind)
+		}
+		if call.Title != "" {
+			attrs = append(attrs, "title", call.Title)
+		}
+		switch call.Status {
+		case v1.ToolFailed:
+			c.log.Warn("agent tool failed", attrs...)
+		default:
+			c.log.Info("agent tool", attrs...)
+		}
+
+	case v1.EventMessage:
+		var message struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(ev.Payload, &message); err != nil {
+			return
+		}
+		c.log.Info("agent answered", "run", ev.RunID, "chars", len(message.Text))
+
+	case v1.EventError:
+		c.log.Error("agent reported an error", "run", ev.RunID, "payload", string(ev.Payload))
+
+	case v1.EventPermissionRequested:
+		c.log.Info("agent asked for permission", "run", ev.RunID)
+
+	case v1.EventPermissionResponded:
+		c.log.Info("permission resolved", "run", ev.RunID)
+	}
 }
 
 // handlePermissionRequest records a pending permission request.
@@ -517,6 +570,16 @@ func (c *Coordinator) handleExecutionReport(ctx context.Context, call node.Call)
 	if err != nil {
 		return nil, apierr.From(err)
 	}
+
+	// A state change is the lifecycle half of the log. Together with the tool
+	// events it answers "what is the agent doing right now".
+	c.log.Info("execution reported",
+		"run", run.ID,
+		"agent", run.AgentID,
+		"state", string(run.State),
+		"generation", run.ExecutionGeneration,
+		"reason", params.Reason,
+	)
 
 	return map[string]any{"known": true, "state": string(run.State)}, nil
 }

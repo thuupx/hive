@@ -723,10 +723,10 @@ func transportPluginSpecs(cfg config.Config) []plugin.Spec {
 		for key, value := range transport.Options {
 			options[key] = value
 		}
-		if transport.Acknowledgement.Enabled {
-			options["acknowledgement"] = "true"
-			options["acknowledgement_reaction"] = transport.Acknowledgement.Reaction
-		}
+
+		// Acknowledgement is on unless it is turned off, so it is always passed.
+		options["acknowledgement"] = strconv.FormatBool(transport.Acknowledgement.EnabledOr())
+		options["acknowledgement_reaction"] = transport.Acknowledgement.ReactionOr()
 
 		command := []string{
 			filepath.Join(dir, "hive-plugin-"+name),

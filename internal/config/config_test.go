@@ -75,7 +75,7 @@ reaction = "eyes"
 	if got := cfg.Agents["remote-devin"].Endpoint; got != "wss://example.invalid/acp" {
 		t.Errorf("remote endpoint = %q", got)
 	}
-	if !cfg.Transports["slack"].Acknowledgement.Enabled {
+	if !cfg.Transports["slack"].Acknowledgement.EnabledOr() {
 		t.Error("slack acknowledgement should be enabled")
 	}
 	if len(cfg.Security.AllowedUsers) != 1 {
@@ -129,12 +129,28 @@ func TestValidateRejectsBadValues(t *testing.T) {
 }
 
 func TestAcknowledgementDisabledSkipsModeCheck(t *testing.T) {
-	cfg, err := config.Load(writeConfig(t, "[transport.slack.acknowledgement]\nmode = \"whatever\"\n"))
+	cfg, err := config.Load(writeConfig(t,
+		"[transport.slack.acknowledgement]\nenabled = false\nmode = \"whatever\"\n"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("disabled acknowledgement must not be validated: %v", err)
+	}
+}
+
+// Acknowledgement is on when the key is absent: a user should not have to discover
+// that the received signal exists before it works.
+func TestAcknowledgementDefaultsToOn(t *testing.T) {
+	cfg, err := config.Load(writeConfig(t, "[transport.slack]\nenabled = true\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Transports["slack"].Acknowledgement.EnabledOr() {
+		t.Error("acknowledgement should default to on")
+	}
+	if got := cfg.Transports["slack"].Acknowledgement.ReactionOr(); got != "eyes" {
+		t.Errorf("reaction = %q, want eyes", got)
 	}
 }
 
