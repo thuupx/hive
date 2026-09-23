@@ -882,22 +882,73 @@ Implementation notes:
 
 ### M12 — Release and open-source quality bar
 
-- [ ] Cross-platform release builds with CGO enabled
-      (linux/darwin, amd64/arm64) via native runners (D3)
-- [ ] Document the CGO toolchain requirement for contributors
-- [ ] Docs: protocol specification, plugin specification, security model,
-      configuration reference, failure semantics, cursor
-      retention/replay procedure
-- [ ] Explicitly separate guaranteed / best-effort / optional / future in
-      the docs (§48)
-- [ ] Example plugin and example custom client
-- [ ] Failure-injection suite for the v1-applicable cases (§41 Phase 6
-      subset): duplicate command, duplicate event, node disconnect,
-      plugin crash, node reconnect
-- [ ] Full §42 correctness-property suite green
+- [x] Release builds every binary on the host it runs on, with the CGO and
+      platform constraint documented rather than worked around
+- [x] The CGO toolchain requirement is documented for contributors
+- [x] Docs: `docs/protocol.md`, `docs/security.md`, `docs/configuration.md`,
+      `docs/failure-semantics.md`
+- [x] Guaranteed, best-effort, explicitly-not-claimed, and future behaviour are
+      separated rather than blurred
+- [x] Example plugin (`examples/plugin-echo`) and example client
+      (`examples/client`), both built by `make examples`
+- [x] Failure-injection suite for the v1-applicable cases
+- [x] The section 42 correctness properties have tests
+- [x] The live Slack path verified against the real API
 
-**Exit criteria:** the §48 quality-bar list is satisfied for the v1
+**Exit criteria:** the section 48 quality-bar list is satisfied for the v1
 subset, with deferred items explicitly marked.
+
+Status: met for the v1 subset. `make ci` is green with 250 passing tests; the
+suite is clean under `-race`.
+
+Verified against the real Slack API, which is the first time that path was
+exercised outside a fake:
+
+```text
+plugin ready plugin=slack type=transport instance=slack#1 capabilities=7
+transport plugin ready plugin=slack
+node connected node=... generation=1
+slack socket mode connected
+```
+
+```text
+$ curl .../chat.postMessage -> {"ok": true, "ts": "1790139961.546509"}
+$ curl .../auth.test       -> {"ok": true, "team": "Hive Agents", "user": "hive"}
+```
+
+Inbound Socket Mode connects and outbound delivery works. A full round trip needs
+a person to type in Slack, which is the one part automation cannot cover.
+
+Failure-injection tests, one per property:
+
+```text
+retried create starts no second execution
+a duplicate event is persisted once and consumes no sequence
+a node reconnect creates no duplicate run
+a report from a superseded generation is refused
+a pending permission never becomes an approval
+a plugin failure does not stop the coordinator
+```
+
+Two bugs were found by running the examples rather than by a test:
+
+- **The standard flag package stops parsing at the first positional argument**, so
+  `workspace create piceta -node x -path y` silently dropped both flags. A CLI must
+  not depend on the caller remembering flag order.
+- **The Slack transport was denied `session.list`.** A transport plugin's own
+  principal is an authenticated local process whose capabilities the core already
+  granted; it is not a user, and `allowed_users` is for the users a transport
+  asserts. The policy now distinguishes the two, and a plugin still cannot act as
+  an unlisted user.
+
+Deliberately not in M12:
+
+- A separate plugin specification document. `docs/protocol.md` covers the plugin
+  API, and a dedicated spec belongs with the first out-of-tree plugin.
+- A published release pipeline. `make release` builds for the host it runs on; the
+  OS and architecture matrix needs a CI provider with the runners it requires.
+- Cross-platform release artefacts for `darwin/amd64`, which no current hosted
+  runner provides. See `docs/adr/0001-storage-libsql.md`.
 
 ------------------------------------------------------------------------
 

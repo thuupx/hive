@@ -83,6 +83,12 @@ is an example of the internal form.
 - Permission requests are never buffered: a request that cannot be relayed must
   fail closed.
 
+### CLI
+
+- The standard flag package stops parsing at the first positional argument, so a
+  subcommand must call `parseArgsAndFlags`, not `flag.FlagSet.Parse`. A CLI must
+  not depend on the caller remembering flag order.
+
 ### Errors
 
 - Storage and domain errors are Go errors, not protocol errors. Translate them

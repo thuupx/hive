@@ -8,7 +8,7 @@ import (
 )
 
 func TestPolicyAllowsOwnerAndConfiguredUsers(t *testing.T) {
-	policy := NewPolicy([]string{"slack:U123"})
+	policy := NewPolicy([]string{"slack:U123"}, nil)
 
 	if err := policy.Authorize(OwnerPrincipal, v1.MethodSessionCreate); err != nil {
 		t.Errorf("the owner must be allowed: %v", err)
@@ -20,7 +20,7 @@ func TestPolicyAllowsOwnerAndConfiguredUsers(t *testing.T) {
 
 // Unknown access is denied by default.
 func TestPolicyDeniesUnknownAndEmptyPrincipals(t *testing.T) {
-	policy := NewPolicy([]string{"slack:U123"})
+	policy := NewPolicy([]string{"slack:U123"}, nil)
 
 	for _, principal := range []Principal{"", "telegram:1", "slack:U999"} {
 		if err := policy.Authorize(principal, v1.MethodSessionCreate); err == nil {
@@ -93,8 +93,23 @@ func TestConnectionFallsBackWhenNothingIsAsserted(t *testing.T) {
 	}
 }
 
+// A plugin is an authenticated local process whose capabilities the core already
+// granted, so it may act as itself.
+func TestPolicyAllowsTrustedPlugins(t *testing.T) {
+	policy := NewPolicy([]string{"slack:U123"}, []string{"slack"})
+
+	if err := policy.Authorize("slack", v1.MethodSessionList); err != nil {
+		t.Errorf("a trusted plugin must be allowed to act as itself: %v", err)
+	}
+
+	// It is not a user: asserting an unlisted user principal is still denied.
+	if err := policy.Authorize("slack:U999", v1.MethodSessionList); err == nil {
+		t.Error("a plugin must not be able to act as an unlisted user")
+	}
+}
+
 func TestAuthorizationErrorsAreProtocolErrors(t *testing.T) {
-	policy := NewPolicy(nil)
+	policy := NewPolicy(nil, nil)
 
 	err := policy.Authorize("stranger", v1.MethodSessionCreate)
 	if err == nil {

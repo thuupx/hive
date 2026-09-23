@@ -19,23 +19,37 @@ const OwnerPrincipal Principal = "owner"
 
 // Policy is the authorization policy.
 //
-// Unknown access is denied by default: a principal that is neither the owner nor
-// explicitly allowed cannot act.
+// Unknown access is denied by default: a principal that is neither the owner, nor
+// explicitly allowed, nor a trusted plugin cannot act.
 type Policy struct {
 	// Owner is the principal that owns this installation.
 	Owner Principal
 
-	// AllowedUsers are additional principals permitted to act.
+	// AllowedUsers are additional *user* principals permitted to act. A transport
+	// asserts these, so each one has to be named explicitly.
 	AllowedUsers map[string]bool
+
+	// Plugins are trusted plugin identities.
+	//
+	// A plugin is an authenticated local process whose capabilities the core
+	// already granted, so it may act as itself. It is not a user: it still cannot
+	// assert a user principal that is not allowed.
+	Plugins map[string]bool
 }
 
-// NewPolicy builds a policy from the configured allow list.
-func NewPolicy(allowedUsers []string) Policy {
+// NewPolicy builds a policy from the configured allow list and plugin identities.
+func NewPolicy(allowedUsers, plugins []string) Policy {
 	allowed := make(map[string]bool, len(allowedUsers))
 	for _, user := range allowedUsers {
 		allowed[user] = true
 	}
-	return Policy{Owner: OwnerPrincipal, AllowedUsers: allowed}
+
+	trusted := make(map[string]bool, len(plugins))
+	for _, plugin := range plugins {
+		trusted[plugin] = true
+	}
+
+	return Policy{Owner: OwnerPrincipal, AllowedUsers: allowed, Plugins: trusted}
 }
 
 // Authorize reports whether principal may invoke a method.
@@ -46,6 +60,8 @@ func (p Policy) Authorize(principal Principal, method string) error {
 	case principal == p.Owner:
 		return nil
 	case p.AllowedUsers[string(principal)]:
+		return nil
+	case p.Plugins[string(principal)]:
 		return nil
 	default:
 		return v1.Unauthorized("principal %s is not allowed to invoke %s", principal, method)

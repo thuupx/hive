@@ -31,8 +31,11 @@ type Options struct {
 	// DefaultAgent is used when a request does not name one.
 	DefaultAgent string
 
-	// AllowedUsers is the configured allow list of additional principals.
+	// AllowedUsers is the configured allow list of additional user principals.
 	AllowedUsers []string
+
+	// Plugins are the trusted plugin identities this coordinator runs.
+	Plugins []string
 }
 
 // Service implements the Control API operations.
@@ -63,7 +66,7 @@ func New(opts Options) (*Service, error) {
 		store:        opts.Store,
 		nodes:        opts.Nodes,
 		log:          log,
-		policy:       NewPolicy(opts.AllowedUsers),
+		policy:       NewPolicy(opts.AllowedUsers, opts.Plugins),
 		agents:       opts.Agents,
 		defaultAgent: opts.DefaultAgent,
 	}, nil

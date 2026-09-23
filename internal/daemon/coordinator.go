@@ -120,6 +120,7 @@ func NewCoordinator(opts CoordinatorOptions) (*Coordinator, error) {
 		Agents:       opts.Agents,
 		DefaultAgent: opts.DefaultAgent,
 		AllowedUsers: opts.AllowedUsers,
+		Plugins:      pluginIDs(opts.TransportPlugins),
 	})
 	if err != nil {
 		return nil, err
@@ -574,6 +575,15 @@ func (c *Coordinator) onLeaseExpired(nodeID string, ref v1.ExecutionRef) {
 
 	c.log.Warn("execution lease expired; run is interrupted",
 		"node", nodeID, "run", ref.AgentRunID, "generation", ref.Generation)
+}
+
+// pluginIDs lists the plugin identities a coordinator runs.
+func pluginIDs(specs []plugin.Spec) []string {
+	out := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, spec.ID)
+	}
+	return out
 }
 
 // bindingCursor advances durable transport binding cursors.

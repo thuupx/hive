@@ -51,7 +51,7 @@ func sessionCreate(f flags, args []string) error {
 	agentID := fs.String("agent", "", "agent to run (default: the configured default agent)")
 	workspace := fs.String("workspace", "", "workspace the run works in")
 	commandID := fs.String("command-id", "", "idempotency key (default: a fresh one)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -84,7 +84,7 @@ func sessionCreate(f flags, args []string) error {
 func sessionList(f flags, args []string) error {
 	fs := flag.NewFlagSet("session list", flag.ContinueOnError)
 	limit := fs.Int("limit", 0, "maximum sessions to show")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -115,7 +115,7 @@ func sessionList(f flags, args []string) error {
 
 func sessionStatus(f flags, args []string) error {
 	fs := flag.NewFlagSet("session status", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -143,7 +143,7 @@ func sessionPrompt(f flags, args []string) error {
 	fs := flag.NewFlagSet("session prompt", flag.ContinueOnError)
 	runID := fs.String("run", "", "target a specific AgentRun")
 	commandID := fs.String("command-id", "", "idempotency key (default: a fresh one)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() < 2 {
@@ -184,7 +184,7 @@ func sessionPrompt(f flags, args []string) error {
 func sessionCancel(f flags, args []string) error {
 	fs := flag.NewFlagSet("session cancel", flag.ContinueOnError)
 	runID := fs.String("run", "", "cancel a specific AgentRun")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -217,7 +217,7 @@ func sessionHandoff(f flags, args []string) error {
 	summary := fs.String("summary", "", "optional source-agent summary")
 	workspace := fs.String("workspace", "", "workspace the target works in")
 	commandID := fs.String("command-id", "", "idempotency key (default: a fresh one)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {
@@ -258,7 +258,7 @@ func sessionEvents(f flags, args []string) error {
 	from := fs.Int64("from", 0, "resume after this sequence")
 	limit := fs.Int("limit", 50, "maximum events to show")
 	asJSON := fs.Bool("json", false, "print raw events")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -377,7 +377,7 @@ func commandCommand(f flags, args []string) error {
 	}
 
 	fs := flag.NewFlagSet("command get", flag.ContinueOnError)
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := parseArgsAndFlags(fs, args[1:]); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -416,7 +416,7 @@ func commandCommand(f flags, args []string) error {
 func tuiCommand(f flags, args []string) error {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	interval := fs.Duration("interval", 0, "refresh interval (default: render once)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -469,6 +469,47 @@ func loadConfig(f flags) (config.Config, error) {
 	return cfg, nil
 }
 
+// reorderFlags moves flag arguments before positional ones.
+//
+// The standard flag package stops parsing at the first positional argument, so
+// `workspace create piceta -node x` would silently drop `-node`. A caller should
+// not have to remember that.
+func reorderFlags(fs *flag.FlagSet, args []string) []string {
+	var flags, positional []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positional = append(positional, arg)
+			continue
+		}
+
+		flags = append(flags, arg)
+		if strings.Contains(arg, "=") {
+			continue
+		}
+
+		defined := fs.Lookup(strings.TrimLeft(arg, "-"))
+		if defined == nil {
+			continue
+		}
+		if _, isBool := defined.Value.(interface{ IsBoolFlag() bool }); isBool {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+
+	return append(flags, positional...)
+}
+
+// parseArgsAndFlags parses a subcommand's arguments regardless of flag order.
+func parseArgsAndFlags(fs *flag.FlagSet, args []string) error {
+	return fs.Parse(reorderFlags(fs, args))
+}
+
 // commandIDOr returns an explicit command id or a fresh one.
 //
 // A fresh id means "this is a new logical operation". Passing an explicit id is
@@ -519,7 +560,7 @@ func workspaceCreate(f flags, args []string) error {
 	nodeID := fs.String("node", "", "node the location is on")
 	path := fs.String("path", "", "path the workspace lives at on that node")
 	commandID := fs.String("command-id", "", "idempotency key (default: a fresh one)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -559,7 +600,7 @@ func workspaceCreate(f flags, args []string) error {
 
 func workspaceList(f flags, args []string) error {
 	fs := flag.NewFlagSet("workspace list", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
 

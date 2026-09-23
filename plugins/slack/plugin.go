@@ -101,6 +101,7 @@ func (p *Plugin) serveInbound(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	p.log.Info("slack socket mode connected")
 
 	for {
 		select {
