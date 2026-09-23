@@ -279,10 +279,16 @@ func encodeValue(ev v1.Event, approved bool) string {
 	return string(value)
 }
 
+// textMessage renders text a user reads.
+//
+// The text is converted to mrkdwn and split across as many blocks as it needs:
+// Slack refuses a message whose section is over its limit, and refuses the whole
+// message, so a long answer would otherwise never arrive at all.
 func textMessage(text string) Message {
+	converted := mrkdwn(text)
 	return Message{
-		Text:   text,
-		Blocks: []Block{{Type: "section", Text: &TextObject{Type: "mrkdwn", Text: text}}},
+		Text:   fallbackText(converted),
+		Blocks: blocksFor(converted),
 	}
 }
 

@@ -254,13 +254,27 @@ func (p *Plugin) serveInbound(ctx context.Context) error {
 func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	d, ok := p.parse(inbound)
 	if !ok {
+		// Not addressed to Hive, or not something a user typed. Saying so at debug
+		// level is what makes "I typed something and nothing happened" answerable.
+		p.log.Debug("ignoring a delivery", "type", inbound.Type)
 		return
 	}
+
+	// Every delivery that reaches Hive is logged before it is handled, so a
+	// delivery that produces nothing is still visible. Without this the case a
+	// user complains about — no answer at all — leaves no trace.
+	p.log.Info("delivery received",
+		"conversation", d.conversationID,
+		"kind", string(d.envelope.Kind),
+		"command", commandName(d.envelope),
+		"threaded", d.thread != "",
+	)
 
 	// Slack describes one message with both an app_mention and a message event
 	// when it mentions the bot, so the same delivery arrives twice. Hive would
 	// deduplicate the command, but the user would see two acknowledgements.
 	if p.alreadyHandled(d.envelope.SourceID) {
+		p.log.Info("ignoring a repeat delivery", "source", d.envelope.SourceID)
 		return
 	}
 
@@ -293,7 +307,31 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	if outcome.RunID != "" {
 		p.rememberThread(outcome.RunID, d.thread)
 	}
+	// The outcome is logged whatever it is, so a refused command is as visible as
+	// a successful one.
+	if outcome.Error != nil {
+		p.log.Warn("the delivery was refused",
+			"conversation", d.conversationID,
+			"method", outcome.Method,
+			"error", outcome.Error.Message,
+		)
+	} else {
+		p.log.Info("delivery handled",
+			"conversation", d.conversationID,
+			"method", outcome.Method,
+			"session", outcome.SessionID,
+		)
+	}
+
 	p.post(ctx, d.conversationID, d.thread, RenderOutcome(outcome))
+}
+
+// commandName is the command a delivery carried, if it carried one.
+func commandName(env v1.Envelope) string {
+	if env.Command == nil {
+		return ""
+	}
+	return env.Command.Name
 }
 
 // fetchAttachments reads the files a user sent.

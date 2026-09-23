@@ -71,6 +71,8 @@ Commands:
   agent list                 list configured agents
   node list                  list nodes
   command get <id>           show a command status resource
+  doctor                     check the installation and say what is wrong
+  help [command]             what a command does
 
 Global flags:
   -config <path>           configuration file (default ~/.hive/config.toml)
@@ -78,6 +80,7 @@ Global flags:
   -coordinator-url <url>   override cluster.coordinator_url
   -node-id <id>            override cluster.node_id
   -h, --help               show this help
+  --version                print the build and protocol version
 `
 
 func main() {
@@ -121,6 +124,10 @@ func run(args []string) error {
 		return runServe(merged)
 	case "service":
 		return runService(f, rest[1:])
+	case "help":
+		return runHelp(rest[1:])
+	case "doctor":
+		return runDoctor(f)
 	case "session":
 		return sessionCommand(f, rest[1:])
 	case "agent":
@@ -184,7 +191,10 @@ func parseArgs(args []string) (flags, []string, error) {
 
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
-		case a == "-h" || a == "--help" || a == "help":
+		case a == "-h" || a == "--help":
+			// Only the flags mean "show the usage". The word `help` is a command,
+			// because `hive help <command>` is how a user asks about one command,
+			// and treating it as a flag would make that impossible to reach.
 			f.help = true
 		case a == "-config" || a == "--config":
 			i++
