@@ -31,7 +31,6 @@ import (
 	"github.com/thupham/hive/internal/config"
 	"github.com/thupham/hive/internal/control"
 	"github.com/thupham/hive/internal/daemon"
-	"github.com/thupham/hive/internal/logging"
 	"github.com/thupham/hive/internal/node"
 	"github.com/thupham/hive/internal/plugin"
 	"github.com/thupham/hive/internal/storage"
@@ -72,6 +71,7 @@ Commands:
   node list                  list nodes
   command get <id>           show a command status resource
   doctor                     check the installation and say what is wrong
+  logs [-lines n] [-follow]  show what the daemon has been doing
   help [command]             what a command does
 
 Global flags:
@@ -128,6 +128,8 @@ func run(args []string) error {
 		return runHelp(rest[1:])
 	case "doctor":
 		return runDoctor(f)
+	case "logs":
+		return runLogs(f, rest[1:])
 	case "session":
 		return sessionCommand(f, rest[1:])
 	case "agent":
@@ -476,7 +478,12 @@ func runServe(f flags) error {
 		return err
 	}
 
-	log := logging.New(os.Stderr, cfg.Log.Level, cfg.Log.Format)
+	// The daemon writes a log file as well as the terminal. A terminal is where a
+	// log goes when someone is watching, and a daemon is not watched: without a
+	// file there is no answer to "what happened an hour ago", and a service started
+	// by the system has no terminal at all.
+	log, closeLog := daemonLogger(cfg)
+	defer closeLog()
 
 	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
 		log.Warn("no configuration file; Hive cannot run an agent",

@@ -212,3 +212,25 @@ An agent process lives as long as the plugin that started it, and it ends with
 it. A plugin that exits without ending its agent leaves it running: it holds a
 session, its memory, and whatever authentication state it has, and nothing will
 ever collect it.
+
+
+## Reading the log
+
+```sh
+hive logs                          # the last 50 lines
+hive logs -level warn -lines 20    # only what went wrong
+hive logs -grep session=sess_123   # one conversation
+hive logs -follow                  # keep printing as it happens
+```
+
+The daemon writes a log file as well as the terminal. A terminal is where a log
+goes when someone is watching, and a daemon is not watched: without a file there
+is no answer to "what happened an hour ago", and a service started by the system
+has no terminal at all.
+
+It lives at `~/.hive/data/log/hive.log`, rotates at 8 MB, and keeps three files,
+so a process meant to run for months cannot fill the disk.
+
+The agents' own output goes to standard error, which the service writes to
+`~/.hive/data/log/hive.err.log`. That is where an agent's reasoning lives; Hive's
+own record is the file `hive logs` reads.

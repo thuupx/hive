@@ -272,6 +272,30 @@ var helpTable = []commandHelp{
 		examples: []string{"hive config"},
 	},
 	{
+		path:    "logs",
+		summary: "show what the daemon has been doing",
+		usage:   "hive logs [-lines <n>] [-follow] [-level <level>] [-grep <text>]",
+		details: []string{
+			"The daemon writes a log file as well as the terminal, because a daemon",
+			"is not watched: without a file there is no answer to \"what happened an",
+			"hour ago\", and a service started by the system has no terminal at all.",
+			"",
+			"The file rotates at 8 MB and keeps three, so a process meant to run for",
+			"months cannot fill the disk.",
+		},
+		flags: []flagHelp{
+			{"-lines", "how many lines to show (0 for all)"},
+			{"-follow", "keep printing as the daemon writes"},
+			{"-level", "only lines at this level or above"},
+			{"-grep", "only lines containing this text"},
+		},
+		examples: []string{
+			"hive logs",
+			"hive logs -level warn -lines 20",
+			"hive logs -follow",
+		},
+	},
+	{
 		path:    "help",
 		summary: "what a command does",
 		usage:   "hive help [command]",
