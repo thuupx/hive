@@ -355,28 +355,58 @@ Implementation notes:
 
 ### M4 — Agent Runtime and ACP adapter
 
-- [ ] `AgentRuntime` interface per §12/§36, kept small
-- [ ] Execution identity/state reporting for start reconciliation:
-      `absent`, `starting`, `running`, `terminal`, `ambiguous`
-- [ ] `hive-plugin-acp` as a separate binary depending only on
-      `protocol/hive/v1`
-- [ ] ACP version policy per D6: supported versions, capability
-      negotiation, raw preservation, explicit handshake failure
-- [ ] Pin the ACP version (O1) in the plugin contract + dependency manifest
-- [ ] Generic agent profiles in config (`[agents.<name>]` with `protocol`
-      and `command`); no vendor logic in core
-- [ ] Same-agent restore via ACP `session/load` if O2 = yes
-- [ ] Permission relay: opaque payload, one-time terminal transition
+- [x] `AgentRuntime` interface per §12/§36, kept small
+- [x] Execution identity/state reporting types for start reconciliation:
+      `absent`, `starting`, `running`, `terminal`, `ambiguous`, plus an
+      optional `Reconciler` runtime capability
+- [x] ACP version policy per D6: capability negotiation, raw preservation,
+      explicit handshake failure
+- [x] Pin ACP protocol version 1 in the adapter contract
+- [x] Generic agent profiles in config (`[agents.<name>]` with `protocol`,
+      `command`, or `endpoint`); no vendor logic in core (delivered in M0)
+- [x] Same-agent restore via ACP `session/load` (O2 = yes)
+- [x] Permission relay: opaque payload, one-time terminal transition
       (first-wins CAS), fail-closed on unrecoverable state (§17)
-- [ ] Start reconciliation: a lost start acknowledgement must not spawn a
-      second execution (§11.4)
-- [ ] Tests: duplicate start command, ambiguous node state fails closed,
-      permission idempotency, concurrent permission responses, coordinator
-      loss does not become implicit approval
+- [x] Tests: permission idempotency, concurrent permission responses,
+      coordinator loss does not become implicit approval, unsupported ACP
+      version fails the handshake, unknown protocol data survives
 
-**Exit criteria:** a local Hive runs multiple ACP agents; §42 "Permission
-idempotency", "Permission safety", and "AgentRun start reconciliation"
-have passing tests.
+**Exit criteria:** §42 "Permission idempotency", "Permission safety", and
+"Unknown protocol data" have passing tests.
+
+Status: met. `make ci` is green with 144 passing tests; the suite is clean
+under `-race`.
+
+Scope adjustments, stated explicitly:
+
+- The `hive-plugin-acp` binary moves to M5. A plugin binary needs the Plugin
+  API and the supervisor to talk to, so the adapter is delivered here as a
+  library and M5 wires the process.
+- The ACP adapter lives at `plugins/acp`, not under `internal/`, so the plugin
+  boundary is structural rather than a convention. A test asserts it imports
+  no internal package.
+- `ExecutionState` and `Reconciler` are delivered here; the reconciliation
+  logic that consumes them belongs to the node execution controller in M6, so
+  the §42 "AgentRun start reconciliation" tests land there.
+
+Implementation notes:
+
+- Method names, parameter shapes, and the permission option kinds were taken
+  from the ACP v1 schema, not invented: `initialize`, `session/new`,
+  `session/load`, `session/prompt` (returns `stopReason`), `session/cancel`,
+  `session/update`, and `session/request_permission`.
+- Hive advertises no filesystem, terminal, or elicitation capability, because
+  the agent owns tool execution. An inbound call for one of those methods is
+  answered with a JSON-RPC method-not-found error rather than being pretended.
+- The adapter resolves an approval into an ACP outcome using the options the
+  agent actually offered. If nothing matches, the request is answered
+  `cancelled`: the agent aborts instead of proceeding on an approval the user
+  never gave.
+- When the permission queue is full, the adapter answers `cancelled`
+  immediately. Leaving a permission request unanswered, or answering it
+  `selected`, would be worse than failing closed.
+- `permission.Decision` carries an optional `OptionID` so a transport that
+  renders the agent's own options can answer with exactly one of them.
 
 ### M5 — Plugin supervisor and process boundary
 
