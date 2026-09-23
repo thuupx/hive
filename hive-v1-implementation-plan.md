@@ -466,26 +466,60 @@ Deliberately not in M5, stated so it is not mistaken for done:
 
 ### M6 — Coordinator and node (child process)
 
-- [ ] `hive` role selection: `coordinator`, `node`, `auto`; v1 default
-      spawns a node child
-- [ ] Node Protocol over loopback WebSocket, TLS with a local cert (O5)
-- [ ] Node API domains: `node.*`, `execution.*`, `event.*`
-- [ ] Multiplexed single bidirectional channel (heartbeat, status, events,
-      start, prompt, cancel, permission response)
-- [ ] Node-local event buffer with `local_buffer_sequence` (not a Hive
-      sequence)
-- [ ] Reconnect synchronization: identity, connection generation, active
-      AgentRun generations, buffered event IDs; idempotent
-- [ ] Execution lease as a liveness signal only; expiry classifies the run
-      `interrupted` and does **not** start a replacement (§11.3)
-- [ ] Node local DB as execution state + event buffer only; never a second
-      authoritative source (§29)
-- [ ] Tests: node disconnect/reconnect creates no duplicate AgentRun;
-      lease expiry → `interrupted` with no auto replacement; buffered event
-      replay is idempotent; stale connection generation rejected
+- [x] Node Protocol over WebSocket with TLS and a locally generated
+      certificate (O5)
+- [x] Node API domains: `node.*`, `execution.*`, `event.*`
+- [x] Multiplexed single bidirectional channel (heartbeat, execution
+      commands, sync)
+- [x] Node-local event buffer with stable event ids
+- [x] Reconnect synchronization: identity, connection generation, active
+      executions, buffered event ids; idempotent
+- [x] Execution lease as a liveness signal only; expiry reports the run as
+      interrupted and starts **no** replacement execution
+- [x] Stale connection generation rejected; a new authenticated connection
+      invalidates the previous one
+- [ ] `hive` role selection and spawning the node child process
+- [ ] Node-local database for the event buffer
+- [x] Tests: reconnect creates no duplicate execution, lease expiry reports
+      without replacing, stale generation rejected, sync requests only
+      missing events
 
 **Exit criteria:** §42 "Reconnect safety" and "Execution fencing" have
 passing tests; killing the node child does not kill the coordinator.
+
+Status: the node link is met; the daemon wiring is not. `make ci` is green
+with 176 passing tests; the suite is clean under `-race`.
+
+Implementation notes:
+
+- The link uses TLS with a locally generated certificate even on one machine,
+  so the loopback path is not a special case that can rot while only the
+  multi-machine path is exercised.
+- The handshake is an ordinary request/response (`node.hello` /
+  `node.ready`), not a bootstrap exchange outside the peer, so the node link
+  reuses the same correlator as every other connection.
+- A new authenticated connection increments the connection generation and
+  invalidates the previous one, so a delayed packet from the old link cannot be
+  treated as a current node link. The superseded `Node` refuses commands.
+- `WatchLeases` reports every expired execution on every tick rather than
+  deduplicating internally, because the domain transition it drives is already
+  idempotent. The callback must not start work.
+- Reconnect reconciliation is idempotent by construction: it only reports what
+  the coordinator is missing, and replaying a buffered event is deduplicated by
+  `event_id` in the store.
+- The node's executor is an interface. Tests drive it with a fake, so the link
+  is verified independently of any particular agent runtime.
+
+Deliberately not in M6:
+
+- `hive` does not yet select a role or spawn a node child process, so the
+  one-command UX from §44 is not delivered. The node link works against a
+  listening coordinator.
+- The node event buffer is in memory, not in the node database. A node restart
+  therefore loses buffered events that were never uploaded. The durable buffer
+  belongs with the daemon lifecycle, together with role selection.
+- The node's executor is not yet wired to the plugin supervisor, so a node does
+  not yet run an ACP agent end to end. That composition is the next step.
 
 ### M7 — Control API and gateway
 
