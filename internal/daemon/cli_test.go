@@ -700,3 +700,64 @@ func TestAPermissionRequestBecomesAnEvent(t *testing.T) {
 		t.Fatal("no permission event was appended, so no transport can ask")
 	}
 }
+
+// A request whose agent is gone expires rather than waiting forever.
+//
+// Found in a live conversation: a plugin restart left a request pending in Hive
+// with no agent behind it. It could not be answered, it never stopped being
+// shown, and the run it belonged to was already interrupted.
+func TestAPermissionExpiresWithItsAgent(t *testing.T) {
+	ctx := context.Background()
+	_, store, _, socketPath := startStack(t)
+
+	c, err := client.Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	created, err := c.CreateSession(ctx, v1.SessionCreateParams{CommandID: "cmd_1"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitForRunStarted(t, store, created.RunID)
+
+	if _, err := c.Prompt(ctx, v1.SessionPromptParams{
+		CommandID: "cmd_2",
+		SessionID: created.SessionID,
+		Text:      "ask permission please",
+	}); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	waitFor(t, "the permission to be recorded", func() bool {
+		pending, err := store.ListOpenPermissionRequests(ctx, created.SessionID)
+		return err == nil && len(pending) == 1
+	})
+
+	// The turn ends and the agent no longer holds the request, which is what a
+	// restart leaves behind.
+	waitFor(t, "the turn to finish", func() bool {
+		return mustRun(t, store, created.RunID).State.IsTerminal()
+	})
+	if err := store.WriteTx(ctx, func(tx storage.Execer) error {
+		_, err := tx.ExecContext(ctx,
+			"UPDATE agent_runs SET state = ? WHERE id = ?", string(agent.StateRunning), created.RunID)
+		return err
+	}); err != nil {
+		t.Fatalf("reset the run state: %v", err)
+	}
+
+	// The next prompt reconciles the run, and the request goes with it.
+	if _, err := c.Prompt(ctx, v1.SessionPromptParams{
+		CommandID: "cmd_3",
+		SessionID: created.SessionID,
+		Text:      "again",
+	}); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+
+	waitFor(t, "the request to expire", func() bool {
+		pending, err := store.ListOpenPermissionRequests(ctx, created.SessionID)
+		return err == nil && len(pending) == 0
+	})
+}
