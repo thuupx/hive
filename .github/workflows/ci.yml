@@ -14,11 +14,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # go-libsql ships prebuilt native libraries for linux and darwin on
+        # amd64 and arm64 only, and CGO cannot be cross-compiled
+        # practically, so each target is built on its own runner.
+        # darwin/amd64 is not covered: GitHub retired the amd64 macOS
+        # runner. See docs/adr/0001-storage-libsql.md.
+        include:
+          - os: ubuntu-latest # linux/amd64
+          - os: ubuntu-24.04-arm # linux/arm64; needs GitHub arm64 hosted runners
+          - os: macos-latest # darwin/arm64
     env:
-      # CGO stays enabled so the build matches the release configuration.
-      # M0 has no cgo dependencies yet; the full OS x arch matrix required
-      # by libSQL lands in M1 (see hive-v1-implementation-plan.md).
       CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@v4

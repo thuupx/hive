@@ -45,6 +45,19 @@ Consequences to respect when writing tests:
   directory by relative path.
 - `go test ./internal/...` runs no tests. Use `go test ./tests`.
 
+### Storage
+
+- Migrations are embedded SQL files in `internal/storage/migrations/`,
+  named `<version>_<name>.sql`, numbered contiguously from 1, and
+  forward-only. There are no down migrations.
+- Every write goes through `Store.WriteTx`. It serializes writers
+  in-process and issues `BEGIN IMMEDIATE`, which is what keeps a session's
+  event sequence strictly monotonic.
+- The driver executes one statement per call, so multi-statement SQL is
+  split by `internal/storage/sqlsplit.go`.
+- `journal_mode=WAL` is applied once per database, not per connection.
+  Other pragmas are per connection and applied by the connector wrapper.
+
 ### Protocol package purity
 
 `protocol/hive/v1` is the public protocol surface. It must:

@@ -197,39 +197,67 @@ implicit assumption. The adapter must:
 **Exit criteria:** `go build ./...` and `go test ./...` pass in CI on all
 target platform pairs; the dependency rule test passes.
 
-Status: met locally. `make ci` is green with 40 passing tests.
-CI matrix currently spans linux/amd64 and darwin/arm64 runners; the full
-OS x arch CGO matrix for libSQL is an M1 task.
+Status: met locally. The CI matrix was completed in M1, once libSQL made
+the concrete platform set known.
 
 Implementation notes:
 
 - Module path is `github.com/thupham/hive`. Change it before the first
   push if the repository will live elsewhere.
-- `plugins/`, `migrations/`, and `docs/adr/` exist but are empty, so git
-  does not track them yet.
+- `plugins/` and the root `migrations/` directory exist but are empty, so
+  git does not track them yet. Storage migrations live in
+  `internal/storage/migrations/` so they can be embedded.
 
 ### M1 — Storage (libSQL)
 
-- [ ] Write `docs/adr/0001-storage-libsql.md` recording D3 and its costs
-- [ ] Migration framework with forward-only, versioned migrations
-- [ ] Tables: `sessions`, `agent_runs`, `events`, `session_snapshots`,
+- [x] Write `docs/adr/0001-storage-libsql.md` recording D3 and its costs
+- [x] Migration framework with forward-only, versioned migrations
+- [x] Tables: `sessions`, `agent_runs`, `events`, `session_snapshots`,
       `handoffs`, `permission_requests`, `commands`,
       `conversation_bindings`, `workspaces`, `workspace_locations`,
       `plugins`, `plugin_instances`, `capability_registrations`
-- [ ] Explicitly omit `cluster_authority`, `control_journal`,
+- [x] Add the `outbox` table required by the §7.1.2 transaction boundary
+- [x] Explicitly omit `cluster_authority`, `control_journal`,
       `control_snapshot` in v1 migrations (D4)
-- [ ] Repository interfaces + libSQL implementation
-- [ ] Event store: append, idempotent by `event_id`, assign authoritative
+- [x] Repository operations over `database/sql`, with an explicit `Execer`
+      so writes compose into a single transaction
+- [x] Event store: append, idempotent by `event_id`, assign authoritative
       session-scoped monotonic `sequence`
-- [ ] Command store: durable command record, dedupe by `command_id`
-- [ ] Snapshot store with an explicit `schema_version` (§30)
-- [ ] Single-transaction boundary for command + domain mutation + outbox
+- [x] Command store: durable command record, dedupe by `command_id`
+- [x] Snapshot store with an explicit `schema_version` (§30)
+- [x] Single-transaction boundary for command + domain mutation + outbox
       record (§7.1.2)
-- [ ] Tests: `event_id` idempotency, sequence monotonicity under
+- [x] CI matrix covering the platforms the libSQL driver supports
+- [x] Tests: `event_id` idempotency, sequence monotonicity under
       concurrency, command dedupe, transaction atomicity on failure
 
 **Exit criteria:** §42 "Event idempotency", "Command idempotency", and
 "Cursor correctness" (storage half) have passing tests.
+
+Status: met. `make ci` is green with 51 passing tests; the suite is clean
+under `-race`.
+
+Implementation notes:
+
+- Minimal session persistence was added (`InsertSession`, `GetSession`)
+  because `events` references `sessions`. Session state machines are M2.
+- `Store.Tables` and `Store.MigrationVersion` exist for operations and the
+  future TUI storage view.
+- Write transactions are serialized in-process and issued as
+  `BEGIN IMMEDIATE`. The coordinator is the single writer for its database,
+  so this keeps sequence assignment correct without distributed
+  coordination.
+- `journal_mode=WAL` is applied once per database, not per connection: it
+  is a persistent database property and changing it takes a lock.
+- The driver executes one statement per call, so migrations are split
+  explicitly in `internal/storage/sqlsplit.go`.
+- `sqlsplit.go` cannot be unit-tested directly under the `tests/`
+  convention because it is unexported. It is covered indirectly: every
+  storage test runs migrations, which exercise comments and
+  multi-statement splitting.
+- The CI matrix includes `ubuntu-24.04-arm`, which requires GitHub arm64
+  hosted runners (free for public repositories). Drop it if the repository
+  cannot use them.
 
 ### M2 — Domain: Session, AgentRun, Command
 
