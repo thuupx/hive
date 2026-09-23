@@ -241,6 +241,17 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 			if err := s.store.InsertAgentRun(ctx, tx, newRun); err != nil {
 				return err
 			}
+
+			// The run becomes the session's default interactive run. Without this
+			// the pointer keeps naming a run whose execution is long gone, and
+			// anything that asks the agent about the session fails.
+			if err := sess.SetDefaultInteractiveRun(newRun.ID); err != nil {
+				return err
+			}
+			if err := s.store.UpdateSession(ctx, tx, sess); err != nil {
+				return err
+			}
+
 			runID, createdRun = newRun.ID, true
 			return nil
 		}

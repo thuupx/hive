@@ -345,3 +345,47 @@ func TestSessionConfigReadsAndRecordsASelector(t *testing.T) {
 		t.Fatalf("recorded model = %q, want m2", got)
 	}
 }
+
+// A run created by routing becomes the session's default interactive run.
+//
+// Found in a live conversation: the pointer kept naming a run whose execution was
+// long gone, so asking the agent about the session failed with "no live execution".
+func TestRoutingCreatedRunBecomesTheDefault(t *testing.T) {
+	ctx := context.Background()
+	_, store, _, socketPath := startStack(t)
+
+	c, err := client.Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	created, err := c.CreateSession(ctx, v1.SessionCreateParams{CommandID: "cmd_1"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	waitForRunStarted(t, store, created.RunID)
+	finishTurn(t, store, created.RunID)
+
+	// The default run is finished, so this prompt creates a new one.
+	prompted, err := c.Prompt(ctx, v1.SessionPromptParams{
+		CommandID: "cmd_2",
+		SessionID: created.SessionID,
+		Text:      "again",
+	})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !prompted.CreatedRun {
+		t.Fatal("a finished default run means a new run")
+	}
+
+	sess, err := store.GetSession(ctx, created.SessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.DefaultInteractiveRunID != prompted.RunID {
+		t.Fatalf("default run = %q, want the new run %q", sess.DefaultInteractiveRunID, prompted.RunID)
+	}
+}
