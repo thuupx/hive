@@ -112,6 +112,11 @@ type run struct {
 	// hiveSessionID is the Hive session the run belongs to, used to attribute
 	// published events.
 	hiveSessionID string
+
+	// preamble is context handed over from a previous agent. It is delivered with
+	// the first prompt, because ACP has no field for seeding a session.
+	preamble string
+	seeded   bool
 }
 
 // pendingPermission keeps what is needed to answer an ACP permission request in
@@ -174,6 +179,7 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 		agentRunID:    req.AgentRunID,
 		sessionID:     sessionID,
 		hiveSessionID: req.SessionID,
+		preamble:      req.Context,
 	}
 	b.mu.Unlock()
 
@@ -201,7 +207,7 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 		return nil, err
 	}
 
-	stopReason, err := client.Prompt(ctx, r.sessionID, req.Text)
+	stopReason, err := client.Prompt(ctx, r.sessionID, b.promptText(r, req.Text))
 	if err != nil {
 		return nil, v1.Unavailable("agent prompt failed: %s", err.Error())
 	}
@@ -212,6 +218,21 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 		_ = b.report(ctx, req.AgentRunID, req.Generation, "terminal", r.sessionID, stopReason)
 	}
 	return map[string]any{"stopReason": stopReason}, nil
+}
+
+// promptText delivers the handoff context with the first prompt.
+//
+// ACP has no field for seeding a session, so the context is prepended exactly
+// once. A later prompt must not repeat it.
+func (b *Bridge) promptText(r *run, text string) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if r.seeded || r.preamble == "" {
+		return text
+	}
+	r.seeded = true
+	return r.preamble + "\n\n" + text
 }
 
 func (b *Bridge) cancel(_ context.Context, params json.RawMessage) (any, error) {

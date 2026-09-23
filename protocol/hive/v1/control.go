@@ -195,6 +195,30 @@ type NodeSummary struct {
 	LastSeen             time.Time `json:"lastSeen"`
 }
 
+// PermissionListParams lists pending permission requests.
+type PermissionListParams struct {
+	// SessionID scopes the listing. Empty lists every session the caller may
+	// see.
+	SessionID string `json:"sessionId,omitempty"`
+
+	Limit int `json:"limit,omitempty"`
+}
+
+// PermissionListResult lists pending permission requests.
+type PermissionListResult struct {
+	Permissions []PermissionSummary `json:"permissions"`
+}
+
+// PermissionSummary is a compact view of a pending permission request.
+type PermissionSummary struct {
+	PermissionID   string    `json:"permissionId"`
+	SessionID      string    `json:"sessionId"`
+	RunID          string    `json:"runId,omitempty"`
+	AgentRequestID string    `json:"agentRequestId"`
+	CreatedAt      time.Time `json:"createdAt"`
+	ExpiresAt      time.Time `json:"expiresAt,omitempty"`
+}
+
 // CommandGetParams asks for a command record.
 type CommandGetParams struct {
 	CommandID string `json:"commandId"`

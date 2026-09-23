@@ -17,7 +17,7 @@ import (
 
 // startStack brings up a coordinator with a Control API socket and a node with
 // the test agent, then returns a Control API client connected over that socket.
-func startStack(t *testing.T) (*daemon.Coordinator, *storage.Store, *v1.Peer) {
+func startStack(t *testing.T) (*daemon.Coordinator, *storage.Store, *v1.Peer, string) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -71,7 +71,7 @@ func startStack(t *testing.T) (*daemon.Coordinator, *storage.Store, *v1.Peer) {
 		return ok && n.Connected()
 	})
 
-	return coordinator, coordinatorStore, dialControl(t, socketPath)
+	return coordinator, coordinatorStore, dialControl(t, socketPath), socketPath
 }
 
 func dialControl(t *testing.T, socketPath string) *v1.Peer {
@@ -108,7 +108,7 @@ func shortSocketPath(t *testing.T) string {
 // over the unix socket, with no access to the internals.
 func TestControlCreatePromptAndReplay(t *testing.T) {
 	ctx := context.Background()
-	_, store, peer := startStack(t)
+	_, store, peer, _ := startStack(t)
 
 	var created v1.SessionCreateResult
 	if err := peer.Call(ctx, v1.MethodSessionCreate, v1.SessionCreateParams{
@@ -224,7 +224,7 @@ func TestControlCreatePromptAndReplay(t *testing.T) {
 // not create a second one.
 func TestControlCreateIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	_, store, peer := startStack(t)
+	_, store, peer, _ := startStack(t)
 
 	params := v1.SessionCreateParams{CommandID: "cmd_1", Workspace: "/tmp/ws"}
 
@@ -263,7 +263,7 @@ func TestControlCreateIsIdempotent(t *testing.T) {
 // command; a deliberate repeat by the user is a new message and a new command.
 func TestControlSourceIDDeduplicatesDelivery(t *testing.T) {
 	ctx := context.Background()
-	_, store, peer := startStack(t)
+	_, store, peer, _ := startStack(t)
 
 	var first v1.SessionCreateResult
 	if err := peer.Call(ctx, v1.MethodSessionCreate, v1.SessionCreateParams{
@@ -309,7 +309,7 @@ func TestControlSourceIDDeduplicatesDelivery(t *testing.T) {
 
 func TestControlRejectsUnknownMethod(t *testing.T) {
 	ctx := context.Background()
-	_, _, peer := startStack(t)
+	_, _, peer, _ := startStack(t)
 
 	if err := peer.Call(ctx, "cluster.elect", nil, nil); err == nil {
 		t.Fatal("expected an unknown method to be refused")
@@ -320,7 +320,7 @@ func TestControlRejectsUnknownMethod(t *testing.T) {
 
 func TestControlStatusRejectsUnknownSession(t *testing.T) {
 	ctx := context.Background()
-	_, _, peer := startStack(t)
+	_, _, peer, _ := startStack(t)
 
 	err := peer.Call(ctx, v1.MethodSessionStatus, v1.SessionStatusParams{
 		SessionID: "sess_missing",
@@ -335,7 +335,7 @@ func TestControlStatusRejectsUnknownSession(t *testing.T) {
 
 func TestControlListsAgentsAndNodes(t *testing.T) {
 	ctx := context.Background()
-	_, _, peer := startStack(t)
+	_, _, peer, _ := startStack(t)
 
 	var agents v1.AgentListResult
 	if err := peer.Call(ctx, v1.MethodAgentList, nil, &agents); err != nil {

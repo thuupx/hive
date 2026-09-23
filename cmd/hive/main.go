@@ -1,15 +1,15 @@
 // Command hive is the Hive daemon and CLI entry point.
 //
-// A single binary serves every cluster role. In the single-machine default, one
-// `hive serve` runs the coordinator and starts a node child process, so the whole
-// stack comes up with one command.
+// A single binary serves every cluster role and is also the client of the Hive
+// Control API. In the single-machine default, one `hive serve` runs the
+// coordinator and starts a node child process, so the whole stack comes up with
+// one command.
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
-
 	"log/slog"
 	"os"
 	"os/exec"
@@ -42,14 +42,25 @@ const ChildStopTimeout = 5 * time.Second
 const usage = `hive - personal agent gateway
 
 Usage:
-  hive [flags] <command>
+  hive [global flags] <command> [arguments]
 
 Commands:
-  version        print build and protocol version
-  config         validate the configuration and print effective values
-  serve          run the Hive daemon
+  version                    print build and protocol version
+  config                     validate the configuration and print effective values
+  serve                      run the Hive daemon
+  tui [-interval 2s]         show the management plane
+  session create             create a session
+  session list               list sessions
+  session status <id>        show a session and its runs
+  session prompt <id> <text> prompt a session
+  session cancel <id>        cancel the current run
+  session handoff <id> <agent>  hand the session to another agent
+  session events <id>        replay a session event stream
+  agent list                 list configured agents
+  node list                  list nodes
+  command get <id>           show a command status resource
 
-Flags:
+Global flags:
   -config <path>           configuration file (default ~/.hive/config.toml)
   -role <role>             override cluster.role (coordinator, node, auto)
   -coordinator-url <url>   override cluster.coordinator_url
@@ -69,89 +80,124 @@ type flags struct {
 	role           string
 	coordinatorURL string
 	nodeID         string
-	command        string
+	help           bool
 }
 
 func run(args []string) error {
-	f, err := parseArgs(args)
+	f, rest, err := parseArgs(args)
 	if err != nil {
 		return err
 	}
-	if f.command == "" || f.command == "help" {
+	if f.help || len(rest) == 0 {
 		fmt.Print(usage)
 		return nil
 	}
-	if f.command == "version" {
+
+	switch rest[0] {
+	case "version":
 		printVersion()
 		return nil
-	}
-
-	cfgPath := f.configPath
-	if cfgPath == "" {
-		if cfgPath, err = config.DefaultPath(); err != nil {
+	case "config":
+		return runConfig(f)
+	case "serve":
+		merged, err := parseServeArgs(f, rest[1:])
+		if err != nil {
 			return err
 		}
-	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return err
-	}
-	applyOverrides(&cfg, f)
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-
-	switch f.command {
-	case "config":
-		return printConfig(cfgPath, cfg)
-	case "serve":
-		return serve(cfgPath, cfg)
+		return runServe(merged)
+	case "session":
+		return sessionCommand(f, rest[1:])
+	case "agent":
+		return agentCommand(f, rest[1:])
+	case "node":
+		return nodeCommand(f, rest[1:])
+	case "command":
+		return commandCommand(f, rest[1:])
+	case "tui":
+		return tuiCommand(f, rest[1:])
 	default:
-		return fmt.Errorf("unknown command %q\n\n%s", f.command, usage)
+		return fmt.Errorf("unknown command %q\n\n%s", rest[0], usage)
 	}
 }
 
-func parseArgs(args []string) (flags, error) {
-	var f flags
+// parseServeArgs applies the global flags that may also follow `serve`.
+//
+// A spawned node child is started with the role and the coordinator url as flags,
+// so dropping them here would silently turn it into a second coordinator.
+func parseServeArgs(f flags, args []string) (flags, error) {
+	extra, rest, err := parseArgs(args)
+	if err != nil {
+		return f, err
+	}
+	if len(rest) > 0 {
+		return f, fmt.Errorf("unexpected argument %q after serve", rest[0])
+	}
+
+	merged := f
+	if extra.configPath != "" {
+		merged.configPath = extra.configPath
+	}
+	if extra.role != "" {
+		merged.role = extra.role
+	}
+	if extra.coordinatorURL != "" {
+		merged.coordinatorURL = extra.coordinatorURL
+	}
+	if extra.nodeID != "" {
+		merged.nodeID = extra.nodeID
+	}
+	return merged, nil
+}
+
+// nodeChildEnv marks a process that was started as a node child.
+//
+// A coordinator refuses to spawn a node child when it is itself one, so a
+// configuration mistake cannot turn into an unbounded chain of processes.
+const nodeChildEnv = "HIVE_NODE_CHILD"
+
+// parseArgs extracts the global flags and returns the remaining arguments.
+func parseArgs(args []string) (flags, []string, error) {
+	var (
+		f    flags
+		rest []string
+	)
 
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
 		case a == "-h" || a == "--help" || a == "help":
-			f.command = "help"
-			return f, nil
+			f.help = true
 		case a == "-config" || a == "--config":
 			i++
 			if i >= len(args) {
-				return f, errors.New("-config requires a path")
+				return f, nil, errors.New("-config requires a path")
 			}
 			f.configPath = args[i]
 		case a == "-role" || a == "--role":
 			i++
 			if i >= len(args) {
-				return f, errors.New("-role requires a value")
+				return f, nil, errors.New("-role requires a value")
 			}
 			f.role = args[i]
 		case a == "-coordinator-url" || a == "--coordinator-url":
 			i++
 			if i >= len(args) {
-				return f, errors.New("-coordinator-url requires a value")
+				return f, nil, errors.New("-coordinator-url requires a value")
 			}
 			f.coordinatorURL = args[i]
 		case a == "-node-id" || a == "--node-id":
 			i++
 			if i >= len(args) {
-				return f, errors.New("-node-id requires a value")
+				return f, nil, errors.New("-node-id requires a value")
 			}
 			f.nodeID = args[i]
-		case strings.HasPrefix(a, "-"):
-			return f, fmt.Errorf("unknown flag %q", a)
-		case f.command == "":
-			f.command = a
 		default:
-			return f, fmt.Errorf("unexpected argument %q", a)
+			// Everything from the first positional argument onwards belongs to
+			// the subcommand, which parses its own flags.
+			rest = append(rest, args[i:]...)
+			return f, rest, nil
 		}
 	}
-	return f, nil
+	return f, rest, nil
 }
 
 func applyOverrides(cfg *config.Config, f flags) {
@@ -174,17 +220,34 @@ func printVersion() {
 	}
 }
 
-func printConfig(path string, cfg config.Config) error {
+func runConfig(f flags) error {
+	cfgPath := f.configPath
+	if cfgPath == "" {
+		var err error
+		if cfgPath, err = config.DefaultPath(); err != nil {
+			return err
+		}
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	applyOverrides(&cfg, f)
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
 	dataDir, err := cfg.EffectiveDataDir()
 	if err != nil {
 		return err
 	}
 
 	state := "loaded"
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
 		state = "not found, using defaults"
 	}
-	fmt.Printf("config file: %s (%s)\n", path, state)
+	fmt.Printf("config file: %s (%s)\n", cfgPath, state)
 	fmt.Printf("data dir:    %s\n", dataDir)
 	fmt.Printf("role:        %s\n", cfg.EffectiveRole())
 
@@ -207,7 +270,24 @@ func printConfig(path string, cfg config.Config) error {
 	return err
 }
 
-func serve(cfgPath string, cfg config.Config) error {
+func runServe(f flags) error {
+	cfgPath := f.configPath
+	if cfgPath == "" {
+		var err error
+		if cfgPath, err = config.DefaultPath(); err != nil {
+			return err
+		}
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	applyOverrides(&cfg, f)
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
 	log := logging.New(os.Stderr, cfg.Log.Level, cfg.Log.Format)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -278,7 +358,7 @@ func serveCoordinator(ctx context.Context, cfgPath string, cfg config.Config, lo
 		"control", coordinator.ControlSocket(),
 	)
 
-	if cfg.Cluster.SpawnsNode() {
+	if cfg.Cluster.SpawnsNode() && os.Getenv(nodeChildEnv) == "" {
 		child, err := spawnNodeChild(cfgPath, coordinator.URL(), log)
 		if err != nil {
 			return err
@@ -298,14 +378,14 @@ func spawnNodeChild(cfgPath, coordinatorURL string, log *slog.Logger) (*exec.Cmd
 	}
 
 	cmd := exec.Command(self,
+		"-config", cfgPath,
 		"serve",
 		"-role", string(config.RoleNode),
 		"-coordinator-url", coordinatorURL,
-		"-config", cfgPath,
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), nodeChildEnv+"=1")
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start the node child process: %w", err)

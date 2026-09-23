@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/thupham/hive/internal/daemon"
 	"github.com/thupham/hive/internal/node"
@@ -41,8 +42,39 @@ func runTestTransport() {
 		os.Exit(3)
 	}
 
+	// When asked, subscribe before delivering so the event the delivery causes is
+	// observed, then acknowledge it with the conversation. That is what advances
+	// the durable binding cursor.
+	//
+	// The SDK loop pumps delivered events, so it has to run for Events() to
+	// receive anything.
+	var subscription v1.SubscribeResponse
+	if os.Getenv("HIVE_TEST_TRANSPORT_ACK") != "" {
+		runCtx, stopRun := context.WithCancel(ctx)
+		defer stopRun()
+		go func() { _ = host.Run(runCtx) }()
+
+		var err error
+		// The session does not exist yet: it is created by the delivery below. So
+		// the helper subscribes to everything and takes the first delivery.
+		subscription, err = host.Subscribe(ctx, v1.SubscribeRequest{})
+		if err != nil {
+			os.Exit(4)
+		}
+	}
+
 	var outcome v1.TransportOutcome
 	callErr := host.Call(ctx, v1.MethodTransportInbound, params, &outcome)
+
+	if subscription.SubscriptionID != "" {
+		select {
+		case delivered := <-host.Events():
+			_ = host.AckFor(ctx, subscription.SubscriptionID, delivered.Event.Sequence, params.ConversationID)
+		case <-time.After(10 * time.Second):
+			os.Exit(5)
+		}
+	}
+
 	writeTransportResult(callErr, outcome)
 	_ = host.Close()
 }
@@ -67,7 +99,7 @@ func writeTransportResult(callErr error, outcome v1.TransportOutcome) {
 }
 
 // transportSpec runs the test binary once as a transport plugin.
-func transportSpec(t *testing.T, params v1.TransportInboundParams, out string) plugin.Spec {
+func transportSpec(t *testing.T, params v1.TransportInboundParams, out string, ack bool) plugin.Spec {
 	t.Helper()
 
 	encoded, err := json.Marshal(params)
@@ -83,6 +115,7 @@ func transportSpec(t *testing.T, params v1.TransportInboundParams, out string) p
 		Env: []string{
 			"HIVE_TEST_TRANSPORT=" + string(encoded),
 			"HIVE_TEST_OUT=" + out,
+			"HIVE_TEST_TRANSPORT_ACK=" + ackFlag(ack),
 		},
 		// The scenario is a single delivery, so a restart would repeat it.
 		MaxRestarts: 0,
@@ -91,7 +124,19 @@ func transportSpec(t *testing.T, params v1.TransportInboundParams, out string) p
 
 // startStackWithTransport brings up a coordinator, a node with the test agent,
 // and a transport plugin that delivers one envelope.
+// ackFlag renders the acknowledgement switch for the helper process.
+func ackFlag(enabled bool) string {
+	if enabled {
+		return "1"
+	}
+	return ""
+}
+
 func startStackWithTransport(t *testing.T, params v1.TransportInboundParams) (*storage.Store, v1.TransportOutcome, error) {
+	return startStackWithTransportAck(t, params, false)
+}
+
+func startStackWithTransportAck(t *testing.T, params v1.TransportInboundParams, ack bool) (*storage.Store, v1.TransportOutcome, error) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -148,7 +193,7 @@ func startStackWithTransport(t *testing.T, params v1.TransportInboundParams) (*s
 
 	// A transport can be started after the coordinator is up, which is also what
 	// happens when a transport is enabled later.
-	if _, err := coordinator.Supervisor().Start(ctx, transportSpec(t, params, outcomePath)); err != nil {
+	if _, err := coordinator.Supervisor().Start(ctx, transportSpec(t, params, outcomePath, ack)); err != nil {
 		t.Fatalf("start the transport plugin: %v", err)
 	}
 
@@ -331,5 +376,39 @@ func TestTransportUnknownCommandIsACommandError(t *testing.T) {
 	}
 	if outcome.SessionID != "" {
 		t.Fatal("a rejected command must not create a session")
+	}
+}
+
+// A transport that acknowledges a delivery advances its durable binding cursor, so
+// a restarted transport resumes instead of replaying everything.
+func TestTransportAcknowledgementAdvancesTheBindingCursor(t *testing.T) {
+	ctx := context.Background()
+
+	store, outcome, callErr := startStackWithTransportAck(t, v1.TransportInboundParams{
+		Transport:      "slack",
+		ConversationID: "C123",
+		Principal:      "slack:U123",
+		SourceID:       "event:C123:1700000000.000300",
+		Kind:           "message",
+		Text:           "fix the login bug",
+	}, true)
+	if callErr != nil {
+		t.Fatalf("transport delivery failed: %v", callErr)
+	}
+	if outcome.SessionID == "" {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+
+	waitFor(t, "the binding cursor to advance", func() bool {
+		binding, err := store.GetBinding(ctx, "slack", "C123")
+		return err == nil && binding.EventCursor >= 1
+	})
+
+	binding, err := store.GetBinding(ctx, "slack", "C123")
+	if err != nil {
+		t.Fatalf("GetBinding: %v", err)
+	}
+	if binding.SessionID != outcome.SessionID {
+		t.Errorf("binding session = %q, want %q", binding.SessionID, outcome.SessionID)
 	}
 }

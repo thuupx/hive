@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/thupham/hive/internal/agent"
 	"github.com/thupham/hive/internal/command"
@@ -125,7 +126,8 @@ func (s *Service) runHandoff(ctx context.Context, sess *session.Session, record 
 		return err
 	}
 
-	if err := s.buildHandoffContext(ctx, sess, record.ID, params.Summary); err != nil {
+	preamble, err := s.buildHandoffContext(ctx, sess, record.ID, params.Summary)
+	if err != nil {
 		return err
 	}
 
@@ -135,7 +137,10 @@ func (s *Service) runHandoff(ctx context.Context, sess *session.Session, record 
 
 	// Starting the target is a side effect. If it fails, the handoff is not
 	// reported as a transfer.
-	if err := s.startRun(ctx, targetRun, params.Workspace); err != nil {
+	//
+	// The context travels with the start, so the target sees what happened before
+	// its first prompt rather than starting blind.
+	if err := s.startRun(ctx, targetRun, params.Workspace, preamble); err != nil {
 		return err
 	}
 
@@ -148,10 +153,10 @@ func (s *Service) runHandoff(ctx context.Context, sess *session.Session, record 
 // The snapshot id is written with a targeted update: the handoff state is moved
 // by the lifecycle steps, and persisting a stale copy of the record would undo
 // them.
-func (s *Service) buildHandoffContext(ctx context.Context, sess *session.Session, handoffID, summary string) error {
+func (s *Service) buildHandoffContext(ctx context.Context, sess *session.Session, handoffID, summary string) (string, error) {
 	recent, err := s.store.ReadEvents(ctx, sess.ID, 0, RecentHandoffEvents)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	packageContext := handoff.Context{
@@ -166,7 +171,7 @@ func (s *Service) buildHandoffContext(ctx context.Context, sess *session.Session
 
 	payload, err := json.Marshal(packageContext)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// A snapshot is versioned so a later context schema can migrate or reject it
@@ -181,14 +186,59 @@ func (s *Service) buildHandoffContext(ctx context.Context, sess *session.Session
 	if err := s.store.WriteTx(ctx, func(tx storage.Execer) error {
 		return s.store.PutSnapshot(ctx, tx, snapshot)
 	}); err != nil {
-		return err
+		return "", err
 	}
 
-	_, err = s.store.UpdateHandoffWith(ctx, handoffID, func(current *handoff.Handoff) error {
+	if _, err := s.store.UpdateHandoffWith(ctx, handoffID, func(current *handoff.Handoff) error {
 		current.ContextSnapshotID = snapshot.ID
 		return nil
-	})
-	return err
+	}); err != nil {
+		return "", err
+	}
+
+	return renderPreamble(packageContext), nil
+}
+
+// renderPreamble turns the context package into the text the target agent sees.
+//
+// The core renders it, so an agent adapter does not need to understand Hive's
+// context shape.
+func renderPreamble(packageContext handoff.Context) string {
+	var b strings.Builder
+
+	b.WriteString("You are continuing an existing session that was handed off from another agent.\n")
+
+	if packageContext.Summary != "" {
+		b.WriteString("\nSummary from the previous agent:\n")
+		b.WriteString(packageContext.Summary)
+		b.WriteString("\n")
+	}
+
+	if len(packageContext.PriorMessages) > 0 {
+		b.WriteString("\nEarlier user messages:\n")
+		for _, message := range packageContext.PriorMessages {
+			b.WriteString("- ")
+			b.WriteString(message)
+			b.WriteString("\n")
+		}
+	}
+
+	if len(packageContext.RecentEvents) > 0 {
+		b.WriteString("\nRecent session activity:\n")
+		for _, ev := range packageContext.RecentEvents {
+			b.WriteString("- ")
+			b.WriteString(ev.Type)
+			if ev.Method != "" {
+				b.WriteString(" (")
+				b.WriteString(ev.Method)
+				b.WriteString(")")
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\nContinue from here. The user's next message follows.")
+	return b.String()
 }
 
 // HandoffContextSchemaVersion identifies the context shape written by this build.

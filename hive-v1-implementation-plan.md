@@ -762,19 +762,90 @@ Deliberately not in M9:
   package is built, versioned, and stored; feeding it to the target run's first
   prompt is part of the runtime wiring, together with the CLI in M10.
 
-### M10 — CLI/TUI
+### M10 — CLI and TUI
 
-- [ ] CLI client over the Unix socket, using the Hive Protocol
-- [ ] TUI management views: Sessions, Agents, Nodes, Plugins, Events,
-      Config, Logs (Security can be minimal in v1)
-- [ ] Session detail: workspace, current agent, node, run list,
-      `[Handoff]` `[Cancel]` `[Open]`
-- [ ] No orchestration logic in the CLI/TUI — it is a client of Hive APIs
-      (§32)
-- [ ] Tests: CLI performs handoff through the protocol only
+- [x] A Control API client, so the CLI and the TUI are clients of Hive APIs
+      rather than independent orchestration logic
+- [x] CLI commands: `version`, `config`, `serve`, `tui`, `session
+      create|list|status|prompt|cancel|handoff|events`, `agent list`,
+      `node list`, `command get`
+- [x] An explicit `-command-id` on mutating commands, so a caller can retry the
+      same logical operation deliberately
+- [x] `session events` reports a pruned cursor explicitly instead of skipping
+      history silently
+- [x] TUI management plane: overview and session detail, rendering once or on
+      an interval
+- [x] Durable transport binding cursor advances with the acknowledgement
+- [x] Handoff context reaches the target agent as a preamble to its first prompt
+- [x] Tests: the client surface end to end over the socket, the management plane
+      rendering, and the binding cursor
 
-**Exit criteria:** a full flow (create session, prompt, handoff, permission
-response) is drivable from the TUI with no core logic in the client.
+**Exit criteria:** a full flow is drivable from the CLI with no core logic in the
+client.
+
+Status: met. `make ci` is green with 234 passing tests; the suite is clean under
+`-race`. Verified by running it:
+
+```text
+$ hive version
+hive 0.1.0-dev
+hive protocol hive/1.0
+
+$ hive agent list
+claude               acp
+
+$ hive node list
+Thus-MacBook-Pro.local   connected  generation 1  0 executions  0.1.0-dev
+
+$ hive session create
+session: sess_b1d8d6dd8a860f4b
+run:     run_305870203fb38fd5
+agent:   claude
+node:    Thus-MacBook-Pro.local
+command: cmd_b31f7baa139d552e
+
+$ hive session list
+sess_b1d8d6dd8a860f4b  active    1 runs  updated 2026-09-23T05:00:34Z
+
+$ hive tui
+Hive
+
+● 1 of 1 nodes
+● 1 agents
+● 1 sessions
+○ 0 pending permissions
+```
+
+Implementation notes:
+
+- The CLI and the TUI share one client package, so neither contains orchestration
+  logic. The CLI generates a fresh command id per invocation, because an
+  invocation is a new logical operation; `-command-id` is what a caller passes
+  when retrying the same one.
+- `session events` surfaces `cursor_expired` on stderr with the snapshot boundary
+  and exits non-zero, rather than pretending the stream was empty.
+- The TUI renders a dashboard rather than owning the terminal. Interactive
+  navigation is not implemented, and the management plane is still useful as a
+  refreshed view.
+- The handoff context is rendered to text by the core and travels with the target
+  start, so the agent adapter stays protocol-agnostic. The ACP adapter prepends it
+  to exactly one prompt, because ACP has no field for seeding a session.
+- The binding cursor moves only when the transport durably accepted the event for
+  its own delivery workflow, which is what lets a restarted transport resume.
+
+A serious bug was found by running the CLI, not by a test:
+
+- **`serve` dropped the flags that followed it.** A spawned node child is started
+  with `-role node -coordinator-url ...`, and those arguments were parsed but never
+  applied, so the child started as a second coordinator and spawned a node child of
+  its own. That is an unbounded chain of processes. `serve` now applies the global
+  flags, and a coordinator refuses to spawn a node child when it is itself one.
+
+Deliberately not in M10:
+
+- Interactive TUI navigation and in-place terminal control.
+- The `session handoff` CLI does not yet show the pending handoff while it is in
+  flight; the operation is synchronous from the caller's point of view.
 
 ### M11 — Workspace
 

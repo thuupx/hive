@@ -138,6 +138,11 @@ type SubscribeResponse struct {
 type AckRequest struct {
 	SubscriptionID string `json:"subscriptionId"`
 	Sequence       int64  `json:"sequence"`
+
+	// ConversationID names the transport conversation the event was delivered to.
+	// A transport sets it so the durable binding cursor advances with the
+	// acknowledgement.
+	ConversationID string `json:"conversationId,omitempty"`
 }
 
 // DeliveredEvent is an event pushed to a subscribed plugin.
@@ -157,6 +162,11 @@ type ExecutionStartParams struct {
 
 	Generation    int64  `json:"generation"`
 	WorkspacePath string `json:"workspacePath"`
+
+	// Context is a preamble the agent should receive before its first prompt,
+	// when a handoff carried context into this run. It is rendered by the core so
+	// the agent adapter stays protocol-agnostic.
+	Context string `json:"context,omitempty"`
 }
 
 // ExecutionPromptParams asks an agent plugin to prompt an execution.

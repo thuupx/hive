@@ -189,18 +189,29 @@ func (p *Plugin) renderEvents(ctx context.Context, subscriptionID string) {
 
 			// Acknowledge delivery so the core can advance the cursor. Delivery
 			// is at-least-once, so an unacknowledged event arrives again.
-			if err := p.host.Ack(ctx, subscriptionID, delivered.Event.Sequence); err != nil {
-				p.log.Debug("could not acknowledge an event", "error", err)
-			}
+			conversations := p.conversationsFor(delivered.Event.SessionID)
 
 			renderer := Renderer{SessionID: delivered.Event.SessionID}
 			rendered, ok := renderer.RenderEvent(delivered.Event)
-			if !ok {
-				continue
+			if ok {
+				for _, conversation := range conversations {
+					p.post(ctx, conversation, "", rendered.Message)
+				}
 			}
 
-			for _, conversation := range p.conversationsFor(delivered.Event.SessionID) {
-				p.post(ctx, conversation, "", rendered.Message)
+			// Acknowledge once per conversation so each durable binding cursor
+			// advances. An event with no bound conversation still advances the
+			// subscription cursor.
+			if len(conversations) == 0 {
+				if err := p.host.Ack(ctx, subscriptionID, delivered.Event.Sequence); err != nil {
+					p.log.Debug("could not acknowledge an event", "error", err)
+				}
+				continue
+			}
+			for _, conversation := range conversations {
+				if err := p.host.AckFor(ctx, subscriptionID, delivered.Event.Sequence, conversation); err != nil {
+					p.log.Debug("could not acknowledge an event", "conversation", conversation, "error", err)
+				}
 			}
 		}
 	}

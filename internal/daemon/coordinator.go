@@ -95,6 +95,7 @@ func NewCoordinator(opts CoordinatorOptions) (*Coordinator, error) {
 	bus := eventbus.NewBus()
 	supervisor := plugin.NewSupervisor(log)
 	events := plugin.NewEvents(bus, supervisor, log)
+	events.Bindings = bindingCursor{store: opts.Store}
 	events.Register(supervisor)
 
 	nodeServer := node.NewServer(context.Background(), log)
@@ -573,6 +574,21 @@ func (c *Coordinator) onLeaseExpired(nodeID string, ref v1.ExecutionRef) {
 
 	c.log.Warn("execution lease expired; run is interrupted",
 		"node", nodeID, "run", ref.AgentRunID, "generation", ref.Generation)
+}
+
+// bindingCursor advances durable transport binding cursors.
+type bindingCursor struct {
+	store *storage.Store
+}
+
+func (b bindingCursor) Advance(ctx context.Context, transport, conversationID string, sequence int64) error {
+	binding, err := b.store.GetBinding(ctx, transport, conversationID)
+	if err != nil {
+		return err
+	}
+	return b.store.WriteTx(ctx, func(tx storage.Execer) error {
+		return b.store.AdvanceBindingCursor(ctx, tx, binding.ID, sequence)
+	})
 }
 
 // executionStore answers the reconnect reconciliation questions from the store.

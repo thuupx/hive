@@ -21,10 +21,23 @@ const EventBuffer = 1024
 // processed, and an unacknowledged event is delivered again rather than lost. A
 // plugin that cannot keep up loses realtime delivery and recovers from the
 // durable store using its cursor.
+// BindingCursor advances a durable transport binding cursor.
+//
+// A binding cursor is the last Hive event sequence the transport durably accepted
+// for that conversation, which is what lets a restarted transport resume instead
+// of replaying everything.
+type BindingCursor interface {
+	Advance(ctx context.Context, transport, conversationID string, sequence int64) error
+}
+
 type Events struct {
 	bus *eventbus.Bus
 	sup *Supervisor
 	log *slog.Logger
+
+	// Bindings is optional. Without it, acknowledgements only advance the
+	// in-memory subscription cursor.
+	Bindings BindingCursor
 
 	mu     sync.Mutex
 	next   int64
@@ -159,7 +172,24 @@ func (e *Events) ack(_ context.Context, call Call) (any, error) {
 	}
 	sub.mu.Unlock()
 
+	if e.Bindings != nil && req.ConversationID != "" {
+		// The binding cursor moves only when the transport has durably accepted
+		// the event for its own delivery workflow.
+		if err := e.Bindings.Advance(context.Background(), e.transportOf(sub), req.ConversationID, req.Sequence); err != nil {
+			e.log.Debug("binding cursor could not advance",
+				"conversation", req.ConversationID, "error", err)
+		}
+	}
+
 	return map[string]any{"acked": req.Sequence}, nil
+}
+
+// transportOf reports the transport a subscription belongs to.
+func (e *Events) transportOf(sub *subscription) string {
+	if sub.instance == nil {
+		return ""
+	}
+	return sub.instance.PluginID
 }
 
 func (e *Events) deliver(ev *event.Event) {

@@ -13,6 +13,7 @@ import (
 	"github.com/thupham/hive/internal/event"
 	"github.com/thupham/hive/internal/ids"
 	"github.com/thupham/hive/internal/node"
+	"github.com/thupham/hive/internal/permission"
 	"github.com/thupham/hive/internal/session"
 	"github.com/thupham/hive/internal/storage"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
@@ -145,7 +146,7 @@ func (s *Service) CreateSession(ctx context.Context, principal Principal, params
 		RunState:  string(run.State),
 	}
 
-	if err := s.startRun(ctx, run, params.Workspace); err != nil {
+	if err := s.startRun(ctx, run, params.Workspace, ""); err != nil {
 		s.log.Warn("execution could not be started", "run", run.ID, "node", run.NodeID, "error", err)
 	}
 
@@ -400,6 +401,69 @@ func (s *Service) Replay(ctx context.Context, principal Principal, params v1.Eve
 	return result, nil
 }
 
+// ListPermissions returns pending permission requests.
+//
+// The owner sees every session. Any other principal sees only the requests of
+// the sessions it is bound to.
+func (s *Service) ListPermissions(ctx context.Context, principal Principal, params v1.PermissionListParams) (*v1.PermissionListResult, error) {
+	if err := s.policy.Authorize(principal, v1.MethodPermissionList); err != nil {
+		return nil, err
+	}
+
+	if params.SessionID != "" {
+		if err := s.authorizeSession(ctx, principal, params.SessionID); err != nil {
+			return nil, err
+		}
+		open, err := s.store.ListOpenPermissionRequests(ctx, params.SessionID)
+		if err != nil {
+			return nil, storageError(err)
+		}
+		return permissionList(open), nil
+	}
+
+	open, err := s.store.ListAllOpenPermissionRequests(ctx, params.Limit)
+	if err != nil {
+		return nil, storageError(err)
+	}
+
+	// A non-owner must not learn about another principal's pending work.
+	if principal != s.policy.Owner {
+		visible, err := s.store.ListSessionsForPrincipal(ctx, string(principal))
+		if err != nil {
+			return nil, storageError(err)
+		}
+		allowed := make(map[string]bool, len(visible))
+		for _, id := range visible {
+			allowed[id] = true
+		}
+
+		kept := open[:0]
+		for _, req := range open {
+			if allowed[req.SessionID] {
+				kept = append(kept, req)
+			}
+		}
+		open = kept
+	}
+
+	return permissionList(open), nil
+}
+
+func permissionList(open []*permission.Request) *v1.PermissionListResult {
+	result := &v1.PermissionListResult{Permissions: make([]v1.PermissionSummary, 0, len(open))}
+	for _, req := range open {
+		result.Permissions = append(result.Permissions, v1.PermissionSummary{
+			PermissionID:   req.ID,
+			SessionID:      req.SessionID,
+			RunID:          req.RunID,
+			AgentRequestID: req.AgentRequestID,
+			CreatedAt:      req.CreatedAt,
+			ExpiresAt:      req.ExpiresAt,
+		})
+	}
+	return result
+}
+
 // ListAgents returns the configured agents.
 func (s *Service) ListAgents(ctx context.Context, principal Principal) (*v1.AgentListResult, error) {
 	if err := s.policy.Authorize(principal, v1.MethodAgentList); err != nil {
@@ -453,7 +517,7 @@ func (s *Service) nodeForAgent(agentID string) (*node.Node, error) {
 	return nil, v1.Unavailable("no connected node runs agent %q", agentID)
 }
 
-func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePath string) error {
+func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePath, preamble string) error {
 	n, ok := s.nodes.Node(run.NodeID)
 	if !ok || !n.Connected() {
 		return v1.Unavailable("node %s is not connected", run.NodeID)
@@ -468,6 +532,7 @@ func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePa
 		AgentID:       run.AgentID,
 		Generation:    run.ExecutionGeneration,
 		WorkspacePath: workspacePath,
+		Context:       preamble,
 	}, &out)
 	if err != nil {
 		return err

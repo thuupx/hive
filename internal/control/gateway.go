@@ -132,6 +132,13 @@ func (g *Gateway) HandleAs(ctx context.Context, principal Principal, req *v1.Mes
 		}
 		return g.service.Replay(ctx, principal, params)
 
+	case v1.MethodPermissionList:
+		var params v1.PermissionListParams
+		if err := decode(req, &params); err != nil {
+			return nil, err
+		}
+		return g.service.ListPermissions(ctx, principal, params)
+
 	case v1.MethodCommandGet:
 		var params v1.CommandGetParams
 		if err := decode(req, &params); err != nil {

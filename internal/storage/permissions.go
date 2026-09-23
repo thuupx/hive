@@ -154,6 +154,40 @@ func (s *Store) ListOpenPermissionRequests(ctx context.Context, sessionID string
 	return out, nil
 }
 
+// ListAllOpenPermissionRequests returns every pending request, oldest first.
+//
+// The management plane needs to see pending work across sessions, not only one
+// session at a time.
+func (s *Store) ListAllOpenPermissionRequests(ctx context.Context, limit int) ([]*permission.Request, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, session_id, run_id, agent_request_id, payload, state, expires_at, created_at, resolved_at
+		FROM permission_requests
+		WHERE state = ?
+		ORDER BY created_at
+		LIMIT ?`, string(permission.StatePending), limit)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list open permission requests: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*permission.Request
+	for rows.Next() {
+		req, err := scanPermissionRequest(rows)
+		if err != nil {
+			return nil, fmt.Errorf("storage: scan permission request: %w", err)
+		}
+		out = append(out, req)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: list open permission requests: %w", err)
+	}
+	return out, nil
+}
+
 func scanPermissionRequest(row scanner) (*permission.Request, error) {
 	var (
 		req       permission.Request
