@@ -5,7 +5,7 @@ PLUGIN_ACP := $(BINDIR)/hive-plugin-acp
 PLUGIN_SLACK := $(BINDIR)/hive-plugin-slack
 EXAMPLES := $(BINDIR)/example-client $(BINDIR)/plugin-echo
 
-.PHONY: all build examples test vet fmt tidy run clean ci release
+.PHONY: all build examples test test-race vet fmt tidy run clean ci release
 
 all: build
 
@@ -22,6 +22,9 @@ examples:
 
 test:
 	$(GO) test ./...
+
+test-race:
+	$(GO) test -race ./...
 
 vet:
 	$(GO) vet ./...

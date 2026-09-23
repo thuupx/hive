@@ -45,6 +45,7 @@ Usage:
   hive [global flags] <command> [arguments]
 
 Commands:
+  init                       write a starter configuration file
   version                    print build and protocol version
   config                     validate the configuration and print effective values
   serve                      run the Hive daemon
@@ -99,6 +100,8 @@ func run(args []string) error {
 	case "version":
 		printVersion()
 		return nil
+	case "init":
+		return runInit(f)
 	case "config":
 		return runConfig(f)
 	case "serve":
@@ -224,6 +227,74 @@ func printVersion() {
 	}
 }
 
+// starterConfig is a commented configuration a new installation can use.
+const starterConfig = `# Hive configuration.
+#
+# Every key here is optional except an agent: without one, Hive has nothing to
+# run. Uncomment and edit to match your machine.
+
+data_dir = ""          # default: ~/.hive/data
+
+[cluster]
+role = "auto"          # auto | coordinator | node
+spawn_node = true      # a coordinator starts a node child process
+
+[log]
+level = "info"         # debug | info | warn | error
+format = "text"        # text | json
+
+[event_store]
+retention_days = 30
+
+[security]
+# A transport asserts these principals. Unknown access is denied by default.
+allowed_users = []
+
+# An agent is a protocol plus a command. Replace this with an agent you have
+# installed: Hive speaks ACP to it.
+#
+# [agents.example]
+# protocol = "acp"
+# command = ["your-agent", "acp"]
+
+# A transport normalizes a platform into Hive operations. Credentials come from
+# the environment, never from this file.
+#
+# [transport.slack]
+# enabled = true
+# [transport.slack.options]
+# bot_user_id = "U0XXXXXXX"
+# require_mention = "true"
+`
+
+// runInit writes a starter configuration.
+func runInit(f flags) error {
+	cfgPath := f.configPath
+	if cfgPath == "" {
+		var err error
+		if cfgPath, err = config.DefaultPath(); err != nil {
+			return err
+		}
+	}
+
+	// Refuse to overwrite: a configuration file is not ours to replace.
+	if _, err := os.Stat(cfgPath); err == nil {
+		return fmt.Errorf("%s already exists; edit it or remove it first", cfgPath)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(cfgPath), err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(starterConfig), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", cfgPath, err)
+	}
+
+	fmt.Printf("wrote %s\n\n", cfgPath)
+	fmt.Println("Next: add an [agents.<name>] section naming an ACP agent you have")
+	fmt.Println("installed, then run `hive serve` and `hive agent list`.")
+	return nil
+}
+
 func runConfig(f flags) error {
 	cfgPath := f.configPath
 	if cfgPath == "" {
@@ -294,6 +365,11 @@ func runServe(f flags) error {
 
 	log := logging.New(os.Stderr, cfg.Log.Level, cfg.Log.Format)
 
+	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
+		log.Warn("no configuration file; Hive cannot run an agent",
+			"path", cfgPath, "create_it_with", "hive init")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -362,7 +438,17 @@ func serveCoordinator(ctx context.Context, cfgPath string, cfg config.Config, lo
 		"control", coordinator.ControlSocket(),
 	)
 
-	if cfg.Cluster.SpawnsNode() && os.Getenv(nodeChildEnv) == "" {
+	switch {
+	case !cfg.Cluster.SpawnsNode():
+		log.Info("no node child: cluster.spawn_node is false")
+	case os.Getenv(nodeChildEnv) != "":
+		// This process is already a node child.
+	case len(agentNames) == 0:
+		// A node with nothing to run would start, find no agent, and exit. Say
+		// what to fix instead of spawning a child that dies.
+		log.Warn("no node child started: no agents are configured",
+			"fix", "add an [agents.<name>] section to "+cfgPath, "see", "README.md")
+	default:
 		child, err := spawnNodeChild(cfgPath, coordinator.URL(), log)
 		if err != nil {
 			return err
