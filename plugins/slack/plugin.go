@@ -154,6 +154,10 @@ type Plugin struct {
 	// arrive as more than one event.
 	handled map[string]time.Time
 
+	// lastSeen is the highest sequence delivered per session, so a gap can be
+	// noticed and read back.
+	lastSeen map[string]int64
+
 	// cursors is how far each session has been accepted, read at startup so a
 	// restart can replay what was missed.
 	cursors map[string]int64
@@ -189,6 +193,7 @@ func New(host *sdk.Host, client Client, opts Options) *Plugin {
 		handled:      make(map[string]time.Time),
 		cursors:      make(map[string]int64),
 		typing:       make(map[string]*typing),
+		lastSeen:     make(map[string]int64),
 	}
 }
 
@@ -551,6 +556,14 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 				return
 			}
 
+			// A gap means events were published while this transport was not
+			// reading — the subscription is set up after the plugin starts, and a
+			// burst can overflow the bus. The cursor is what recovers them, so the
+			// missing range is read from the durable store rather than skipped:
+			// an answer that never arrives is what a user reports as a bot that
+			// ignored them.
+			p.recoverGap(ctx, delivered.Event.SessionID, delivered.Event.Sequence)
+
 			// Acknowledge delivery so the core can advance the cursor. Delivery
 			// is at-least-once, so an unacknowledged event arrives again.
 			conversations := p.conversationsFor(delivered)
@@ -861,6 +874,54 @@ func (p *Plugin) rememberBinding(conversationID, sessionID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.bound[conversationID] = sessionID
+}
+
+// recoverGap replays what was missed between two delivered sequences.
+//
+// A subscription is not a guarantee: events published before it exists, or while
+// the reader is behind, are gone from the bus. The durable store still has them,
+// and the sequence says exactly which ones.
+func (p *Plugin) recoverGap(ctx context.Context, sessionID string, sequence int64) {
+	if sessionID == "" || sequence <= 1 {
+		return
+	}
+
+	after := p.gapFrom(sessionID, sequence)
+	if after == 0 {
+		return
+	}
+
+	p.log.Warn("events were missed; reading them back",
+		"session", sessionID, "after", after, "next", sequence)
+
+	if _, err := p.replay(ctx, sessionID, after); err != nil {
+		p.log.Warn("the missed events could not be read back",
+			"session", sessionID, "error", err)
+	}
+}
+
+// gapFrom records the sequence and reports where to resume from.
+//
+// It is zero when there is nothing to read back: the first event of a session, or
+// one that follows the last.
+func (p *Plugin) gapFrom(sessionID string, sequence int64) int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	last, seen := p.lastSeen[sessionID]
+	if !seen {
+		p.lastSeen[sessionID] = sequence
+		return 0
+	}
+	if sequence <= last {
+		return 0
+	}
+
+	p.lastSeen[sessionID] = sequence
+	if sequence == last+1 {
+		return 0
+	}
+	return last
 }
 
 // boundConversations is what this transport has learned about a session.

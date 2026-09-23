@@ -155,3 +155,32 @@ func TestAnEventUsesTheConversationsTheCoreNames(t *testing.T) {
 		t.Fatalf("conversations = %v, want the core's and the local one", got)
 	}
 }
+
+// A gap in the sequence is read back, not skipped.
+//
+// Found in a live thread: an answer was published while the transport was not
+// reading, so the bus no longer had it, the cursor never moved, and the answer
+// never arrived. A user reports that as a bot that ignored them.
+func TestAGapIsNoticed(t *testing.T) {
+	p := New(nil, nil, Options{})
+
+	// The first event establishes the position.
+	if p.gapFrom("sess_1", 5) != 0 {
+		t.Fatal("the first event is not a gap")
+	}
+
+	// The next in order is not a gap either.
+	if p.gapFrom("sess_1", 6) != 0 {
+		t.Fatal("a consecutive event is not a gap")
+	}
+
+	// A jump is: 7 and 8 were never delivered.
+	if got := p.gapFrom("sess_1", 9); got != 6 {
+		t.Fatalf("gapFrom = %d, want the last sequence seen", got)
+	}
+
+	// A session this transport has never seen starts wherever it starts.
+	if got := p.gapFrom("sess_other", 40); got != 0 {
+		t.Fatalf("gapFrom = %d, want no gap for a session just met", got)
+	}
+}
