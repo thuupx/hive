@@ -56,7 +56,7 @@ func (p *Plugin) startTyping(ctx context.Context, conversationID, thread string)
 	}
 
 	timestamp, err := p.client.PostMessage(ctx, PostMessageRequest{
-		Channel:  conversationID,
+		Channel:  channelOf(conversationID),
 		ThreadTS: thread,
 		Message:  textMessage(typingFrames[0]),
 	})
@@ -130,7 +130,7 @@ func (p *Plugin) advanceTyping(ctx context.Context) {
 	for _, entry := range active {
 		frame := typingFrames[entry.frame%len(typingFrames)]
 		if err := p.client.UpdateMessage(ctx, UpdateMessageRequest{
-			Channel:   entry.conversation,
+			Channel:   channelOf(entry.conversation),
 			Timestamp: entry.timestamp,
 			Message:   textMessage(frame),
 		}); err != nil {
@@ -165,7 +165,7 @@ func (p *Plugin) replaceTyping(ctx context.Context, conversationID string, messa
 	}
 
 	if err := p.client.UpdateMessage(ctx, UpdateMessageRequest{
-		Channel:   entry.conversation,
+		Channel:   channelOf(entry.conversation),
 		Timestamp: entry.timestamp,
 		Message:   message,
 	}); err != nil {

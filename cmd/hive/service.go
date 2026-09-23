@@ -34,7 +34,7 @@ const serviceEnvMode = 0o600
 // runService manages the background service.
 func runService(f flags, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: hive service <install|uninstall|status>")
+		return errors.New("usage: hive service <install|uninstall|restart|status>")
 	}
 
 	switch args[0] {

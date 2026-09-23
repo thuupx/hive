@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -129,6 +130,22 @@ func runTestAgent() {
 			Method:     "session/update",
 			Payload:    received,
 		}, nil)
+
+		// An agent asks before it runs a tool, and the test agent asks when the
+		// prompt says so. It exercises the real path: plugin to node to coordinator.
+		if strings.Contains(req.Text, "ask permission") {
+			mu.Lock()
+			hiveSession := sessions[req.AgentRunID]
+			mu.Unlock()
+
+			_ = host.Call(ctx, v1.MethodPermissionRequest, v1.PermissionRequestParams{
+				AgentRunID:     req.AgentRunID,
+				SessionID:      hiveSession,
+				AgentRequestID: "agent-request-" + req.AgentRunID,
+				Payload: json.RawMessage(
+					`{"toolCall":{"title":"Run rm -rf"},"options":[{"optionId":"allow","name":"Allow"}]}`),
+			}, nil)
+		}
 
 		// The run is no longer held once its turn ends, so a run left in a working
 		// state by a restart has nothing behind it.

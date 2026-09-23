@@ -59,6 +59,11 @@ type ActionPayload struct {
 	ActionTS string `json:"action_ts"`
 	Message  struct {
 		TS string `json:"ts"`
+
+		// ThreadTS is the thread the message is in, which is the conversation the
+		// interaction belongs to. Slack omits it for a message that is not in a
+		// thread.
+		ThreadTS string `json:"thread_ts"`
 	} `json:"message"`
 	Actions []struct {
 		ActionID string `json:"action_id"`

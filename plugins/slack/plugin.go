@@ -60,23 +60,46 @@ type Acknowledgement struct {
 	Reaction string
 }
 
-// replyThread is where a turn's output belongs.
+// conversationKey is what a delivery is bound to, and where its output belongs.
 //
-// A channel is shared, so a conversation in one is a thread: the answer, the tool
-// cards, and the acknowledgement go under the message that asked, and the channel
-// itself stays readable. A direct message has nobody to spare the noise from, so
-// it stays flat.
+// A thread is a conversation. Two threads in one channel are two conversations,
+// and answering one must not answer in the other: binding a whole channel to one
+// session mixes unrelated conversations and makes the thread an answer goes into a
+// thing that has to be remembered and guessed at.
 //
-// A message already in a thread replies in that thread, because that is the
-// conversation the user is having.
-func replyThread(conversationID, messageTS, existingThread string, flat bool) string {
-	if existingThread != "" {
-		return existingThread
+// Making the thread part of the key is what removes the guesswork. The thread a
+// turn belongs to is then a property of its session, so nothing has to be tracked
+// per run and nothing has to fall back to a previous value.
+//
+// A direct message is a private pipe with no threads to keep apart, so it stays
+// flat and one conversation.
+func conversationKey(channelID, messageTS, threadRoot string, flat bool) (key, thread string) {
+	if threadRoot != "" {
+		return channelID + ":" + threadRoot, threadRoot
 	}
-	if flat || messageTS == "" || isDirectMessage(conversationID) {
-		return ""
+	if flat || messageTS == "" || isDirectMessage(channelID) {
+		return channelID, ""
 	}
-	return messageTS
+	// A message in a channel starts a thread, and that thread is the conversation.
+	return channelID + ":" + messageTS, messageTS
+}
+
+// threadOf is where a conversation's output belongs.
+//
+// It is read from the key rather than remembered, so a restart cannot lose it.
+func threadOf(conversationID string) string {
+	if i := strings.Index(conversationID, ":"); i >= 0 {
+		return conversationID[i+1:]
+	}
+	return ""
+}
+
+// channelOf is the platform conversation a key belongs to.
+func channelOf(conversationID string) string {
+	if i := strings.Index(conversationID, ":"); i >= 0 {
+		return conversationID[:i]
+	}
+	return conversationID
 }
 
 // isDirectMessage reports whether a conversation is 1:1.
@@ -89,9 +112,16 @@ func isDirectMessage(conversationID string) bool {
 
 // delivery is one inbound platform delivery plus the coordinates needed to reply.
 type delivery struct {
-	envelope       v1.Envelope
+	envelope v1.Envelope
+
+	// conversationID is what this delivery is bound to: the thread, not the
+	// channel, because a thread is a conversation.
 	conversationID string
-	timestamp      string
+
+	// channelID is the platform conversation, which is where a message is posted.
+	channelID string
+
+	timestamp string
 
 	// thread is where this turn's output belongs. Empty posts to the conversation
 	// itself.
@@ -139,14 +169,6 @@ type Plugin struct {
 	// typing is the message showing that a conversation's turn is working, keyed
 	// by conversation because the run is not known when it is posted.
 	typing map[string]*typing
-
-	// turnThreads is the thread of the turn a conversation is currently having.
-	//
-	// An agent can emit a tool call before the delivery that caused it has
-	// returned, so the run is not known yet and the event would land in the
-	// channel instead of the thread the rest of the turn is in. The conversation
-	// is known throughout, so the turn is recorded against it.
-	turnThreads map[string]string
 }
 
 // New returns a Slack plugin over a connected host.
@@ -166,8 +188,6 @@ func New(host *sdk.Host, client Client, opts Options) *Plugin {
 		toolMessages: make(map[string]string),
 		handled:      make(map[string]time.Time),
 		cursors:      make(map[string]int64),
-		runThreads:   make(map[string]string),
-		turnThreads:  make(map[string]string),
 		typing:       make(map[string]*typing),
 	}
 }
@@ -316,9 +336,6 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 
 	// The turn's thread is recorded before the call, because the agent may start
 	// working — and emitting tool calls — before the call returns.
-	p.beginTurn(d.conversationID, d.thread)
-	defer p.endTurn(d.conversationID)
-
 	// A turn shows that it is working before the work starts, for the same reason:
 	// the agent can emit its first tool call before the delivery returns, and the
 	// indicator has to come first in the conversation.
@@ -347,9 +364,6 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 
 	if outcome.SessionID != "" {
 		p.rememberBinding(d.conversationID, outcome.SessionID)
-	}
-	if outcome.RunID != "" {
-		p.rememberThread(outcome.RunID, d.thread)
 	}
 	// The outcome is logged whatever it is, so a refused command is as visible as
 	// a successful one.
@@ -466,7 +480,17 @@ func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
 			return delivery{}, false
 		}
 		env := p.parser.ParseInteraction(payload)
-		return delivery{envelope: env, conversationID: env.ConversationID, timestamp: payload.ActionTS}, true
+		// The conversation is the thread the card is in, which is what the thread
+		// root says. A card that is not in a thread belongs to the channel.
+		root := payload.Message.ThreadTS
+		key, thread := conversationKey(env.ConversationID, root, root, p.opts.FlatReplies)
+		return delivery{
+			envelope:       env,
+			conversationID: key,
+			channelID:      env.ConversationID,
+			timestamp:      payload.ActionTS,
+			thread:         thread,
+		}, true
 
 	default:
 		var event MessageEvent
@@ -488,11 +512,13 @@ func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
 			// Not addressed to Hive.
 			return delivery{}, false
 		}
+		key, thread := conversationKey(event.Channel, event.Timestamp, event.ThreadTS, p.opts.FlatReplies)
 		return delivery{
 			envelope:       env,
-			conversationID: event.Channel,
+			conversationID: key,
+			channelID:      event.Channel,
 			timestamp:      event.Timestamp,
-			thread:         replyThread(event.Channel, event.Timestamp, event.ThreadTS, p.opts.FlatReplies),
+			thread:         thread,
 		}, true
 	}
 }
@@ -542,10 +568,12 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 			}
 
 			// The answer belongs under the message that asked for it, so a channel
-			// stays readable and a turn's output stays together.
+			// stays readable and a turn's output stays together. The thread is read
+			// from the conversation the event is bound to, so it cannot be guessed
+			// wrong and cannot be lost by a restart.
 			thread := ""
 			for _, conversation := range conversations {
-				if thread = p.threadFor(delivered.Event.RunID, conversation); thread != "" {
+				if thread = threadOf(conversation); thread != "" {
 					break
 				}
 			}
@@ -611,7 +639,7 @@ func (p *Plugin) renderTool(ctx context.Context, conversation, thread string, re
 
 	if timestamp == "" {
 		ts, err := p.client.PostMessage(ctx, PostMessageRequest{
-			Channel:  conversation,
+			Channel:  channelOf(conversation),
 			ThreadTS: thread,
 			Message:  rendered.Message,
 		})
@@ -633,7 +661,7 @@ func (p *Plugin) renderTool(ctx context.Context, conversation, thread string, re
 	}
 
 	if err := p.client.UpdateMessage(ctx, UpdateMessageRequest{
-		Channel:   conversation,
+		Channel:   channelOf(conversation),
 		Timestamp: timestamp,
 		Message:   rendered.Message,
 	}); err != nil {
@@ -643,51 +671,6 @@ func (p *Plugin) renderTool(ctx context.Context, conversation, thread string, re
 	if rendered.Detail != "" {
 		p.post(ctx, conversation, timestamp, textMessage(rendered.Detail))
 	}
-}
-
-// rememberThread records where a run's output belongs.
-func (p *Plugin) rememberThread(runID, thread string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.runThreads[runID] = thread
-	p.threadOrder = append(p.threadOrder, runID)
-	for len(p.threadOrder) > maxRunThreads {
-		oldest := p.threadOrder[0]
-		p.threadOrder = p.threadOrder[1:]
-		delete(p.runThreads, oldest)
-	}
-}
-
-// beginTurn records the thread of the turn a conversation is starting.
-func (p *Plugin) beginTurn(conversationID, thread string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.turnThreads[conversationID] = thread
-}
-
-// endTurn forgets the turn a conversation just had.
-func (p *Plugin) endTurn(conversationID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.turnThreads, conversationID)
-}
-
-// threadFor is where a run's output belongs, or empty for the conversation.
-//
-// A run is the precise answer. Before it is known — an agent can emit a tool call
-// while the delivery that caused it is still in flight — the conversation's
-// current turn is the answer, and it is the same thread.
-func (p *Plugin) threadFor(runID, conversationID string) string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if runID != "" {
-		if thread, ok := p.runThreads[runID]; ok {
-			return thread
-		}
-	}
-	return p.turnThreads[conversationID]
 }
 
 // maxRunThreads bounds how many runs are remembered.
@@ -737,7 +720,7 @@ func (p *Plugin) acknowledge(ctx context.Context, d delivery) {
 		reaction = "eyes"
 	}
 
-	req := ReactionRequest{Channel: d.conversationID, Timestamp: d.timestamp, Name: reaction}
+	req := ReactionRequest{Channel: d.channelID, Timestamp: d.timestamp, Name: reaction}
 	if err := p.client.AddReaction(ctx, req); err != nil {
 		p.log.Debug("acknowledgement failed", "error", err)
 	}
@@ -747,8 +730,9 @@ func (p *Plugin) post(ctx context.Context, conversationID, threadTS string, mess
 	if conversationID == "" {
 		return
 	}
+	// The conversation is the thread, and Slack posts to the channel that holds it.
 	if _, err := p.client.PostMessage(ctx, PostMessageRequest{
-		Channel:  conversationID,
+		Channel:  channelOf(conversationID),
 		ThreadTS: threadTS,
 		Message:  message,
 	}); err != nil {
@@ -818,7 +802,7 @@ func (p *Plugin) replay(ctx context.Context, sessionID string, after int64) (int
 		conversations := p.conversationsFor(sessionID)
 		thread := ""
 		for _, conversation := range conversations {
-			if thread = p.threadFor(ev.RunID, conversation); thread != "" {
+			if thread = threadOf(conversation); thread != "" {
 				break
 			}
 		}

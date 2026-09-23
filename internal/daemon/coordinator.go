@@ -534,16 +534,63 @@ func (c *Coordinator) handlePermissionRequest(ctx context.Context, call node.Cal
 	req := permission.New(ids.New("perm"), params.SessionID, params.AgentRunID,
 		params.AgentRequestID, params.Payload, expiresAt)
 
+	// The request becomes an event in the same transaction as the record.
+	//
+	// Without one the request is durable and invisible: the agent waits for an
+	// answer, the transport never learns there is a question, and the turn stops
+	// with nothing to show for it. A user reports that as the bot getting stuck.
+	payload, err := permissionEventPayload(params)
+	if err != nil {
+		return nil, err
+	}
+
+	ev := &event.Event{
+		ID:         ids.New("ev"),
+		SessionID:  params.SessionID,
+		RunID:      params.AgentRunID,
+		OriginNode: call.Node.NodeID,
+		Timestamp:  time.Now().UTC(),
+		Type:       v1.EventPermissionRequested,
+		Version:    1,
+		Protocol:   "hive",
+		Payload:    payload,
+	}
+
 	if err := c.store.WriteTx(ctx, func(tx storage.Execer) error {
-		return c.store.InsertPermissionRequest(ctx, tx, req)
+		if err := c.store.InsertPermissionRequest(ctx, tx, req); err != nil {
+			return err
+		}
+		_, err := c.store.AppendEvents(ctx, tx, ev)
+		return err
 	}); err != nil {
 		return nil, v1.Unavailable("permission request could not be recorded: %s", err.Error())
 	}
 
 	c.log.Info("permission requested",
-		"session", req.SessionID, "run", req.RunID, "permission", req.ID)
+		"session", req.SessionID, "run", req.RunID, "permission", req.ID, "sequence", ev.Sequence)
 
 	return map[string]any{"permissionRequestId": req.ID}, nil
+}
+
+// permissionEventPayload is what a transport needs to ask a user.
+//
+// The agent's own request is passed through and the request id is added, because
+// the answer has to name the request and the transport must not have to know how
+// Hive identifies one.
+func permissionEventPayload(params v1.PermissionRequestParams) (json.RawMessage, error) {
+	payload := map[string]any{}
+	if len(params.Payload) > 0 {
+		if err := json.Unmarshal(params.Payload, &payload); err != nil {
+			return nil, v1.InvalidParams("the permission request could not be read")
+		}
+	}
+	payload["agentRequestId"] = params.AgentRequestID
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, v1.Internal("the permission request could not be encoded")
+	}
+	return encoded, nil
 }
 
 // handleExecutionReport applies a node's report about one execution generation.

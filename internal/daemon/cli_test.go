@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -625,5 +626,77 @@ func TestARunWithNoExecutionIsInterruptedAndReplaced(t *testing.T) {
 	abandoned := mustRun(t, store, created.RunID)
 	if abandoned.State != agent.StateInterrupted {
 		t.Fatalf("the abandoned run is %q, want interrupted", abandoned.State)
+	}
+}
+
+// A permission request becomes a durable event, so a transport can ask a user.
+//
+// Found in a live conversation: two requests were recorded as pending and no event
+// was appended, so no transport ever learned there was a question. The agent waited
+// for an answer nobody could give, and the user reported the bot as stuck.
+func TestAPermissionRequestBecomesAnEvent(t *testing.T) {
+	ctx := context.Background()
+	_, store, _, socketPath := startStack(t)
+
+	c, err := client.Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	created, err := c.CreateSession(ctx, v1.SessionCreateParams{CommandID: "cmd_1"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitForRunStarted(t, store, created.RunID)
+
+	// The test agent asks for permission when the prompt says so, which is the real
+	// path: plugin to node to coordinator.
+	if _, err := c.Prompt(ctx, v1.SessionPromptParams{
+		CommandID: "cmd_2",
+		SessionID: created.SessionID,
+		Text:      "ask permission please",
+	}); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+
+	waitFor(t, "the permission to be recorded", func() bool {
+		pending, err := store.ListOpenPermissionRequests(ctx, created.SessionID)
+		return err == nil && len(pending) == 1
+	})
+
+	events, err := store.ReadEvents(ctx, created.SessionID, 0, 200)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+
+	var found bool
+	for _, ev := range events {
+		if ev.Type != v1.EventPermissionRequested {
+			continue
+		}
+		found = true
+
+		// The transport is told how to name the request, because the answer has to
+		// name it and a transport must not know how Hive identifies one.
+		var payload struct {
+			AgentRequestID string `json:"agentRequestId"`
+			ToolCall       struct {
+				Title string `json:"title"`
+			} `json:"toolCall"`
+		}
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			t.Fatalf("the event payload could not be read: %v", err)
+		}
+		if payload.AgentRequestID == "" {
+			t.Error("the event does not say which request it is")
+		}
+		if payload.ToolCall.Title != "Run rm -rf" {
+			t.Errorf("the tool call was not passed through: %q", payload.ToolCall.Title)
+		}
+	}
+
+	if !found {
+		t.Fatal("no permission event was appended, so no transport can ask")
 	}
 }
