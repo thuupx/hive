@@ -112,8 +112,18 @@ type IncomingCommand struct {
 
 // IncomingInteraction is a platform control.
 type IncomingInteraction struct {
+	// Action is the transport's own name for what was pressed.
 	Action string
-	Value  string
+
+	// Method is the Hive operation the action performs.
+	//
+	// The transport owns the mapping, exactly as it owns command names: it decides
+	// that a button labelled Allow is a permission response. Hive never learns the
+	// button's name, and a transport that forgets to map one gets a clear
+	// method-not-found rather than a silent no-op.
+	Method string
+
+	Value string
 }
 
 // TransportInboundParams is a normalized inbound delivery.
@@ -136,7 +146,8 @@ type TransportInboundParams struct {
 	Args     []string `json:"args,omitempty"`
 	ConfigID string   `json:"configId,omitempty"`
 
-	// Interaction fields.
+	// Interaction fields. Method is shared with the command fields above: an
+	// interaction names the operation it performs, exactly as a command does.
 	Action string `json:"action,omitempty"`
 	Value  string `json:"value,omitempty"`
 

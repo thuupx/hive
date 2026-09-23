@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +35,10 @@ type Options struct {
 	// uses the default.
 	MaxAttachmentBytes int64
 
+	// FlatReplies keeps everything in the channel instead of threading a turn's
+	// output under the message that asked for it. A direct message is always flat.
+	FlatReplies bool
+
 	Log *slog.Logger
 }
 
@@ -51,11 +56,42 @@ type Acknowledgement struct {
 	Reaction string
 }
 
+// replyThread is where a turn's output belongs.
+//
+// A channel is shared, so a conversation in one is a thread: the answer, the tool
+// cards, and the acknowledgement go under the message that asked, and the channel
+// itself stays readable. A direct message has nobody to spare the noise from, so
+// it stays flat.
+//
+// A message already in a thread replies in that thread, because that is the
+// conversation the user is having.
+func replyThread(conversationID, messageTS, existingThread string, flat bool) string {
+	if existingThread != "" {
+		return existingThread
+	}
+	if flat || messageTS == "" || isDirectMessage(conversationID) {
+		return ""
+	}
+	return messageTS
+}
+
+// isDirectMessage reports whether a conversation is 1:1.
+//
+// Slack ids say so: a direct message starts with D, a channel with C, and a group
+// with G.
+func isDirectMessage(conversationID string) bool {
+	return strings.HasPrefix(conversationID, "D")
+}
+
 // delivery is one inbound platform delivery plus the coordinates needed to reply.
 type delivery struct {
 	envelope       v1.Envelope
 	conversationID string
 	timestamp      string
+
+	// thread is where this turn's output belongs. Empty posts to the conversation
+	// itself.
+	thread string
 }
 
 // Plugin wires Slack into a Hive transport plugin.
@@ -87,6 +123,14 @@ type Plugin struct {
 	// cursors is how far each session has been accepted, read at startup so a
 	// restart can replay what was missed.
 	cursors map[string]int64
+
+	// runThreads maps a run to the thread its output belongs in, so an answer
+	// lands under the message that asked for it rather than in the channel.
+	runThreads map[string]string
+
+	// threadOrder is the order runs were threaded in, so the oldest can be
+	// forgotten.
+	threadOrder []string
 }
 
 // New returns a Slack plugin over a connected host.
@@ -106,6 +150,7 @@ func New(host *sdk.Host, client Client, opts Options) *Plugin {
 		toolMessages: make(map[string]string),
 		handled:      make(map[string]time.Time),
 		cursors:      make(map[string]int64),
+		runThreads:   make(map[string]string),
 	}
 }
 
@@ -223,7 +268,7 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	// core. Sending it through Hive would mean the transport does not know what it
 	// exposes.
 	if d.envelope.Command != nil && d.envelope.Command.Name == HelpCommand {
-		p.post(ctx, d.conversationID, "", HelpMessage())
+		p.post(ctx, d.conversationID, d.thread, HelpMessage())
 		return
 	}
 
@@ -245,7 +290,10 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	if outcome.SessionID != "" {
 		p.rememberBinding(d.conversationID, outcome.SessionID)
 	}
-	p.post(ctx, d.conversationID, "", RenderOutcome(outcome))
+	if outcome.RunID != "" {
+		p.rememberThread(outcome.RunID, d.thread)
+	}
+	p.post(ctx, d.conversationID, d.thread, RenderOutcome(outcome))
 }
 
 // fetchAttachments reads the files a user sent.
@@ -391,6 +439,10 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 				)
 			}
 
+			// The answer belongs under the message that asked for it, so a channel
+			// stays readable and a turn's output stays together.
+			thread := p.threadFor(delivered.Event.RunID)
+
 			renderer := Renderer{SessionID: delivered.Event.SessionID}
 			rendered, ok := renderer.RenderEvent(delivered.Event)
 			if ok {
@@ -399,13 +451,14 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 					"sequence", delivered.Event.Sequence,
 					"type", delivered.Event.Type,
 					"conversations", len(conversations),
+					"threaded", thread != "",
 				)
 				for _, conversation := range conversations {
 					if rendered.ToolCallID != "" {
-						p.renderTool(ctx, conversation, rendered)
+						p.renderTool(ctx, conversation, thread, rendered)
 						continue
 					}
-					p.post(ctx, conversation, "", rendered.Message)
+					p.post(ctx, conversation, thread, rendered.Message)
 				}
 			}
 
@@ -432,15 +485,16 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 // A tool call produces many updates. Posting each one would bury the conversation,
 // so the message is created once and then replaced, and any detail goes in its
 // thread.
-func (p *Plugin) renderTool(ctx context.Context, conversation string, rendered Rendered) {
+func (p *Plugin) renderTool(ctx context.Context, conversation, thread string, rendered Rendered) {
 	p.mu.Lock()
 	timestamp := p.toolMessages[rendered.ToolCallID]
 	p.mu.Unlock()
 
 	if timestamp == "" {
 		ts, err := p.client.PostMessage(ctx, PostMessageRequest{
-			Channel: conversation,
-			Message: rendered.Message,
+			Channel:  conversation,
+			ThreadTS: thread,
+			Message:  rendered.Message,
 		})
 		if err != nil {
 			p.log.Warn("could not post a tool call", "conversation", conversation, "error", err)
@@ -471,6 +525,34 @@ func (p *Plugin) renderTool(ctx context.Context, conversation string, rendered R
 		p.post(ctx, conversation, timestamp, textMessage(rendered.Detail))
 	}
 }
+
+// rememberThread records where a run's output belongs.
+func (p *Plugin) rememberThread(runID, thread string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.runThreads[runID] = thread
+	p.threadOrder = append(p.threadOrder, runID)
+	for len(p.threadOrder) > maxRunThreads {
+		oldest := p.threadOrder[0]
+		p.threadOrder = p.threadOrder[1:]
+		delete(p.runThreads, oldest)
+	}
+}
+
+// threadFor is where a run's output belongs, or empty for the conversation.
+func (p *Plugin) threadFor(runID string) string {
+	if runID == "" {
+		return ""
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.runThreads[runID]
+}
+
+// maxRunThreads bounds how many runs are remembered.
+const maxRunThreads = 1024
 
 // alreadyHandled reports whether a delivery was seen recently.
 //
@@ -594,12 +676,13 @@ func (p *Plugin) replay(ctx context.Context, sessionID string, after int64) (int
 		if !ok {
 			continue
 		}
+		thread := p.threadFor(ev.RunID)
 		for _, conversation := range p.conversationsFor(sessionID) {
 			if message.ToolCallID != "" {
-				p.renderTool(ctx, conversation, message)
+				p.renderTool(ctx, conversation, thread, message)
 				continue
 			}
-			p.post(ctx, conversation, "", message.Message)
+			p.post(ctx, conversation, thread, message.Message)
 		}
 		rendered++
 	}
@@ -683,6 +766,7 @@ func wireParams(env v1.Envelope) v1.TransportInboundParams {
 	case v1.EnvelopeInteraction:
 		if env.Interaction != nil {
 			params.Action = env.Interaction.Action
+			params.Method = env.Interaction.Method
 			params.Value = env.Interaction.Value
 		}
 	}

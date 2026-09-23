@@ -312,3 +312,45 @@ func TestParseSkipsAFileWithNoURL(t *testing.T) {
 		t.Fatalf("attachments = %+v", env.Message.Attachments)
 	}
 }
+
+// A button press names the Hive operation it performs.
+//
+// Found by pressing one: the transport sent its own action name, the core
+// compared it against a Hive method, and nothing matched, so every permission
+// button answered "method not found" and the turn waited forever.
+func TestParseInteractionMapsTheActionToAMethod(t *testing.T) {
+	for _, action := range []string{ActionPermissionAllow, ActionPermissionDeny} {
+		env := parser().ParseInteraction(ActionPayload{
+			Channel: struct {
+				ID string `json:"id"`
+			}{ID: "C1"},
+			User: struct {
+				ID string `json:"id"`
+			}{ID: "U1"},
+			ActionTS: "1700000000.000100",
+			Actions: []struct {
+				ActionID string `json:"action_id"`
+				Value    string `json:"value"`
+			}{{ActionID: action, Value: `{"agentRequestId":"7"}`}},
+		})
+
+		if env.Interaction.Action != action {
+			t.Fatalf("action = %q, want %q", env.Interaction.Action, action)
+		}
+		if env.Interaction.Method != v1.MethodPermissionRespond {
+			t.Errorf("action %q maps to %q, want %q",
+				action, env.Interaction.Method, v1.MethodPermissionRespond)
+		}
+	}
+}
+
+// Every action a transport renders must map to an operation.
+//
+// A button that does nothing is worse than no button.
+func TestEveryRenderedActionHasAnOperation(t *testing.T) {
+	for _, action := range []string{ActionPermissionAllow, ActionPermissionDeny} {
+		if Actions[action] == "" {
+			t.Errorf("action %q is rendered but maps to no operation", action)
+		}
+	}
+}

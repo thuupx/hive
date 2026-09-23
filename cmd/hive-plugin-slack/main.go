@@ -95,6 +95,10 @@ func run() error {
 		// A transport must not read an unbounded amount of a user's data because
 		// they attached something large.
 		MaxAttachmentBytes: int64(options.int("max_attachment_mb", 8)) << 20,
+
+		// A channel is shared, so a turn's output is threaded under the message
+		// that asked for it. This keeps it flat for someone who prefers that.
+		FlatReplies: !options.bool("thread_replies", true),
 		Acknowledgement: slack.Acknowledgement{
 			Enabled:  options.bool("acknowledgement", true),
 			Mode:     options.get("acknowledgement_mode"),

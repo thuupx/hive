@@ -380,6 +380,7 @@ func envelopeOf(params v1.TransportInboundParams) v1.Envelope {
 	case v1.EnvelopeInteraction:
 		env.Interaction = &v1.IncomingInteraction{
 			Action: params.Action,
+			Method: params.Method,
 			Value:  params.Value,
 		}
 	}

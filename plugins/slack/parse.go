@@ -89,6 +89,15 @@ var Descriptions = map[string]string{
 // HelpCommand is the transport command that shows the catalog.
 const HelpCommand = "help"
 
+// Actions maps a transport action to the Hive method it performs.
+//
+// The transport owns this mapping, exactly as it owns command names: it decides
+// that a button labelled Allow is a permission response.
+var Actions = map[string]string{
+	ActionPermissionAllow: v1.MethodPermissionRespond,
+	ActionPermissionDeny:  v1.MethodPermissionRespond,
+}
+
 // Catalog returns the commands this transport exposes, in a stable order.
 func Catalog() []CatalogEntry {
 	names := make([]string, 0, len(Commands))
@@ -192,6 +201,7 @@ func (p Parser) ParseInteraction(payload ActionPayload) v1.Envelope {
 		Kind:           v1.EnvelopeInteraction,
 		Interaction: &v1.IncomingInteraction{
 			Action: actionID,
+			Method: Actions[actionID],
 			Value:  value,
 		},
 	}

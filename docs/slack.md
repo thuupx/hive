@@ -356,6 +356,45 @@ A restore that fails is not fatal: the run starts fresh rather than refusing, an
 says so in the log. A cursor that has been pruned is reported rather than
 pretended away.
 
+### Where the reply goes
+
+A direct message is a private pipe, so everything stays flat. A **channel** is
+shared, so a turn's output goes into a **thread under the message that asked for
+it**: the acknowledgement, the tool cards, and the answer.
+
+```text
+#team
+  you:  @Hive fix the failing test
+        └── thread
+              Hive: Working on it.
+              Hive: :hourglass_flowing_sand: Listed ./
+              Hive: :white_check_mark: Listed ./
+              Hive: the test was failing because ...
+  you:  @Hive and the docs?
+        └── thread
+              Hive: Working on it.
+              Hive: the docs need ...
+```
+
+Three things follow from that, and they are the reason for it:
+
+- **The channel stays readable.** A turn can produce a dozen tool cards. In the
+  channel they bury the conversation; in a thread they are the detail.
+- **Two conversations can run at once.** Each thread is one exchange, so asking
+  Hive something does not interleave with someone else asking it something.
+- **The thread is the conversation.** Reply inside a thread and Hive answers
+  there, because that is where you are talking.
+
+The acknowledgement reaction stays on your message in the channel, so you can see
+at a glance that Hive picked it up without opening the thread.
+
+Set `thread_replies = "false"` to keep everything flat in channels too.
+
+```toml
+[transport.slack.options]
+thread_replies = "true"     # default: thread in channels, flat in DMs
+```
+
 ### Conversations and sessions
 
 A Slack channel (or thread) is bound to one Hive session the first time you talk

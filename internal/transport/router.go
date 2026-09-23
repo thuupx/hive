@@ -296,7 +296,7 @@ func (r *Router) handleInteraction(ctx context.Context, env v1.Envelope, princip
 		return failed(commandID, apierr.From(err))
 	}
 
-	switch env.Interaction.Action {
+	switch env.Interaction.Method {
 	case v1.MethodPermissionRespond:
 		var params v1.PermissionRespondParams
 		if err := json.Unmarshal([]byte(env.Interaction.Value), &params); err != nil {
@@ -313,7 +313,10 @@ func (r *Router) handleInteraction(ctx context.Context, env v1.Envelope, princip
 		}
 
 	default:
-		return failed(commandID, v1.NewErrorf(v1.CodeMethodNotFound, "%s/%s", r.transport, env.Interaction.Action))
+		// A transport that recognized the press but mapped it to nothing is a
+		// transport bug, and it says so rather than doing nothing.
+		return failed(commandID, v1.NewErrorf(v1.CodeMethodNotFound,
+			"%s: action %q has no operation", r.transport, env.Interaction.Action))
 	}
 }
 
