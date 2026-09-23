@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thupham/hive/plugins/acp"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
@@ -214,5 +215,97 @@ func TestRunsAreBounded(t *testing.T) {
 	}
 	if _, ok := b.runs[fmt.Sprintf("run_%d", maxLiveRuns+9)]; !ok {
 		t.Error("the newest run should still be there")
+	}
+}
+
+// A message that follows a tool call is a new message, not a continuation.
+//
+// Found in a live conversation: an agent narrated, called a tool, and narrated
+// again, and the two narrations were glued into one sentence that read as
+// nonsense.
+func TestMessagesAreSeparatedByWhatComesBetweenThem(t *testing.T) {
+	b := &Bridge{
+		tools:      map[string]map[string]bool{},
+		toolTitles: map[string]map[string]string{},
+	}
+	r := &run{agentRunID: "run_1"}
+
+	// Two chunks in a row are one message.
+	message(t, b, r, "Mình muốn, cho mình biết")
+	message(t, b, r, " thêm.")
+
+	// A tool call comes between them.
+	other(t, b, r)
+
+	// So the next chunk starts a new message.
+	message(t, b, r, "Users/th là thư mục.")
+
+	b.mu.Lock()
+	answer := r.answer.String()
+	b.mu.Unlock()
+
+	want := "Mình muốn, cho mình biết thêm.\n\nUsers/th là thư mục."
+	if answer != want {
+		t.Fatalf("answer = %q, want %q", answer, want)
+	}
+}
+
+// message feeds one assistant text chunk through the bridge.
+func message(t *testing.T, b *Bridge, r *run, text string) {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{
+		"sessionUpdate": "agent_message_chunk",
+		"content":       map[string]any{"type": "text", "text": text},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	b.collectAnswer(r, payload)
+}
+
+// other feeds an update that is not assistant text.
+func other(t *testing.T, b *Bridge, r *run) {
+	t.Helper()
+	b.collectAnswer(r, json.RawMessage(
+		`{"sessionUpdate":"tool_call","toolCallId":"tc1","title":"Ran pwd","kind":"execute"}`))
+}
+
+// An update goes to the run whose turn is in flight, not to a random run.
+//
+// Found in a live conversation: a conversation continues in a new run that
+// restores the same agent session, so two runs named one session, and picking one
+// by ranging over a map split an answer between them. The text read as nonsense.
+func TestAnUpdateGoesToTheRunInATurn(t *testing.T) {
+	b := &Bridge{runs: map[string]*run{}}
+
+	older := &run{agentRunID: "run_old", sessionID: "sess_1", startedAt: time.Now().Add(-time.Minute)}
+	newer := &run{agentRunID: "run_new", sessionID: "sess_1", startedAt: time.Now()}
+	b.runs["run_old"] = older
+	b.runs["run_new"] = newer
+
+	// Between turns the newest is the answer, and it is the same every time.
+	for i := 0; i < 20; i++ {
+		if got := b.runFor("sess_1"); got != newer {
+			t.Fatalf("between turns the update went to %q, want the newest run", got.agentRunID)
+		}
+	}
+
+	// The run in a turn is the answer, even when an older run is the newest.
+	older.inTurn = true
+	for i := 0; i < 20; i++ {
+		if got := b.runFor("sess_1"); got != older {
+			t.Fatalf("the update went to %q, want the run in a turn", got.agentRunID)
+		}
+	}
+}
+
+// An update for a session no run knows is dropped rather than guessed at.
+func TestAnUpdateForAnUnknownSessionIsDropped(t *testing.T) {
+	b := &Bridge{runs: map[string]*run{
+		"run_1": {agentRunID: "run_1", sessionID: "sess_1"},
+	}}
+
+	if got := b.runFor("sess_other"); got != nil {
+		t.Fatalf("runFor returned %q for a session no run knows", got.agentRunID)
 	}
 }

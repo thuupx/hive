@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/thupham/hive/plugins/acp"
 	"github.com/thupham/hive/plugins/sdk"
@@ -103,6 +104,14 @@ type Bridge struct {
 	caps   *acp.Capabilities
 	runs   map[string]*run
 
+	// launchMu serializes starting the agent.
+	//
+	// Checking whether an agent exists and then starting one is a race: two
+	// starts that arrive together both find none, both launch, and the plugin ends
+	// up with two agents pumping updates for the same session. The text of an
+	// answer then interleaves between them, which reads as nonsense.
+	launchMu sync.Mutex
+
 	// tools tracks which tool calls have been seen per run, so the first update is
 	// distinguishable from the rest.
 	tools map[string]map[string]bool
@@ -136,6 +145,20 @@ type run struct {
 	// config are the selectors the agent offers for this session, as it declared
 	// them. Hive renders them without knowing what they mean.
 	config []acp.ConfigOption
+
+	// betweenMessages reports that something other than assistant text arrived
+	// since the last message chunk, so the next chunk starts a new message.
+	betweenMessages bool
+
+	// inTurn reports that a prompt is being processed for this run.
+	//
+	// It is what tells an update which run it belongs to when more than one run
+	// names the same agent session.
+	inTurn bool
+
+	// startedAt orders runs that share an agent session, so an update between
+	// turns goes to the same run every time rather than a random one.
+	startedAt time.Time
 
 	// answer accumulates the assistant text of the current turn, so the answer to
 	// a prompt can be surfaced as one readable message.
@@ -268,6 +291,7 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 		hiveSessionID: req.SessionID,
 		preamble:      req.Context,
 		config:        options,
+		startedAt:     time.Now(),
 	}
 	b.runOrder = append(b.runOrder, req.AgentRunID)
 	b.evictRunsLocked()
@@ -437,7 +461,20 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 	b.mu.Lock()
 	r := b.runs[req.AgentRunID]
 	client := b.client
+	if r != nil {
+		// The turn is in flight, which is what tells an update which run it
+		// belongs to when more than one run names the same agent session.
+		r.inTurn = true
+	}
 	b.mu.Unlock()
+
+	defer func() {
+		b.mu.Lock()
+		if r != nil {
+			r.inTurn = false
+		}
+		b.mu.Unlock()
+	}()
 
 	if r == nil || client == nil {
 		return nil, v1.NotFound("agent run %s has no live execution", req.AgentRunID)
@@ -680,6 +717,9 @@ func (b *Bridge) respond(ctx context.Context, params json.RawMessage) (any, erro
 
 // ensureAgent starts the agent once and pumps its notifications.
 func (b *Bridge) ensureAgent(ctx context.Context) (*acp.Client, error) {
+	b.launchMu.Lock()
+	defer b.launchMu.Unlock()
+
 	b.mu.Lock()
 	if b.client != nil {
 		client := b.client
@@ -788,18 +828,48 @@ func (b *Bridge) publish(update acp.Update) {
 	if r == nil {
 		return
 	}
+	b.publishUpdate(r, update)
+}
 
-	// Collect the assistant text while the turn runs. It becomes one readable
-	// message when the turn ends; the raw stream is preserved separately.
-	if text, ok := agentMessageText(update.Payload); ok {
-		b.mu.Lock()
-		r.answer.WriteString(text)
-		b.mu.Unlock()
+// collectAnswer accumulates the assistant text of a turn.
+//
+// It becomes one readable message when the turn ends; the raw stream is preserved
+// separately.
+//
+// A message that follows something else is a new message, not a continuation: an
+// agent narrates, calls a tool, and narrates again. Gluing the two together
+// produces a sentence that reads as nonsense, which is what a user sees as a
+// garbled answer.
+func (b *Bridge) collectAnswer(r *run, payload json.RawMessage) {
+	text, ok := agentMessageText(payload)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if !ok {
+		r.betweenMessages = true
+		return
 	}
+	if r.betweenMessages && r.answer.Len() > 0 {
+		r.answer.WriteString("\n\n")
+	}
+	r.answer.WriteString(text)
+	r.betweenMessages = false
+}
+
+// publishUpdate collects what a run needs from one agent update.
+//
+// The whole update is passed rather than its payload alone, because the raw event
+// carries the method the agent used, and losing it would make the preserved
+// stream harder to read than it needs to be.
+func (b *Bridge) publishUpdate(r *run, update acp.Update) {
+	payload := update.Payload
+
+	b.collectAnswer(r, payload)
 
 	// A config update means the agent changed a selector itself, so the cached
 	// declaration has to follow.
-	if options, ok := configOptionsFrom(update.Payload); ok {
+	if options, ok := configOptionsFrom(payload); ok {
 		b.mu.Lock()
 		r.config = options
 		b.mu.Unlock()
@@ -807,7 +877,7 @@ func (b *Bridge) publish(update acp.Update) {
 
 	// Tool activity is the one thing normalized out of the stream, because it is
 	// what makes an agent observable.
-	if call, ok := b.toolCall(r, update.Payload); ok {
+	if call, ok := b.toolCall(r, payload); ok {
 		if payload, err := json.Marshal(call); err == nil {
 			_ = b.host.Call(context.Background(), v1.MethodEventPublish, v1.PublishEventParams{
 				AgentRunID: r.agentRunID,
@@ -828,7 +898,7 @@ func (b *Bridge) publish(update acp.Update) {
 		Type:       "agent.raw",
 		Protocol:   "acp",
 		Method:     update.Method,
-		Payload:    update.Payload,
+		Payload:    payload,
 	}, nil)
 }
 
@@ -1015,15 +1085,33 @@ func (b *Bridge) forwardPermission(perm acp.PermissionRequest) {
 	}
 }
 
+// runFor is the run an agent session's update belongs to.
+//
+// A conversation continues in a new run that restores the same agent session, so
+// more than one run can name one session. Picking one at random — which is what
+// ranging over a map does — splits an answer between two runs and produces text
+// that reads as nonsense.
+//
+// The run whose turn is in flight is the answer, and there is only ever one. An
+// update that arrives between turns belongs to the run that most recently used
+// the session, which is at least the same run every time.
 func (b *Bridge) runFor(sessionID string) *run {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	var newest *run
 	for _, r := range b.runs {
-		if r.sessionID == sessionID {
+		if r.sessionID != sessionID {
+			continue
+		}
+		if r.inTurn {
 			return r
 		}
+		if newest == nil || r.startedAt.After(newest.startedAt) {
+			newest = r
+		}
 	}
-	return nil
+	return newest
 }
 
 func (b *Bridge) report(ctx context.Context, agentRunID string, generation int64, state, runtimeSessionID, reason string) error {
