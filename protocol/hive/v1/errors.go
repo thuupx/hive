@@ -59,6 +59,9 @@ const (
 	CodeUnsupported = -32007
 )
 
+// ErrPeerClosed reports that a protocol connection is no longer usable.
+var ErrPeerClosed = errors.New("hive: connection closed")
+
 // Error is a JSON-RPC error object. It also implements the Go error
 // interface so protocol errors can travel as ordinary Go errors.
 type Error struct {

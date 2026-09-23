@@ -410,22 +410,59 @@ Implementation notes:
 
 ### M5 — Plugin supervisor and process boundary
 
-- [ ] Lifecycle: spawn, handshake, trust, register, ready, serve, draining,
-      shutdown (§19)
-- [ ] Stable `plugin_id` vs plugin process instance (§18.3)
-- [ ] Connection generation per plugin instance; a superseded instance
+- [x] Lifecycle: spawn, handshake, ready, serve, shutdown (§19)
+- [x] Stable `plugin_id` vs plugin process instance (§18.3)
+- [x] Connection generation per plugin instance; a superseded instance
       cannot invoke capabilities
-- [ ] Capability authorization enforced in the **core** gateway, not in the
-      plugin
-- [ ] Plugin API event subscription surface: subscribe / event push / ack
-      for durable cursor advance (§22) — capability-gated
-- [ ] Crash detection + restart policy; plugin crash must not terminate the
+- [x] Capability authorization enforced in the **core**, not in the plugin
+- [x] Plugin API event subscription surface: subscribe / deliver / ack,
+      capability-gated (§22)
+- [x] Crash detection + restart policy; plugin crash does not terminate the
       coordinator or unrelated sessions
-- [ ] Tests: plugin crash isolation, stale instance rejection, unauthorized
-      capability invocation is denied, subscription is capability-gated
+- [x] `hive-plugin-acp` binary (deferred from M4) plus a plugin SDK
+- [x] Tests: plugin crash isolation, stale instance rejection, unauthorized
+      capability invocation is denied, subscription is capability-gated and
+      scoped
 
 **Exit criteria:** §42 "Plugin isolation" and "Connection fencing" (plugin
 half) have passing tests.
+
+Status: met. `make ci` is green with 165 passing tests across 16 packages;
+the suite is clean under `-race`.
+
+Implementation notes:
+
+- The Plugin API and the request/response correlator (`v1.Peer`) live in
+  `protocol/hive/v1`, not under `internal/`, so a plugin uses them without
+  linking the core. `plugins/sdk` is the plugin-side helper, and a test asserts
+  it imports no internal package.
+- Authorization is a core-side decision. A plugin declares what it wants; the
+  core intersects that with what its plugin type may ever hold, and every
+  inbound call is checked against the granted set. Registration is descriptive
+  and never a grant.
+- `Authorize` also rejects an instance that is no longer current for its plugin
+  identity, which is what stops a superseded connection from invoking
+  capabilities after a restart.
+- Event delivery is at-least-once and driven by the acknowledgement cursor. A
+  plugin that cannot keep up loses realtime delivery and recovers from the
+  durable store, and re-authorization on each delivery drops a superseded
+  instance.
+- `plugins/acpbridge` is the composition point: the core speaks the Plugin API
+  to it and it speaks ACP to the agent, so neither side learns the other's
+  protocol. It reports `absent` when a start side effect did not happen, so the
+  core can reconcile rather than start a second execution.
+
+Deliberately not in M5, stated so it is not mistaken for done:
+
+- `plugin.drain` is defined but draining is not implemented: `Stop` sends
+  `plugin.shutdown` and closes the link. Graceful drain belongs with the daemon
+  lifecycle in M6/M7.
+- Plugin trust is "trusted local process", as §18.3 requires the documentation
+  to admit. Enrollment, revocation, and key rotation are not implemented, and
+  the `plugins` / `plugin_instances` / `capability_registrations` tables are not
+  yet written to.
+- The subscription cursor is in-memory. Durable per-binding cursors land in M8,
+  where `conversation_bindings` gives a binding to attach a cursor to.
 
 ### M6 — Coordinator and node (child process)
 

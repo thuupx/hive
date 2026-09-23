@@ -1,0 +1,515 @@
+package acpbridge_test
+
+import (
+	"context"
+	"encoding/json"
+	"net"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/thupham/hive/plugins/acp"
+	"github.com/thupham/hive/plugins/acpbridge"
+	"github.com/thupham/hive/plugins/sdk"
+	v1 "github.com/thupham/hive/protocol/hive/v1"
+)
+
+// --- fake core -------------------------------------------------------------
+
+// core is the Hive side of the plugin link: it answers the handshake and
+// records what the bridge reports.
+type core struct {
+	host *sdk.Host
+	peer *v1.Peer
+
+	mu        sync.Mutex
+	reports   []v1.ExecutionReportParams
+	published []v1.PublishEventParams
+	requests  []v1.PermissionRequestParams
+}
+
+func newCore(t *testing.T) *core {
+	t.Helper()
+	pluginConn, coreConn := net.Pipe()
+
+	c := &core{peer: v1.NewPeer(v1.NewStream(coreConn, coreConn, coreConn))}
+	c.peer.Start()
+	go c.serve()
+
+	host, err := sdk.Connect(context.Background(), v1.NewStream(pluginConn, pluginConn, pluginConn), sdk.Options{
+		ID:      "acp",
+		Type:    v1.PluginTypeAgent,
+		Version: "test",
+		Capabilities: []string{
+			v1.CapabilityEventWrite,
+			v1.CapabilityPermissionWrite,
+			v1.CapabilityExecutionWrite,
+		},
+	})
+	if err != nil {
+		t.Fatalf("sdk.Connect: %v", err)
+	}
+	c.host = host
+
+	t.Cleanup(func() {
+		_ = host.Close()
+		_ = c.peer.Close()
+	})
+	return c
+}
+
+func (c *core) serve() {
+	for {
+		select {
+		case <-c.peer.Done():
+			return
+		case req, ok := <-c.peer.Requests():
+			if !ok {
+				return
+			}
+			c.handle(req)
+		}
+	}
+}
+
+func (c *core) handle(req *v1.Message) {
+	switch req.Method {
+	case v1.MethodPluginHello:
+		_ = c.peer.Respond(req.RequestID(), v1.HelloResponse{
+			InstanceID:           "inst_1",
+			ConnectionGeneration: 1,
+			Capabilities: []string{
+				v1.CapabilityEventWrite,
+				v1.CapabilityPermissionWrite,
+				v1.CapabilityExecutionWrite,
+			},
+		})
+	case v1.MethodExecutionReport:
+		var p v1.ExecutionReportParams
+		_ = json.Unmarshal(req.Params, &p)
+		c.mu.Lock()
+		c.reports = append(c.reports, p)
+		c.mu.Unlock()
+		_ = c.peer.Respond(req.RequestID(), map[string]any{"ok": true})
+	case v1.MethodEventPublish:
+		var p v1.PublishEventParams
+		_ = json.Unmarshal(req.Params, &p)
+		c.mu.Lock()
+		c.published = append(c.published, p)
+		c.mu.Unlock()
+		_ = c.peer.Respond(req.RequestID(), map[string]any{"ok": true})
+	case v1.MethodPermissionRequest:
+		var p v1.PermissionRequestParams
+		_ = json.Unmarshal(req.Params, &p)
+		c.mu.Lock()
+		c.requests = append(c.requests, p)
+		c.mu.Unlock()
+		_ = c.peer.Respond(req.RequestID(), map[string]any{"ok": true})
+	default:
+		_ = c.peer.RespondError(req.RequestID(), v1.MethodNotFound(req.Method))
+	}
+}
+
+func (c *core) reportsSnapshot() []v1.ExecutionReportParams {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]v1.ExecutionReportParams(nil), c.reports...)
+}
+
+func (c *core) publishedSnapshot() []v1.PublishEventParams {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]v1.PublishEventParams(nil), c.published...)
+}
+
+func (c *core) requestsSnapshot() []v1.PermissionRequestParams {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]v1.PermissionRequestParams(nil), c.requests...)
+}
+
+// --- fake ACP agent --------------------------------------------------------
+
+type fakeAgent struct {
+	t    *testing.T
+	conn net.Conn
+	enc  *json.Encoder
+
+	mu       sync.Mutex
+	onMethod func(method string, id json.RawMessage, params json.RawMessage)
+	outcomes []acp.PermissionOutcome
+	wg       sync.WaitGroup
+}
+
+func newFakeAgent(t *testing.T, conn net.Conn) *fakeAgent {
+	t.Helper()
+	a := &fakeAgent{t: t, conn: conn, enc: json.NewEncoder(conn)}
+	a.wg.Add(1)
+	go a.loop()
+	return a
+}
+
+func (a *fakeAgent) loop() {
+	defer a.wg.Done()
+	dec := json.NewDecoder(a.conn)
+	for {
+		var msg struct {
+			ID     json.RawMessage `json:"id,omitempty"`
+			Method string          `json:"method,omitempty"`
+			Params json.RawMessage `json:"params,omitempty"`
+			Result json.RawMessage `json:"result,omitempty"`
+		}
+		if err := dec.Decode(&msg); err != nil {
+			return
+		}
+		if msg.Method == "" {
+			var outcome acp.PermissionOutcome
+			if err := json.Unmarshal(msg.Result, &outcome); err == nil {
+				a.mu.Lock()
+				a.outcomes = append(a.outcomes, outcome)
+				a.mu.Unlock()
+			}
+			continue
+		}
+		a.mu.Lock()
+		h := a.onMethod
+		a.mu.Unlock()
+		if h != nil {
+			h(msg.Method, msg.ID, msg.Params)
+		}
+	}
+}
+
+func (a *fakeAgent) setHandler(h func(method string, id json.RawMessage, params json.RawMessage)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.onMethod = h
+}
+
+func (a *fakeAgent) send(v any) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := a.enc.Encode(v); err != nil {
+		a.t.Logf("fake agent write: %v", err)
+	}
+}
+
+func (a *fakeAgent) reply(id json.RawMessage, result any) {
+	a.send(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+}
+
+func (a *fakeAgent) notify(method string, params any) {
+	a.send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
+}
+
+func (a *fakeAgent) request(id int, method string, params any) {
+	a.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+}
+
+// baseHandler answers the ACP methods the bridge needs.
+func (a *fakeAgent) baseHandler(method string, id json.RawMessage, _ json.RawMessage) {
+	switch method {
+	case "initialize":
+		a.reply(id, map[string]any{
+			"protocolVersion":   acp.ProtocolVersion,
+			"agentCapabilities": map[string]any{"loadSession": true},
+		})
+	case "session/new":
+		a.reply(id, map[string]any{"sessionId": "agent-sess-1"})
+	case "session/prompt":
+		a.reply(id, map[string]any{"stopReason": "end_turn"})
+	}
+}
+
+func (a *fakeAgent) outcomeSnapshot() []acp.PermissionOutcome {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]acp.PermissionOutcome(nil), a.outcomes...)
+}
+
+type fakeLauncher struct {
+	t     *testing.T
+	agent *fakeAgent
+	fail  bool
+}
+
+func (l *fakeLauncher) Launch(ctx context.Context) (*acp.Client, *acp.Capabilities, error) {
+	if l.fail {
+		return nil, nil, context.DeadlineExceeded
+	}
+
+	clientConn, agentConn := net.Pipe()
+	agent := newFakeAgent(l.t, agentConn)
+	agent.setHandler(agent.baseHandler)
+	l.agent = agent
+
+	client := acp.NewClient(clientConn, acp.Options{ClientVersion: "test"})
+	caps, err := client.Initialize(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client, caps, nil
+}
+
+// --- harness ---------------------------------------------------------------
+
+func newBridge(t *testing.T) (*acpbridge.Bridge, *core, *fakeLauncher) {
+	t.Helper()
+	c := newCore(t)
+	launcher := &fakeLauncher{t: t}
+
+	bridge := acpbridge.New(c.host, launcher)
+	bridge.Register()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = bridge.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	return bridge, c, launcher
+}
+
+func callStart(t *testing.T, c *core, agentRunID string, generation int64) (map[string]any, error) {
+	t.Helper()
+	var out map[string]any
+	err := c.peer.Call(context.Background(), v1.MethodExecutionStart, v1.ExecutionStartParams{
+		AgentRunID:    agentRunID,
+		SessionID:     "sess_1",
+		Generation:    generation,
+		WorkspacePath: "/tmp/ws",
+	}, &out)
+	return out, err
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// --- tests -----------------------------------------------------------------
+
+func TestStartCreatesAnAgentSessionAndReports(t *testing.T) {
+	_, c, _ := newBridge(t)
+
+	out, err := callStart(t, c, "run_1", 1)
+	if err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+	if out["runtimeSessionId"] != "agent-sess-1" {
+		t.Fatalf("result = %v", out)
+	}
+
+	reports := c.reportsSnapshot()
+	if len(reports) == 0 {
+		t.Fatal("no execution report was sent")
+	}
+	last := reports[len(reports)-1]
+	if last.AgentRunID != "run_1" || last.State != "starting" || last.RuntimeSessionID != "agent-sess-1" {
+		t.Fatalf("report = %+v", last)
+	}
+	if last.Generation != 1 {
+		t.Errorf("generation = %d, want 1", last.Generation)
+	}
+}
+
+// A failed start side effect must be reported as absent, so the core can
+// reconcile instead of starting a second execution.
+func TestStartReportsAbsentWhenTheAgentCannotStart(t *testing.T) {
+	c := newCore(t)
+	bridge := acpbridge.New(c.host, &fakeLauncher{t: t, fail: true})
+	bridge.Register()
+	go func() { _ = bridge.Run(context.Background()) }()
+
+	if _, err := callStart(t, c, "run_1", 1); err == nil {
+		t.Fatal("expected execution.start to fail")
+	}
+
+	reports := c.reportsSnapshot()
+	if len(reports) != 1 {
+		t.Fatalf("reports = %d, want 1", len(reports))
+	}
+	if reports[0].State != "absent" {
+		t.Fatalf("state = %q, want absent", reports[0].State)
+	}
+}
+
+func TestPromptForwardsUpdatesAndReportsTerminal(t *testing.T) {
+	_, c, launcher := newBridge(t)
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	launcher.agent.setHandler(func(method string, id json.RawMessage, params json.RawMessage) {
+		if method == "session/prompt" {
+			launcher.agent.notify("session/update", map[string]any{
+				"sessionId": "agent-sess-1",
+				"update": map[string]any{
+					"sessionUpdate": "agent_message_chunk",
+					"content":       map[string]any{"type": "text", "text": "working"},
+				},
+			})
+		}
+		launcher.agent.baseHandler(method, id, params)
+	})
+
+	var out map[string]any
+	err := c.peer.Call(context.Background(), v1.MethodExecutionPrompt, v1.ExecutionPromptParams{
+		AgentRunID: "run_1",
+		Generation: 1,
+		Text:       "fix the bug",
+	}, &out)
+	if err != nil {
+		t.Fatalf("execution.prompt: %v", err)
+	}
+	if out["stopReason"] != "end_turn" {
+		t.Fatalf("result = %v", out)
+	}
+
+	waitFor(t, "a published update", func() bool { return len(c.publishedSnapshot()) > 0 })
+	published := c.publishedSnapshot()[0]
+	if published.AgentRunID != "run_1" {
+		t.Errorf("agent run = %q", published.AgentRunID)
+	}
+	if published.Protocol != "acp" || published.Method != "session/update" {
+		t.Errorf("published = %+v", published)
+	}
+	if published.Type != "agent.raw" {
+		t.Errorf("type = %q, want agent.raw", published.Type)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(published.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload["sessionUpdate"] != "agent_message_chunk" {
+		t.Errorf("payload = %v, want the raw ACP update", payload)
+	}
+
+	waitFor(t, "a terminal report", func() bool {
+		for _, r := range c.reportsSnapshot() {
+			if r.State == "terminal" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestPermissionIsForwardedAndAnswered(t *testing.T) {
+	_, c, launcher := newBridge(t)
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	launcher.agent.setHandler(func(method string, id json.RawMessage, params json.RawMessage) {
+		if method == "session/prompt" {
+			launcher.agent.request(77, "session/request_permission", map[string]any{
+				"sessionId": "agent-sess-1",
+				"toolCall":  map[string]any{"toolCallId": "tc1", "title": "Write file"},
+				"options": []map[string]any{
+					{"optionId": "a1", "name": "Allow", "kind": "allow"},
+					{"optionId": "d1", "name": "Deny", "kind": "deny"},
+				},
+			})
+		}
+		launcher.agent.baseHandler(method, id, params)
+	})
+
+	var out map[string]any
+	if err := c.peer.Call(context.Background(), v1.MethodExecutionPrompt, v1.ExecutionPromptParams{
+		AgentRunID: "run_1", Generation: 1, Text: "write it",
+	}, &out); err != nil {
+		t.Fatalf("execution.prompt: %v", err)
+	}
+
+	waitFor(t, "the permission request", func() bool { return len(c.requestsSnapshot()) > 0 })
+	req := c.requestsSnapshot()[0]
+	if req.AgentRunID != "run_1" {
+		t.Errorf("agent run = %q", req.AgentRunID)
+	}
+	if req.AgentRequestID != "77" {
+		t.Errorf("agent request id = %q", req.AgentRequestID)
+	}
+
+	// Hive approves; the bridge must express that in the agent's own terms.
+	var respondOut map[string]any
+	if err := c.peer.Call(context.Background(), v1.MethodPermissionRespond, v1.PermissionRespondParams{
+		AgentRunID:     "run_1",
+		AgentRequestID: "77",
+		Approved:       true,
+	}, &respondOut); err != nil {
+		t.Fatalf("permission.respond: %v", err)
+	}
+	if respondOut["outcome"] != "selected" {
+		t.Fatalf("outcome = %v", respondOut)
+	}
+
+	waitFor(t, "the agent to receive the outcome", func() bool {
+		return len(launcher.agent.outcomeSnapshot()) > 0
+	})
+	got := launcher.agent.outcomeSnapshot()[0]
+	if got.Outcome != "selected" || got.OptionID != "a1" {
+		t.Fatalf("agent outcome = %+v", got)
+	}
+}
+
+func TestPromptBeforeStartIsNotFound(t *testing.T) {
+	_, c, _ := newBridge(t)
+
+	var out map[string]any
+	err := c.peer.Call(context.Background(), v1.MethodExecutionPrompt, v1.ExecutionPromptParams{
+		AgentRunID: "run_missing", Generation: 1, Text: "hello",
+	}, &out)
+	if err == nil {
+		t.Fatal("expected prompting an unknown run to fail")
+	}
+	if e := v1.AsError(err); e.Code != v1.CodeNotFound {
+		t.Fatalf("code = %d, want %d", e.Code, v1.CodeNotFound)
+	}
+}
+
+func TestCancelReachesTheAgent(t *testing.T) {
+	_, c, launcher := newBridge(t)
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	cancelled := make(chan struct{}, 1)
+	launcher.agent.setHandler(func(method string, id json.RawMessage, params json.RawMessage) {
+		if method == "session/cancel" {
+			select {
+			case cancelled <- struct{}{}:
+			default:
+			}
+		}
+		launcher.agent.baseHandler(method, id, params)
+	})
+
+	var out map[string]any
+	if err := c.peer.Call(context.Background(), v1.MethodExecutionCancel, v1.ExecutionCancelParams{
+		AgentRunID: "run_1", Generation: 1,
+	}, &out); err != nil {
+		t.Fatalf("execution.cancel: %v", err)
+	}
+
+	select {
+	case <-cancelled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the agent never received session/cancel")
+	}
+}

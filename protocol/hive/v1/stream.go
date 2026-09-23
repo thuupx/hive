@@ -17,15 +17,30 @@ const MaxMessageSize = 4 << 20 // 4 MiB
 // per line. A WebSocket transport carries one message per frame and does
 // not need this type.
 type Stream struct {
-	r *bufio.Scanner
-	w io.Writer
+	r       *bufio.Scanner
+	w       io.Writer
+	closers []io.Closer
 }
 
 // NewStream returns a Stream reading from r and writing to w.
-func NewStream(r io.Reader, w io.Writer) *Stream {
+//
+// Any closers are closed by Close, which lets a peer shut down both ends of a
+// duplex pipe with one call.
+func NewStream(r io.Reader, w io.Writer, closers ...io.Closer) *Stream {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), MaxMessageSize)
-	return &Stream{r: sc, w: w}
+	return &Stream{r: sc, w: w, closers: closers}
+}
+
+// Close closes every closer given to NewStream.
+func (s *Stream) Close() error {
+	var first error
+	for _, c := range s.closers {
+		if err := c.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // Read returns the next message. Blank lines are skipped. It returns
