@@ -22,7 +22,7 @@ import (
 // sessionCommand handles `hive session <action>`.
 func sessionCommand(f flags, args []string) error {
 	if len(args) == 0 {
-		return errors.New("session requires an action: create, list, status, prompt, cancel, handoff, events")
+		return errors.New("session requires an action: create, list, status, prompt, cancel, handoff, events, config")
 	}
 
 	action, rest := args[0], args[1:]
@@ -41,6 +41,8 @@ func sessionCommand(f flags, args []string) error {
 		return sessionHandoff(f, rest)
 	case "events":
 		return sessionEvents(f, rest)
+	case "config":
+		return sessionConfig(f, rest)
 	default:
 		return fmt.Errorf("unknown session action %q", action)
 	}
@@ -285,6 +287,68 @@ func sessionCancel(f flags, args []string) error {
 	}
 
 	fmt.Println("cancelled")
+	return nil
+}
+
+// sessionConfig reads or changes the agent's session selectors.
+//
+// The selectors are the agent's own: Hive renders whatever the agent declared,
+// which is why this prints them rather than knowing what a model is.
+func sessionConfig(f flags, args []string) error {
+	fs := flag.NewFlagSet("session config", flag.ContinueOnError)
+	runID := fs.String("run", "", "run whose agent session to ask (default: the session's current run)")
+	if err := parseArgsAndFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return errors.New("session config requires a session id, and optionally a selector and a value")
+	}
+
+	params := v1.SessionConfigParams{
+		SessionID: fs.Arg(0),
+		RunID:     *runID,
+	}
+	if fs.NArg() >= 2 {
+		params.ConfigID = fs.Arg(1)
+	}
+	if fs.NArg() >= 3 {
+		params.Value = fs.Arg(2)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	c, err := connect(ctx, f)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	result, err := c.SessionConfig(ctx, params)
+	if err != nil {
+		return err
+	}
+
+	if len(result.Options) == 0 {
+		fmt.Printf("%s offers no settings\n", result.AgentID)
+		return nil
+	}
+
+	for _, option := range result.Options {
+		current := strings.Trim(string(option.CurrentValue), `"`)
+		fmt.Printf("%s (%s)", option.Name, option.ID)
+		if current != "" {
+			fmt.Printf(" = %s", current)
+		}
+		fmt.Println()
+		for _, value := range option.Options {
+			mark := " "
+			if value.Value == current {
+				mark = "*"
+			}
+			fmt.Printf("  %s %-20s %s\n", mark, value.Value, value.Name)
+		}
+	}
 	return nil
 }
 

@@ -63,6 +63,7 @@ Commands:
   session cancel <id>        cancel the current run
   session handoff <id> <agent>  hand the session to another agent
   session events <id>        replay a session event stream
+  session config <id> [sel] [value]  read or change the agent's settings
   workspace create <name>    register a workspace
   workspace list             list workspaces and shared-location warnings
   permission list            list pending permission requests
