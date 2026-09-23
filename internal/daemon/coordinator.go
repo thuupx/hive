@@ -717,6 +717,20 @@ func (b bindingCursor) Advance(ctx context.Context, transport, conversationID st
 	})
 }
 
+// Conversations names the platform conversations a session belongs to.
+func (b bindingCursor) Conversations(ctx context.Context, sessionID string) ([]string, error) {
+	bindings, err := b.store.ListBindingsForSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		out = append(out, binding.ConversationID)
+	}
+	return out, nil
+}
+
 // executionStore answers the reconnect reconciliation questions from the store.
 type executionStore struct {
 	store *storage.Store

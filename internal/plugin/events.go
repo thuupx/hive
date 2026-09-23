@@ -28,6 +28,9 @@ const EventBuffer = 1024
 // of replaying everything.
 type BindingCursor interface {
 	Advance(ctx context.Context, transport, conversationID string, sequence int64) error
+
+	// Conversations names the platform conversations a session belongs to.
+	Conversations(ctx context.Context, sessionID string) ([]string, error)
 }
 
 type Events struct {
@@ -218,9 +221,17 @@ func (e *Events) deliver(ev *event.Event) {
 			continue
 		}
 
+		// The core owns the binding, so it says where the event goes rather than
+		// leaving each transport to keep a copy that a restart loses.
+		var conversations []string
+		if e.Bindings != nil {
+			conversations, _ = e.Bindings.Conversations(context.Background(), ev.SessionID)
+		}
+
 		if err := sub.instance.Notify(v1.NotificationEvent, v1.DeliveredEvent{
 			SubscriptionID: sub.id,
 			Event:          wireEvent(ev),
+			Conversations:  conversations,
 		}); err != nil {
 			e.log.Debug("event delivery failed", "plugin", sub.instance.PluginID, "error", err)
 		}

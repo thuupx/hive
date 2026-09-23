@@ -553,7 +553,7 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 
 			// Acknowledge delivery so the core can advance the cursor. Delivery
 			// is at-least-once, so an unacknowledged event arrives again.
-			conversations := p.conversationsFor(delivered.Event.SessionID)
+			conversations := p.conversationsFor(delivered)
 
 			// A conversation that shows nothing has to be traceable: this is the
 			// line that says whether an event arrived, whether it rendered, and
@@ -761,7 +761,7 @@ func (p *Plugin) catchUp(ctx context.Context) {
 	p.mu.Unlock()
 
 	for sessionID, cursor := range cursors {
-		conversations := p.conversationsFor(sessionID)
+		conversations := p.boundConversations(sessionID)
 		if len(conversations) == 0 {
 			continue
 		}
@@ -804,7 +804,7 @@ func (p *Plugin) replay(ctx context.Context, sessionID string, after int64) (int
 		if !ok {
 			continue
 		}
-		conversations := p.conversationsFor(sessionID)
+		conversations := p.boundConversations(sessionID)
 		thread := ""
 		for _, conversation := range conversations {
 			if thread = threadOf(conversation); thread != "" {
@@ -863,7 +863,10 @@ func (p *Plugin) rememberBinding(conversationID, sessionID string) {
 	p.bound[conversationID] = sessionID
 }
 
-func (p *Plugin) conversationsFor(sessionID string) []string {
+// boundConversations is what this transport has learned about a session.
+//
+// It is the local view, used where the conversation was already found locally.
+func (p *Plugin) boundConversations(sessionID string) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -872,6 +875,37 @@ func (p *Plugin) conversationsFor(sessionID string) []string {
 		if bound == sessionID && conversation != sessionID {
 			out = append(out, conversation)
 		}
+	}
+	return out
+}
+
+// conversationsFor is where an event belongs.
+//
+// The core owns the binding and says which conversations a session has, so a
+// restart does not lose them. What this transport learned from its own deliveries
+// is added, because a binding made moments ago is already true here.
+func (p *Plugin) conversationsFor(delivered v1.DeliveredEvent) []string {
+	sessionID := delivered.Event.SessionID
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	seen := map[string]bool{}
+	out := make([]string, 0, len(delivered.Conversations))
+	for _, conversation := range delivered.Conversations {
+		if conversation == "" || seen[conversation] {
+			continue
+		}
+		seen[conversation] = true
+		out = append(out, conversation)
+	}
+
+	for conversation, bound := range p.bound {
+		if bound != sessionID || conversation == sessionID || seen[conversation] {
+			continue
+		}
+		seen[conversation] = true
+		out = append(out, conversation)
 	}
 	return out
 }

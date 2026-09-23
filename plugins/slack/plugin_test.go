@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+
+	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
 // A long-lived transport must not remember every tool call it has ever shown.
@@ -112,5 +114,44 @@ func TestTheEnvelopeNamesTheThread(t *testing.T) {
 	}
 	if d.channelID != "C1" {
 		t.Fatalf("channel = %q, want the channel that holds the thread", d.channelID)
+	}
+}
+
+// An event goes where the core says, not only where this transport learned.
+//
+// Found in a live thread: a restart emptied the transport's own map, so a
+// permission card rendered into nothing — the log said conversations=0 while the
+// binding existed. A card that is never posted is a button nobody can press.
+func TestAnEventUsesTheConversationsTheCoreNames(t *testing.T) {
+	p := New(nil, nil, Options{})
+
+	// Nothing learned locally: this is a transport that has just started.
+	got := p.conversationsFor(v1.DeliveredEvent{
+		Event:         v1.Event{SessionID: "sess_1"},
+		Conversations: []string{"C1:1.0", "C1:2.0"},
+	})
+
+	if len(got) != 2 || got[0] != "C1:1.0" || got[1] != "C1:2.0" {
+		t.Fatalf("conversations = %v, want the ones the core named", got)
+	}
+
+	// A repeat is not rendered twice.
+	got = p.conversationsFor(v1.DeliveredEvent{
+		Event:         v1.Event{SessionID: "sess_1"},
+		Conversations: []string{"C1:1.0", "C1:1.0"},
+	})
+	if len(got) != 1 {
+		t.Fatalf("conversations = %v, want one", got)
+	}
+
+	// What this transport learned is still used, because a binding made moments
+	// ago is already true here.
+	p.rememberBinding("C1:3.0", "sess_1")
+	got = p.conversationsFor(v1.DeliveredEvent{
+		Event:         v1.Event{SessionID: "sess_1"},
+		Conversations: []string{"C1:1.0"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("conversations = %v, want the core's and the local one", got)
 	}
 }

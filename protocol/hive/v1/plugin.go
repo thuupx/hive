@@ -160,6 +160,14 @@ type AckRequest struct {
 type DeliveredEvent struct {
 	SubscriptionID string `json:"subscriptionId"`
 	Event          Event  `json:"event"`
+
+	// Conversations are the platform conversations this event belongs to, as the
+	// core knows them.
+	//
+	// The core owns the binding, so it says where an event goes. A transport that
+	// kept its own copy would lose it on a restart and render the event into
+	// nothing, which is a card that never appears and a button nobody can press.
+	Conversations []string `json:"conversations,omitempty"`
 }
 
 // ExecutionStartParams asks an agent plugin to start an execution.
