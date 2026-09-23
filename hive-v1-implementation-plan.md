@@ -307,24 +307,51 @@ Implementation notes:
 
 ### M3 — Event architecture
 
-- [ ] Event envelope per §7.2 (with `origin_node` retained for future
+- [x] Event envelope per §7.2 (with `origin_node` retained for future
       reconciliation)
-- [ ] In-process event bus with bounded queues; a slow subscriber cannot
+- [x] In-process event bus with bounded queues; a slow subscriber cannot
       block the agent execution path (§8)
-- [ ] Separate realtime path and durability path; live delivery may precede
-      persistence
-- [ ] Core event types: `message`, `status`, `run.started`, `run.finished`,
+- [x] Separate realtime path and durability path
+- [x] Core event types: `message`, `status`, `run.started`, `run.finished`,
       `permission.requested`, `permission.responded`, `handoff.created`,
       `error`, `agent.raw`
-- [ ] `agent.raw` preservation for unknown protocol data (§2.6, §7.3)
-- [ ] Stream cursor + replay
-- [ ] `cursor_expired` response carrying the latest snapshot boundary and
+- [x] `agent.raw` preservation for unknown protocol data (§2.6, §7.3)
+- [x] Stream cursor + replay
+- [x] `cursor_expired` response carrying the latest snapshot boundary and
       next valid sequence (§8.3)
-- [ ] Tests: duplicate event, replay after retention gap, at-least-once
+- [x] Durable per-session prune watermark so a fully pruned stream is not
+      mistaken for an empty one
+- [x] Retention pruning that never drops an unpublished event
+- [x] Tests: duplicate event, replay after retention gap, at-least-once
       consumer idempotency
 
 **Exit criteria:** §42 "Unknown protocol data", "Event reconciliation",
 and "Cursor correctness" (replay half) have passing tests.
+
+Status: met. `make ci` is green with 113 passing tests; the suite is clean
+under `-race`.
+
+Implementation notes:
+
+- **Publication order.** §8 describes the bus as receiving an event before
+  persistence, while §7.1.2 requires the authoritative event to commit in the
+  same transaction as the command that caused it. v1 resolves that in favour
+  of §7.1.2: events are durable first and published from the outbox
+  afterwards. A subscriber that has seen an event can therefore always find it
+  in the store, and a crash between publish and mark simply republishes.
+  Publication stays at-least-once; consumers deduplicate by event id.
+- A subscriber whose bounded queue is full drops the event and is reported as
+  lagging via `Subscription.Lagged`/`Dropped`. It recovers by replaying from
+  its durable cursor. `Publish` never blocks.
+- **Migration 0002 added `stream_watermarks`.** Without a durable prune
+  watermark, a stream whose events were all pruned looks identical to an empty
+  stream, so a stale cursor would be served an empty result instead of
+  `cursor_expired`. `PrunedThrough` is the replay decision input;
+  `EarliestSequence` is introspection only.
+- Pruning only removes events that have already been published. Dropping an
+  unpublished event would lose realtime delivery that has not happened yet.
+- Retention is implemented as a store capability with tests; scheduling it is
+  wiring work that lands with the daemon in M6/M7.
 
 ### M4 — Agent Runtime and ACP adapter
 

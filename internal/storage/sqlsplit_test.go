@@ -95,14 +95,25 @@ func TestEmbeddedMigrationsSplit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("migration %04d_%s: %v", m.version, m.name, err)
 		}
-		if len(statements) < 20 {
-			t.Errorf("migration %04d_%s produced only %d statements", m.version, m.name, len(statements))
+		if len(statements) == 0 {
+			t.Errorf("migration %04d_%s produced no statements", m.version, m.name)
 		}
 		for i, s := range statements {
 			if strings.TrimSpace(s) == "" {
 				t.Errorf("migration %04d_%s statement %d is empty", m.version, m.name, i)
 			}
 		}
+	}
+
+	// The initial migration is the large one; a regression that collapses
+	// statement splitting would show up here.
+	first := migrations[0]
+	statements, err := splitStatements(first.body)
+	if err != nil {
+		t.Fatalf("migration %04d_%s: %v", first.version, first.name, err)
+	}
+	if len(statements) < 20 {
+		t.Errorf("the initial migration produced only %d statements", len(statements))
 	}
 }
 

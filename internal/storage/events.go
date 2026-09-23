@@ -137,6 +137,16 @@ func (s *Store) MarkPublished(ctx context.Context, tx Execer, eventIDs ...string
 	return nil
 }
 
+// MarkPublishedBatch marks events published inside its own write transaction.
+func (s *Store) MarkPublishedBatch(ctx context.Context, eventIDs ...string) error {
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	return s.WriteTx(ctx, func(tx Execer) error {
+		return s.MarkPublished(ctx, tx, eventIDs...)
+	})
+}
+
 func validateEvent(ev *event.Event) error {
 	switch {
 	case ev == nil:

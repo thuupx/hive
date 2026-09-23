@@ -50,6 +50,17 @@ is an example of the internal form.
   separate directory for integration tests, and give those files a
   `//go:build integration` tag so `go test ./...` stays fast.
 
+### Events
+
+- Events are durable before they are published. The outbox row is written in
+  the same transaction as the command that caused the event (§7.1.2), and
+  `eventbus.Publisher` moves published events from the outbox to the bus
+  afterwards.
+- `Bus.Publish` must never block. A subscriber with a full bounded queue
+  drops events and is reported lagging; it recovers from its durable cursor.
+- Replay decisions use `Store.PrunedThrough`, never `Store.EarliestSequence`:
+  a fully pruned stream has no events left and would otherwise look empty.
+
 ### Layering
 
 Domain packages own the entity types; storage is an adapter over them.
