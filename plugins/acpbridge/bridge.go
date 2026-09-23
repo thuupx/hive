@@ -582,6 +582,20 @@ func (b *Bridge) promptText(r *run, text, context string) string {
 	return strings.Join(parts, "\n\n")
 }
 
+// requestIDText is the agent's request id as text.
+//
+// The id is a JSON-RPC id, so it arrives as raw JSON and a string id includes its
+// own quotes. Keeping them makes the id a transport echoes back different from the
+// id that was stored, and a button whose id does not match answers nothing: the
+// agent waits, the card stays, and the click looks like it did nothing.
+func requestIDText(raw json.RawMessage) string {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	return string(raw)
+}
+
 // live reports whether this bridge still holds an execution for a run.
 func (b *Bridge) live(_ context.Context, params json.RawMessage) (any, error) {
 	var req v1.ExecutionLiveParams
@@ -1134,7 +1148,7 @@ func (b *Bridge) forwardPermission(perm acp.PermissionRequest) {
 	err = b.host.Call(ctx, v1.MethodPermissionRequest, v1.PermissionRequestParams{
 		AgentRunID:     r.agentRunID,
 		SessionID:      r.hiveSessionID,
-		AgentRequestID: string(perm.RequestID),
+		AgentRequestID: requestIDText(perm.RequestID),
 		Payload:        payload,
 	}, nil)
 	if err != nil {

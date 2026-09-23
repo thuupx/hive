@@ -341,3 +341,23 @@ func TestAnUpdateForAnUnknownSessionIsDropped(t *testing.T) {
 		t.Fatalf("runFor returned %q for a session no run knows", got.agentRunID)
 	}
 }
+
+// The agent's request id is text, not the JSON that carries it.
+//
+// Found in a live permission card: the value the button carried was
+// "03b7dd82-..." with the quotes still on it, so the id a click sent back did not
+// match the id that was stored and the click answered nothing.
+func TestTheRequestIDLosesItsJSONQuotes(t *testing.T) {
+	cases := map[string]string{
+		`"03b7dd82-eb1b-4362-bb6e-a269f0818cd3"`: "03b7dd82-eb1b-4362-bb6e-a269f0818cd3",
+		`"99"`:                                   "99",
+		`99`:                                     "99",
+		`"a\"b"`:                                 `a"b`,
+	}
+
+	for raw, want := range cases {
+		if got := requestIDText(json.RawMessage(raw)); got != want {
+			t.Errorf("requestIDText(%s) = %q, want %q", raw, got, want)
+		}
+	}
+}
