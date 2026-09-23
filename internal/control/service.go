@@ -211,6 +211,9 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 	if err := s.reconcileSessionRuns(ctx, sess.ID); err != nil {
 		return nil, domainError(err)
 	}
+	if err := s.expireOrphanedPermissions(ctx); err != nil {
+		return nil, domainError(err)
+	}
 
 	cmd := command.New(params.CommandID, string(principal), v1.MethodSessionPrompt)
 	cmd.SourceID = params.SourceID
@@ -804,13 +807,6 @@ func (s *Service) reconcileRuns(ctx context.Context, runs []*agent.AgentRun) err
 			return err
 		}
 		run.State = agent.StateInterrupted
-
-		// A request whose agent is gone fails closed. Leaving it pending would show
-		// a question nobody can answer, and a request that cannot be relayed must
-		// never become an implicit approval.
-		if err := s.failOpenPermissions(ctx, run.ID); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -818,25 +814,36 @@ func (s *Service) reconcileRuns(ctx context.Context, runs []*agent.AgentRun) err
 // permissionSweepLimit bounds how many open requests are examined at once.
 const permissionSweepLimit = 256
 
-// failOpenPermissions resolves a run's open requests as expired.
-func (s *Service) failOpenPermissions(ctx context.Context, runID string) error {
-	// Every session, because the run is what identifies the request here and the
-	// caller does not have the session to hand.
+// expireOrphanedPermissions resolves requests whose run has ended.
+//
+// A request is a question about a turn. When the turn is over — because it
+// finished, or because the agent that asked is gone — the question cannot be
+// answered, and leaving it open shows a question nobody can answer while a request
+// that cannot be relayed must never become an implicit approval.
+func (s *Service) expireOrphanedPermissions(ctx context.Context) error {
 	open, err := s.store.ListAllOpenPermissionRequests(ctx, permissionSweepLimit)
 	if err != nil {
 		return err
 	}
+	if len(open) == 0 {
+		return nil
+	}
 
 	for _, req := range open {
-		if req.RunID != runID {
+		run, err := s.store.GetAgentRun(ctx, req.RunID)
+		if err != nil {
+			// A request whose run cannot be read is not a request to act on.
+			continue
+		}
+		if !run.State.IsTerminal() {
 			continue
 		}
 
 		if _, won, err := s.store.ResolvePermissionRequest(ctx, req.ID, permission.StateExpired); err != nil {
 			return err
 		} else if won {
-			s.log.Warn("a permission request expired with the agent that asked",
-				"permission", req.ID, "run", req.RunID)
+			s.log.Warn("a permission request expired with the turn it belonged to",
+				"permission", req.ID, "run", req.RunID, "state", string(run.State))
 		}
 	}
 	return nil
