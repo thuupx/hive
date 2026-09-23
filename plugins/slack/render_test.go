@@ -185,3 +185,30 @@ func TestRenderOutcomeRetryableIsNotAWarning(t *testing.T) {
 		t.Fatalf("text = %q", message.Text)
 	}
 }
+
+// A user can see the conversations they can continue.
+func TestRenderSessionList(t *testing.T) {
+	result, err := json.Marshal(v1.SessionListResult{Sessions: []v1.SessionSummary{
+		{SessionID: "sess_1", State: "active", Runs: 2},
+	}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	message := RenderOutcome(v1.TransportOutcome{Method: v1.MethodSessionList, Result: result})
+	if !strings.Contains(message.Text, "sess_1") || !strings.Contains(message.Text, "2 run") {
+		t.Fatalf("text = %q", message.Text)
+	}
+}
+
+func TestRenderSessionListWhenEmpty(t *testing.T) {
+	result, err := json.Marshal(v1.SessionListResult{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	message := RenderOutcome(v1.TransportOutcome{Method: v1.MethodSessionList, Result: result})
+	if !strings.Contains(message.Text, "No sessions") {
+		t.Fatalf("text = %q", message.Text)
+	}
+}

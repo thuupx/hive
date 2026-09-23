@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sort"
@@ -95,6 +96,7 @@ type Bridge struct {
 	host     *sdk.Host
 	launcher Launcher
 	opts     Options
+	log      *slog.Logger
 
 	mu     sync.Mutex
 	client *acp.Client
@@ -146,6 +148,10 @@ type pendingPermission struct {
 
 // Options configures a bridge.
 type Options struct {
+	// Log receives what is worth knowing but is not a failure, such as a restore
+	// that did not work. Empty discards it.
+	Log *slog.Logger
+
 	// AuthMethod selects which of the agent's advertised auth methods to use.
 	// Empty uses the first one the agent offers.
 	AuthMethod string
@@ -157,10 +163,15 @@ type Options struct {
 
 // New returns a bridge over a connected host.
 func New(host *sdk.Host, launcher Launcher, opts Options) *Bridge {
+	if opts.Log == nil {
+		opts.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
 	return &Bridge{
 		host:       host,
 		launcher:   launcher,
 		opts:       opts,
+		log:        opts.Log,
 		runs:       make(map[string]*run),
 		perms:      make(map[string]pendingPermission),
 		tools:      make(map[string]map[string]bool),
@@ -208,14 +219,13 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 		return nil, err
 	}
 
-	created, err := client.NewSession(ctx, acp.NewSessionRequest{Cwd: req.WorkspacePath})
+	sessionID, resumed, options, err := b.openSession(ctx, client, req)
 	if err != nil {
 		// The start side effect did not happen. Reporting absent lets the core
 		// reconcile without starting a second execution.
 		_ = b.report(ctx, req.AgentRunID, req.Generation, "absent", "", err.Error())
 		return nil, v1.Unavailable("agent session could not be created: %s", err.Error())
 	}
-	sessionID := created.SessionID
 
 	b.mu.Lock()
 	b.runs[req.AgentRunID] = &run{
@@ -223,7 +233,7 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 		sessionID:     sessionID,
 		hiveSessionID: req.SessionID,
 		preamble:      req.Context,
-		config:        created.ConfigOptions,
+		config:        options,
 	}
 	b.mu.Unlock()
 
@@ -235,10 +245,54 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 
 	_ = b.report(ctx, req.AgentRunID, req.Generation, "starting", sessionID, "")
 
-	return map[string]any{
-		"runtimeSessionId": sessionID,
-		"configOptions":    created.ConfigOptions,
+	return v1.ExecutionStartResult{
+		RuntimeSessionID: sessionID,
+		Resumed:          resumed,
+		ConfigOptions:    wireConfig(options),
 	}, nil
+}
+
+// openSession restores the run's agent session when it can, and creates one when
+// it cannot.
+//
+// An agent session lives in the agent process, so a restart loses it. Restoring
+// gives the agent its own conversation history back, which is the difference
+// between continuing a conversation and starting a new one with the same user.
+//
+// A restore that fails is not fatal: starting fresh is worse than resuming and
+// better than refusing the run, so it is reported as a fresh session.
+func (b *Bridge) openSession(ctx context.Context, client *acp.Client, req v1.ExecutionStartParams) (string, bool, []acp.ConfigOption, error) {
+	if req.Resume != "" && b.supportsRestore() {
+		err := client.LoadSession(ctx, acp.LoadSessionRequest{
+			SessionID: req.Resume,
+			Cwd:       req.WorkspacePath,
+		})
+		if err == nil {
+			return req.Resume, true, b.caps.ConfigOptions, nil
+		}
+
+		// The agent had the session but would not restore it. Say so, then start
+		// fresh: the run must not fail because a restore did not work.
+		b.warn("could not restore the agent session", "session", req.Resume, "error", err)
+	}
+
+	created, err := client.NewSession(ctx, acp.NewSessionRequest{Cwd: req.WorkspacePath})
+	if err != nil {
+		return "", false, nil, err
+	}
+	return created.SessionID, false, created.ConfigOptions, nil
+}
+
+// supportsRestore reports whether the agent can restore a session it created.
+func (b *Bridge) supportsRestore() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.caps != nil && b.caps.LoadSession
+}
+
+// warn reports something worth knowing that is not a failure.
+func (b *Bridge) warn(message string, args ...any) {
+	b.log.Warn(message, args...)
 }
 
 // applyConfig sets the session options the user chose.

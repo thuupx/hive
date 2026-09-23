@@ -175,6 +175,26 @@ type ExecutionStartParams struct {
 	// config id. Hive does not know what they mean: the agent declares its
 	// selectors and the user picks a value.
 	Config map[string]string `json:"config,omitempty"`
+
+	// Resume is the runtime session this run already had, when it had one.
+	//
+	// An agent session lives in the agent process, so it does not survive a
+	// restart. An agent that can restore one gets its own conversation back
+	// instead of starting over, which is what makes a restart survivable.
+	Resume string `json:"resume,omitempty"`
+}
+
+// ExecutionStartResult is what the node reports about a start.
+type ExecutionStartResult struct {
+	// RuntimeSessionID belongs to the agent runtime.
+	RuntimeSessionID string `json:"runtimeSessionId"`
+
+	// Resumed reports that an existing agent session was restored rather than a
+	// new one created.
+	Resumed bool `json:"resumed,omitempty"`
+
+	// ConfigOptions are the selectors the agent declared.
+	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
 }
 
 // SessionConfigOption is one selector an agent offers for a session.

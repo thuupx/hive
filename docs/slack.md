@@ -168,6 +168,8 @@ Put the command first, right after the mention.
 | `model` | `[name]` | Show the agent's models, or switch to one. |
 | `models` | | Alias for `model` with no argument. |
 | `mode` | `[name]` | Show the agent's session modes, or switch to one. |
+| `sessions` | | List the conversations you can continue. |
+| `help` | | Show this list. |
 
 Anything else is **not** a command:
 
@@ -302,6 +304,26 @@ The choice is stored on the **session**, so a new AgentRun continues with it
 instead of silently reverting. A value the agent refuses is reported rather than
 silently dropped: a user who picked a model should not be left wondering which
 one ran.
+
+### Continuing after a restart
+
+An agent session lives in the agent process, so restarting Hive loses it. Two
+things make that survivable:
+
+- **The agent session is restored, not recreated.** When a run already had a
+  runtime session and the agent can restore one, Hive asks it to. The agent keeps
+  its own conversation history, which is the difference between continuing a
+  conversation and starting a new one with the same person. Whether an agent can
+  restore is part of what it declares at startup, so Hive asks rather than
+  guesses.
+- **What the transport missed is replayed.** A transport keeps a cursor for each
+  conversation. On start it reads that cursor and renders what was published while
+  it was down, so a restart does not silently swallow the answers to your
+  questions.
+
+A restore that fails is not fatal: the run starts fresh rather than refusing, and
+says so in the log. A cursor that has been pruned is reported rather than
+pretended away.
 
 ### Conversations and sessions
 

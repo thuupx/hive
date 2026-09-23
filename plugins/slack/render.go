@@ -136,6 +136,13 @@ func RenderOutcome(outcome v1.TransportOutcome) Message {
 		}
 		return textMessage("Status unavailable.")
 
+	case v1.MethodSessionList:
+		var list v1.SessionListResult
+		if err := json.Unmarshal(outcome.Result, &list); err == nil {
+			return sessionListMessage(&list)
+		}
+		return textMessage("No sessions.")
+
 	case v1.MethodAgentList:
 		var list v1.AgentListResult
 		if err := json.Unmarshal(outcome.Result, &list); err == nil {
@@ -310,6 +317,31 @@ func statusMessage(status *v1.SessionStatusResult) Message {
 	for _, run := range status.Runs {
 		text += fmt.Sprintf("\n• `%s` %s on `%s` — %s", run.RunID, run.AgentID, run.NodeID, run.State)
 	}
+	return textMessage(text)
+}
+
+// sessionListMessage lists the conversations a user can continue.
+func sessionListMessage(list *v1.SessionListResult) Message {
+	if len(list.Sessions) == 0 {
+		return textMessage("No sessions yet. Send a message to start one.")
+	}
+
+	text := "*Sessions*"
+	for _, session := range list.Sessions {
+		text += fmt.Sprintf("\n• `%s` — %s, %d run(s)", session.SessionID, session.State, session.Runs)
+	}
+	return textMessage(text)
+}
+
+// HelpMessage renders the transport's own catalog.
+//
+// The catalog belongs to the transport, so this needs no round trip to the core.
+func HelpMessage() Message {
+	text := "*Commands*"
+	for _, entry := range Catalog() {
+		text += fmt.Sprintf("\n• `%s` — %s", entry.Command, entry.Description)
+	}
+	text += "\n\nAddress me first: `@Hive <command>`. Anything else is a prompt."
 	return textMessage(text)
 }
 

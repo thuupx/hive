@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -138,7 +139,15 @@ type fakeAgent struct {
 	mu       sync.Mutex
 	onMethod func(method string, id json.RawMessage, params json.RawMessage)
 	outcomes []acp.PermissionOutcome
+	loaded   []string
 	wg       sync.WaitGroup
+}
+
+// loadedSnapshot is what the agent was asked to restore.
+func (a *fakeAgent) loadedSnapshot() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.loaded...)
 }
 
 func newFakeAgent(t *testing.T, conn net.Conn) *fakeAgent {
@@ -207,7 +216,7 @@ func (a *fakeAgent) request(id int, method string, params any) {
 }
 
 // baseHandler answers the ACP methods the bridge needs.
-func (a *fakeAgent) baseHandler(method string, id json.RawMessage, _ json.RawMessage) {
+func (a *fakeAgent) baseHandler(method string, id json.RawMessage, params json.RawMessage) {
 	switch method {
 	case "initialize":
 		a.reply(id, map[string]any{
@@ -216,6 +225,11 @@ func (a *fakeAgent) baseHandler(method string, id json.RawMessage, _ json.RawMes
 		})
 	case "session/new":
 		a.reply(id, map[string]any{"sessionId": "agent-sess-1"})
+	case "session/load":
+		a.mu.Lock()
+		a.loaded = append(a.loaded, string(params))
+		a.mu.Unlock()
+		a.reply(id, map[string]any{})
 	case "session/prompt":
 		a.reply(id, map[string]any{"stopReason": "end_turn"})
 	}
@@ -542,5 +556,67 @@ func TestCancelReachesTheAgent(t *testing.T) {
 	case <-cancelled:
 	case <-time.After(3 * time.Second):
 		t.Fatal("the agent never received session/cancel")
+	}
+}
+
+// A run that already had an agent session asks for it back instead of starting
+// over.
+//
+// This is what makes a restart survivable: the agent keeps its own conversation
+// history rather than being handed a fresh one.
+func TestStartRestoresAnExistingAgentSession(t *testing.T) {
+	bridge, c, launcher := newBridge(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = bridge.Run(ctx) }()
+
+	// The agent is launched on the first start, so there is nothing to wait for.
+	var out map[string]any
+	err := c.peer.Call(ctx, v1.MethodExecutionStart, v1.ExecutionStartParams{
+		AgentRunID:    "run_1",
+		SessionID:     "sess_1",
+		Generation:    1,
+		WorkspacePath: "/tmp/ws",
+		Resume:        "agent-sess-9",
+	}, &out)
+	if err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	if out["runtimeSessionId"] != "agent-sess-9" {
+		t.Errorf("runtime session = %v, want the restored one", out["runtimeSessionId"])
+	}
+	if out["resumed"] != true {
+		t.Errorf("resumed = %v, want true", out["resumed"])
+	}
+
+	loaded := launcher.agent.loadedSnapshot()
+	if len(loaded) != 1 || !strings.Contains(loaded[0], "agent-sess-9") {
+		t.Fatalf("the agent was asked to restore %v", loaded)
+	}
+}
+
+// A run with no agent session creates one, and does not ask to restore.
+func TestStartCreatesWhenThereIsNothingToRestore(t *testing.T) {
+	bridge, c, launcher := newBridge(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = bridge.Run(ctx) }()
+
+	out, err := callStart(t, c, "run_1", 1)
+	if err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	if out["runtimeSessionId"] != "agent-sess-1" {
+		t.Errorf("runtime session = %v, want a new one", out["runtimeSessionId"])
+	}
+	if out["resumed"] != nil {
+		t.Errorf("resumed = %v, want absent", out["resumed"])
+	}
+	if loaded := launcher.agent.loadedSnapshot(); len(loaded) != 0 {
+		t.Fatalf("the agent was asked to restore %v", loaded)
 	}
 }

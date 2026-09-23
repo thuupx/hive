@@ -234,6 +234,13 @@ func (r *Router) handleCommand(ctx context.Context, env v1.Envelope, principal c
 		}
 		return &Outcome{Method: method, CommandID: commandID, SessionID: sessionID, Result: result}
 
+	case v1.MethodSessionList:
+		result, err := r.control.ListSessions(ctx, principal, 0)
+		if err != nil {
+			return failed(commandID, apierr.From(err))
+		}
+		return &Outcome{Method: method, CommandID: commandID, Result: result}
+
 	case v1.MethodAgentList:
 		result, err := r.control.ListAgents(ctx, principal)
 		if err != nil {

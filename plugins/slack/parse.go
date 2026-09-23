@@ -41,6 +41,11 @@ var Commands = CommandMap{
 	"model":    v1.MethodSessionConfig,
 	"models":   v1.MethodSessionConfig,
 	"mode":     v1.MethodSessionConfig,
+	"sessions": v1.MethodSessionList,
+
+	// help has no Hive method: the catalog is the transport's own, so the
+	// transport answers it without asking the core.
+	"help": "",
 }
 
 // ConfigIDs maps a transport command to the agent selector it targets.
@@ -75,7 +80,12 @@ var Descriptions = map[string]string{
 	"model":    "Show or switch the agent model",
 	"models":   "Show the agent models",
 	"mode":     "Show or switch the agent session mode",
+	"sessions": "List your sessions",
+	"help":     "Show this list",
 }
+
+// HelpCommand is the transport command that shows the catalog.
+const HelpCommand = "help"
 
 // Catalog returns the commands this transport exposes, in a stable order.
 func Catalog() []CatalogEntry {

@@ -108,3 +108,17 @@ func TestDocumentedEnvironmentVariables(t *testing.T) {
 		}
 	}
 }
+
+// The help text is generated from the catalog, so it cannot drift from it.
+func TestHelpListsEveryCommand(t *testing.T) {
+	message := slack.HelpMessage()
+
+	for _, entry := range slack.Catalog() {
+		if !strings.Contains(message.Text, entry.Command) {
+			t.Errorf("help does not list %q", entry.Command)
+		}
+	}
+	if !strings.Contains(message.Text, "@Hive") {
+		t.Error("help should say how to address the bot")
+	}
+}

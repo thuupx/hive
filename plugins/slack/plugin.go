@@ -76,6 +76,10 @@ type Plugin struct {
 	// handled remembers recent deliveries, because one platform message can
 	// arrive as more than one event.
 	handled map[string]time.Time
+
+	// cursors is how far each session has been accepted, read at startup so a
+	// restart can replay what was missed.
+	cursors map[string]int64
 }
 
 // New returns a Slack plugin over a connected host.
@@ -94,6 +98,7 @@ func New(host *sdk.Host, client Client, opts Options) *Plugin {
 		bound:        make(map[string]string),
 		toolMessages: make(map[string]string),
 		handled:      make(map[string]time.Time),
+		cursors:      make(map[string]int64),
 	}
 }
 
@@ -102,6 +107,10 @@ func (p *Plugin) Run(ctx context.Context) error {
 	if err := p.reloadBindings(ctx); err != nil {
 		p.log.Warn("could not load bound sessions", "error", err)
 	}
+
+	// A transport that was down while the agent worked would otherwise lose what
+	// it missed. The cursor is what it kept for exactly this.
+	p.catchUp(ctx)
 
 	// Subscribe to every session this transport is authorized for, and filter
 	// while rendering.
@@ -200,6 +209,14 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	// when it mentions the bot, so the same delivery arrives twice. Hive would
 	// deduplicate the command, but the user would see two acknowledgements.
 	if p.alreadyHandled(d.envelope.SourceID) {
+		return
+	}
+
+	// The catalog is the transport's own, so help is answered without asking the
+	// core. Sending it through Hive would mean the transport does not know what it
+	// exposes.
+	if d.envelope.Command != nil && d.envelope.Command.Name == HelpCommand {
+		p.post(ctx, d.conversationID, "", HelpMessage())
 		return
 	}
 
@@ -482,6 +499,80 @@ func (p *Plugin) post(ctx context.Context, conversationID, threadTS string, mess
 	}
 }
 
+// catchUp renders what was published while this transport was not running.
+//
+// It is best-effort: a conversation that cannot be caught up is one the user will
+// notice, not one that breaks the transport.
+func (p *Plugin) catchUp(ctx context.Context) {
+	p.mu.Lock()
+	cursors := make(map[string]int64, len(p.bound))
+	for conversation, sessionID := range p.bound {
+		if conversation == sessionID {
+			continue
+		}
+		cursors[sessionID] = p.cursors[sessionID]
+	}
+	p.mu.Unlock()
+
+	for sessionID, cursor := range cursors {
+		conversations := p.conversationsFor(sessionID)
+		if len(conversations) == 0 {
+			continue
+		}
+
+		missed, err := p.replay(ctx, sessionID, cursor)
+		if err != nil {
+			p.log.Warn("could not catch up a conversation",
+				"session", sessionID, "error", err)
+			continue
+		}
+		if missed == 0 {
+			continue
+		}
+		p.log.Info("caught up a conversation", "session", sessionID, "events", missed)
+	}
+}
+
+// replay renders the events after a cursor.
+func (p *Plugin) replay(ctx context.Context, sessionID string, after int64) (int, error) {
+	var result v1.EventReplayResult
+	if err := p.host.Call(ctx, v1.MethodSessionEvents, v1.EventReplayParams{
+		SessionID:    sessionID,
+		FromSequence: after,
+		Limit:        catchUpLimit,
+	}, &result); err != nil {
+		return 0, err
+	}
+	if result.Gap != nil {
+		// The cursor was pruned, so the history is gone. Say so rather than
+		// pretending the conversation is complete.
+		p.log.Warn("the conversation cursor was pruned",
+			"session", sessionID, "next", result.Gap.NextSequence)
+		return 0, nil
+	}
+
+	renderer := Renderer{SessionID: sessionID}
+	rendered := 0
+	for _, ev := range result.Events {
+		message, ok := renderer.RenderEvent(ev)
+		if !ok {
+			continue
+		}
+		for _, conversation := range p.conversationsFor(sessionID) {
+			if message.ToolCallID != "" {
+				p.renderTool(ctx, conversation, message)
+				continue
+			}
+			p.post(ctx, conversation, "", message.Message)
+		}
+		rendered++
+	}
+	return rendered, nil
+}
+
+// catchUpLimit bounds how much history a restart replays.
+const catchUpLimit = 200
+
 // reloadBindings rebuilds the conversation-to-session map.
 //
 // The coordinator owns the bindings, so the transport asks which sessions it can
@@ -501,6 +592,7 @@ func (p *Plugin) reloadBindings(ctx context.Context) error {
 			// first delivery for it.
 			p.bound[session.SessionID] = session.SessionID
 		}
+		p.cursors[session.SessionID] = session.EventCursor
 	}
 	return nil
 }

@@ -213,6 +213,11 @@ type SessionSummary struct {
 	State     string    `json:"state"`
 	Runs      int       `json:"runs"`
 	UpdatedAt time.Time `json:"updatedAt"`
+
+	// EventCursor is the last sequence this caller durably accepted for the
+	// session. A transport uses it to replay what it missed while it was down,
+	// which is what makes a cursor worth keeping.
+	EventCursor int64 `json:"eventCursor,omitempty"`
 }
 
 // AgentListResult lists the configured agents.

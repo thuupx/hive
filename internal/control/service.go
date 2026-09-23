@@ -419,14 +419,42 @@ func (s *Service) ListSessions(ctx context.Context, principal Principal, limit i
 		if err != nil {
 			return nil, v1.Unavailable("runs could not be read: %s", err.Error())
 		}
+
+		// The cursor is the caller's own, so a transport can resume where it left
+		// off rather than replaying everything.
+		cursor, err := s.cursorFor(ctx, sess.ID, principal)
+		if err != nil {
+			return nil, storageError(err)
+		}
+
 		result.Sessions = append(result.Sessions, v1.SessionSummary{
-			SessionID: sess.ID,
-			State:     string(sess.State),
-			Runs:      len(runs),
-			UpdatedAt: sess.UpdatedAt,
+			SessionID:   sess.ID,
+			State:       string(sess.State),
+			Runs:        len(runs),
+			UpdatedAt:   sess.UpdatedAt,
+			EventCursor: cursor,
 		})
 	}
 	return result, nil
+}
+
+// cursorFor reports how far a principal has accepted a session's stream.
+func (s *Service) cursorFor(ctx context.Context, sessionID string, principal Principal) (int64, error) {
+	bindings, err := s.store.ListBindingsForSession(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+
+	var highest int64
+	for _, binding := range bindings {
+		if binding.Principal != string(principal) {
+			continue
+		}
+		if binding.EventCursor > highest {
+			highest = binding.EventCursor
+		}
+	}
+	return highest, nil
 }
 
 // GetCommand returns the durable status of a command.
@@ -624,6 +652,7 @@ func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePa
 		WorkspacePath: workspacePath,
 		Context:       preamble,
 		Config:        config,
+		Resume:        run.RuntimeSessionID,
 	}, &out)
 	if err != nil {
 		return err
