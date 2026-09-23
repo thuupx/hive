@@ -50,11 +50,19 @@ type Host struct {
 
 	peer *v1.Peer
 
-	mu       sync.Mutex
-	handlers map[string]Handler
+	mu           sync.Mutex
+	handlers     map[string]Handler
+	shutdownOnce sync.Once
 
 	events  chan v1.DeliveredEvent
 	dropped atomic.Int64
+
+	// shutdown is closed when the core asks the plugin to stop.
+	//
+	// The core closes the connection at the same time, so noticing this is not
+	// required to exit — but it is what gives a plugin the chance to end what it
+	// started before the process goes away.
+	shutdown chan struct{}
 }
 
 // Stdio returns a stream over the process's standard input and output.
@@ -101,6 +109,7 @@ func Connect(ctx context.Context, stream *v1.Stream, opts Options) (*Host, error
 		peer:     v1.NewPeer(stream),
 		handlers: make(map[string]Handler),
 		events:   make(chan v1.DeliveredEvent, DefaultEventBuffer),
+		shutdown: make(chan struct{}),
 	}
 	h.peer.Start()
 	return h, nil
@@ -193,6 +202,8 @@ func (h *Host) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-h.shutdown:
+			return nil
 		case <-h.peer.Done():
 			return closedOr(h.peer.Err())
 		case req, ok := <-h.peer.Requests():
@@ -224,8 +235,22 @@ func closedOr(err error) error {
 // Close ends the connection.
 func (h *Host) Close() error { return h.peer.Close() }
 
+// signalShutdown ends the run loop once, however many times it is asked.
+func (h *Host) signalShutdown() {
+	h.shutdownOnce.Do(func() { close(h.shutdown) })
+}
+
 func (h *Host) handleRequest(ctx context.Context, req *v1.Message) {
 	id := req.RequestID()
+
+	// The core is stopping this plugin. The run loop is ended so the plugin's own
+	// cleanup runs while the connection is still up, and the answer is sent first
+	// so the core knows the request was seen.
+	if req.Method == v1.MethodPluginShutdown {
+		h.signalShutdown()
+		_ = h.peer.Respond(id, map[string]any{"ok": true})
+		return
+	}
 
 	h.mu.Lock()
 	fn := h.handlers[req.Method]
@@ -247,6 +272,13 @@ func (h *Host) handleRequest(ctx context.Context, req *v1.Message) {
 }
 
 func (h *Host) handleNotification(note *v1.Message) {
+	// The core asks a plugin to stop with a notification, not a request, so this
+	// is where the run loop is ended. Handling it as a request too is harmless and
+	// makes the intent obvious at both call sites.
+	if note.Method == v1.MethodPluginShutdown {
+		h.signalShutdown()
+		return
+	}
 	if note.Method != v1.NotificationEvent {
 		return
 	}

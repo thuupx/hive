@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -141,7 +142,15 @@ type fakeAgent struct {
 	outcomes []acp.PermissionOutcome
 	loaded   []string
 	setOpts  []string
+	auths    []string
 	wg       sync.WaitGroup
+}
+
+// authCount is how many times the agent was asked to authenticate.
+func (a *fakeAgent) authCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.auths)
 }
 
 // setOptions is how many options the agent was asked to set.
@@ -215,6 +224,15 @@ func (a *fakeAgent) reply(id json.RawMessage, result any) {
 	a.send(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 }
 
+// replyError answers with a JSON-RPC error, as an agent refusing a request does.
+func (a *fakeAgent) replyError(id json.RawMessage, code int, message string) {
+	a.send(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": code, "message": message},
+	})
+}
+
 func (a *fakeAgent) notify(method string, params any) {
 	a.send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 }
@@ -230,12 +248,18 @@ func (a *fakeAgent) baseHandler(method string, id json.RawMessage, params json.R
 		a.reply(id, map[string]any{
 			"protocolVersion":   acp.ProtocolVersion,
 			"agentCapabilities": map[string]any{"loadSession": true},
+			"authMethods":       []map[string]any{{"id": "browser", "name": "Browser"}},
 		})
 	case "session/new":
 		a.reply(id, map[string]any{"sessionId": "agent-sess-1"})
 	case "session/set_config_option":
 		a.mu.Lock()
 		a.setOpts = append(a.setOpts, string(params))
+		a.mu.Unlock()
+		a.reply(id, map[string]any{})
+	case "authenticate":
+		a.mu.Lock()
+		a.auths = append(a.auths, string(params))
 		a.mu.Unlock()
 		a.reply(id, map[string]any{})
 	case "session/load":
@@ -258,6 +282,9 @@ type fakeLauncher struct {
 	t     *testing.T
 	agent *fakeAgent
 	fail  bool
+
+	// onReady scripts the agent before the bridge uses it.
+	onReady func(*fakeAgent)
 }
 
 func (l *fakeLauncher) Launch(ctx context.Context) (*acp.Client, *acp.Capabilities, error) {
@@ -269,6 +296,9 @@ func (l *fakeLauncher) Launch(ctx context.Context) (*acp.Client, *acp.Capabiliti
 	agent := newFakeAgent(l.t, agentConn)
 	agent.setHandler(agent.baseHandler)
 	l.agent = agent
+	if l.onReady != nil {
+		l.onReady(agent)
+	}
 
 	client := acp.NewClient(clientConn, acp.Options{ClientVersion: "test"})
 	caps, err := client.Initialize(ctx)
@@ -662,4 +692,82 @@ func TestStartSkipsAnEmptyConfigValue(t *testing.T) {
 	if got := launcher.agent.setOptions(); got != 0 {
 		t.Fatalf("the agent was asked to set %d option(s), want none", got)
 	}
+}
+
+// An agent that already has credentials is not sent through its auth flow again.
+//
+// Found by watching a browser window open per agent launch: the bridge
+// authenticated preemptively, and an agent whose auth method opens a browser ran
+// that whole flow every time, even though it had credentials on disk.
+//
+// The protocol lets an agent refuse a session when it needs authentication, so the
+// client waits to be told.
+func TestStartDoesNotAuthenticateAnAgentThatDoesNotAsk(t *testing.T) {
+	bridge, c, launcher := newBridge(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = bridge.Run(ctx) }()
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	if got := launcher.agent.authCount(); got != 0 {
+		t.Fatalf("the agent was asked to authenticate %d time(s), want none", got)
+	}
+}
+
+// When the agent does refuse the session, it is authenticated once and retried.
+func TestStartAuthenticatesWhenTheAgentRefuses(t *testing.T) {
+	bridge, c, launcher := newBridge(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = bridge.Run(ctx) }()
+
+	// The agent refuses the first session, as one that needs authentication does.
+	var refused atomic.Bool
+	launcher.onReady = func(agent *fakeAgent) {
+		agent.setHandler(func(method string, id json.RawMessage, params json.RawMessage) {
+			if method == "session/new" && refused.CompareAndSwap(false, true) {
+				agent.replyError(id, -32000, "authentication required")
+				return
+			}
+			agent.baseHandler(method, id, params)
+		})
+	}
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	if got := launcher.agent.authCount(); got != 1 {
+		t.Fatalf("the agent was asked to authenticate %d time(s), want once", got)
+	}
+}
+
+// The agent ends with the plugin.
+//
+// An agent left running is an orphan: it holds a session, its memory, and
+// whatever authentication state it has, and nothing will ever collect it. Found
+// by finding one alive after the daemon had been restarted several times.
+func TestRunEndsTheAgent(t *testing.T) {
+	bridge, c, launcher := newBridge(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = bridge.Run(ctx) }()
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+	if launcher.agent == nil {
+		t.Fatal("the agent should have been started")
+	}
+
+	// Stopping the bridge is what a plugin shutdown does.
+	cancel()
+	waitFor(t, "the agent to be closed", func() bool {
+		return bridge.HasAgent() == false
+	})
 }

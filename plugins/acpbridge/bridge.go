@@ -192,8 +192,38 @@ func (b *Bridge) Register() {
 }
 
 // Run serves until ctx is cancelled or the connection ends.
+//
+// The agent is ended with the plugin. An agent left running is an orphan: it
+// holds a session, its memory, and whatever authentication state it has, and
+// nothing will ever collect it.
 func (b *Bridge) Run(ctx context.Context) error {
+	defer b.closeAgent()
+
 	return b.host.Run(ctx)
+}
+
+// CloseAgent ends the agent session, so the agent process goes with this plugin.
+func (b *Bridge) CloseAgent() {
+	b.closeAgent()
+}
+
+// HasAgent reports whether an agent is currently held.
+func (b *Bridge) HasAgent() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.client != nil
+}
+
+func (b *Bridge) closeAgent() {
+	b.mu.Lock()
+	client := b.client
+	b.client = nil
+	b.caps = nil
+	b.mu.Unlock()
+
+	if client != nil {
+		_ = client.Close()
+	}
 }
 
 func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error) {
@@ -314,10 +344,38 @@ func (b *Bridge) openSession(ctx context.Context, client *acp.Client, req v1.Exe
 	}
 
 	created, err := client.NewSession(ctx, acp.NewSessionRequest{Cwd: req.WorkspacePath})
+	if err == nil {
+		return created.SessionID, false, created.ConfigOptions, nil
+	}
+
+	// The agent refused the session. If it offers an auth method, that is the
+	// reason, and it is worth one attempt: an agent that has credentials will
+	// simply succeed the first time and never reach here.
+	if !b.offersAuth() {
+		return "", false, nil, err
+	}
+	if authErr := b.authenticate(ctx, client, b.capabilities()); authErr != nil {
+		return "", false, nil, err
+	}
+
+	created, err = client.NewSession(ctx, acp.NewSessionRequest{Cwd: req.WorkspacePath})
 	if err != nil {
 		return "", false, nil, err
 	}
 	return created.SessionID, false, created.ConfigOptions, nil
+}
+
+// offersAuth reports whether the agent advertises an auth method.
+func (b *Bridge) offersAuth() bool {
+	caps := b.capabilities()
+	return caps != nil && len(caps.AuthMethods) > 0
+}
+
+// capabilities is the agent's declaration, or nil before it is known.
+func (b *Bridge) capabilities() *acp.Capabilities {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.caps
 }
 
 // supportsRestore reports whether the agent can restore a session it created.
@@ -611,12 +669,16 @@ func (b *Bridge) ensureAgent(ctx context.Context) (*acp.Client, error) {
 		return nil, v1.Unavailable("agent could not be started: %s", err.Error())
 	}
 
-	// An agent that advertises auth methods refuses to create a session until the
-	// client has authenticated.
-	if err := b.authenticate(ctx, client, caps); err != nil {
-		_ = client.Close()
-		return nil, err
-	}
+	// Authentication is not sent here on purpose.
+	//
+	// An agent may advertise auth methods and still be perfectly authenticated:
+	// credentials are the agent's to keep, and an agent that already has them is
+	// refused nothing. Sending the method preemptively runs the whole flow every
+	// time the agent is started, which for a method that opens a browser means a
+	// browser window per agent launch.
+	//
+	// The protocol lets an agent refuse the session when it needs authentication,
+	// so the client waits to be told. That is what openSession does.
 
 	b.mu.Lock()
 	b.client = client
