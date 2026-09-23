@@ -53,6 +53,15 @@ func (s State) Valid() bool {
 	return ok
 }
 
+// IsWorking reports whether a turn may be in flight.
+//
+// A handoff between turns is the normal case: a user asks for one when the agent
+// has finished what it was doing. A run that is working is the one case worth
+// refusing, because its work would be abandoned mid-flight.
+func (s State) IsWorking() bool {
+	return s == StateStarting || s == StateRunning
+}
+
 // IsTerminal reports whether s ends the current execution.
 func (s State) IsTerminal() bool {
 	switch s {

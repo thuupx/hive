@@ -18,6 +18,31 @@ import (
 
 const targetAgent = "other-agent"
 
+// finishTurn drives a run to completed and persists it.
+//
+// A handoff is normally asked for between turns, so a test that hands off has to
+// end the turn first. Handing off mid-turn is refused on purpose.
+func finishTurn(t *testing.T, store *storage.Store, runID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	run, err := store.GetAgentRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.State.IsTerminal() {
+		return
+	}
+	if err := run.Transition(agent.StateCompleted); err != nil {
+		t.Fatalf("transition: %v", err)
+	}
+	if err := store.WriteTx(ctx, func(tx storage.Execer) error {
+		return store.UpdateAgentRun(ctx, tx, run)
+	}); err != nil {
+		t.Fatalf("UpdateAgentRun: %v", err)
+	}
+}
+
 // agentSpecFor runs the test agent under a given plugin identity, so a handoff
 // between two agents can be exercised with one test binary.
 // failingAgentSpecFor runs the test agent so that its start always fails, which
@@ -130,6 +155,9 @@ func TestHandoffTransfersTheSession(t *testing.T) {
 		return err == nil && run.RuntimeSessionID == "agent-session-"+testAgent
 	})
 
+	// The handoff is asked for between turns.
+	finishTurn(t, store, created.RunID)
+
 	var transferred v1.SessionHandoffResult
 	if err := peer.Call(ctx, v1.MethodSessionHandoff, v1.SessionHandoffParams{
 		CommandID: "cmd_2",
@@ -233,6 +261,12 @@ func TestHandoffIsIdempotent(t *testing.T) {
 		t.Fatalf("session.create: %v", err)
 	}
 
+	waitFor(t, "the run to start", func() bool {
+		run, err := store.GetAgentRun(ctx, created.RunID)
+		return err == nil && run.State.IsWorking()
+	})
+	finishTurn(t, store, created.RunID)
+
 	params := v1.SessionHandoffParams{
 		CommandID: "cmd_2",
 		SessionID: created.SessionID,
@@ -315,6 +349,101 @@ func TestHandoffWithoutATargetNodeIsRefused(t *testing.T) {
 	}
 }
 
+// A handoff between turns is the normal case, and a finished source run is exactly
+// when a user asks for one.
+//
+// Found by handing a real session to another agent: refusing a terminal source run
+// made the operation unusable, because a run is finished most of the time.
+func TestHandoffFromAFinishedRunIsAllowed(t *testing.T) {
+	ctx := context.Background()
+	store, peer := startStackWithAgents(t, testAgent, targetAgent)
+
+	var created v1.SessionCreateResult
+	if err := peer.Call(ctx, v1.MethodSessionCreate, v1.SessionCreateParams{
+		CommandID: "cmd_1",
+		AgentID:   testAgent,
+	}, &created); err != nil {
+		t.Fatalf("session.create: %v", err)
+	}
+
+	waitFor(t, "the run to start", func() bool {
+		run, err := store.GetAgentRun(ctx, created.RunID)
+		return err == nil && run.State == agent.StateStarting
+	})
+
+	// Finish the turn, which is the state a user hands off from.
+	run, err := store.GetAgentRun(ctx, created.RunID)
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if err := run.Transition(agent.StateCompleted); err != nil {
+		t.Fatalf("transition: %v", err)
+	}
+	if err := store.WriteTx(ctx, func(tx storage.Execer) error {
+		return store.UpdateAgentRun(ctx, tx, run)
+	}); err != nil {
+		t.Fatalf("UpdateAgentRun: %v", err)
+	}
+
+	var transferred v1.SessionHandoffResult
+	if err := peer.Call(ctx, v1.MethodSessionHandoff, v1.SessionHandoffParams{
+		CommandID: "cmd_2",
+		SessionID: created.SessionID,
+		AgentID:   targetAgent,
+	}, &transferred); err != nil {
+		t.Fatalf("a finished source run should be handoff-able: %v", err)
+	}
+	if transferred.State != string(handoff.StateActive) {
+		t.Fatalf("state = %q, want active", transferred.State)
+	}
+	if transferred.SourceRunID != created.RunID {
+		t.Errorf("source run = %q, want %q", transferred.SourceRunID, created.RunID)
+	}
+}
+
+// A handoff while the source is still working is refused, because its turn would
+// be abandoned mid-flight.
+func TestHandoffWhileTheSourceIsWorkingIsRefused(t *testing.T) {
+	ctx := context.Background()
+	store, peer := startStackWithAgents(t, testAgent, targetAgent)
+
+	var created v1.SessionCreateResult
+	if err := peer.Call(ctx, v1.MethodSessionCreate, v1.SessionCreateParams{
+		CommandID: "cmd_1",
+		AgentID:   testAgent,
+	}, &created); err != nil {
+		t.Fatalf("session.create: %v", err)
+	}
+
+	waitFor(t, "the run to start working", func() bool {
+		run, err := store.GetAgentRun(ctx, created.RunID)
+		return err == nil && run.State.IsWorking()
+	})
+
+	err := peer.Call(ctx, v1.MethodSessionHandoff, v1.SessionHandoffParams{
+		CommandID: "cmd_2",
+		SessionID: created.SessionID,
+		AgentID:   targetAgent,
+	}, nil)
+	if err == nil {
+		t.Fatal("expected a working source run to be refused")
+	}
+	if e := v1.AsError(err); e.Code != v1.CodeConflict {
+		t.Fatalf("code = %d, want %d", e.Code, v1.CodeConflict)
+	}
+
+	// Nothing was recorded as a transfer.
+	records, err := store.ListHandoffs(ctx, created.SessionID)
+	if err != nil {
+		t.Fatalf("ListHandoffs: %v", err)
+	}
+	for _, record := range records {
+		if record.State.IsUsable() {
+			t.Fatalf("handoff %s claims a transfer that did not happen", record.ID)
+		}
+	}
+}
+
 // A handoff to an agent that is configured but unreachable fails, and the session
 // stays usable.
 func TestFailedHandoffLeavesTheSessionUsable(t *testing.T) {
@@ -328,30 +457,15 @@ func TestFailedHandoffLeavesTheSessionUsable(t *testing.T) {
 		t.Fatalf("session.create: %v", err)
 	}
 
-	// A source run that is already terminal cannot be handed off.
-	run, err := store.GetAgentRun(ctx, created.RunID)
-	if err != nil {
-		t.Fatalf("GetAgentRun: %v", err)
-	}
-	if err := run.Transition(agent.StateStarting); err != nil {
-		t.Fatalf("transition: %v", err)
-	}
-	if err := run.Transition(agent.StateCancelled); err != nil {
-		t.Fatalf("transition: %v", err)
-	}
-	if err := store.WriteTx(ctx, func(tx storage.Execer) error {
-		return store.UpdateAgentRun(ctx, tx, run)
-	}); err != nil {
-		t.Fatalf("UpdateAgentRun: %v", err)
-	}
-
-	err = peer.Call(ctx, v1.MethodSessionHandoff, v1.SessionHandoffParams{
+	// The target agent exists but its command does not, so the start fails after
+	// the handoff record and the target run were committed.
+	err := peer.Call(ctx, v1.MethodSessionHandoff, v1.SessionHandoffParams{
 		CommandID: "cmd_2",
 		SessionID: created.SessionID,
 		AgentID:   targetAgent,
 	}, nil)
 	if err == nil {
-		t.Fatal("expected a terminal source run to be refused")
+		t.Fatal("expected the handoff to fail")
 	}
 
 	// No handoff is reported as a transfer.
@@ -384,6 +498,12 @@ func TestFailedHandoffTerminatesTheTargetRun(t *testing.T) {
 	}, &created); err != nil {
 		t.Fatalf("session.create: %v", err)
 	}
+
+	waitFor(t, "the run to start", func() bool {
+		run, err := store.GetAgentRun(ctx, created.RunID)
+		return err == nil && run.State.IsWorking()
+	})
+	finishTurn(t, store, created.RunID)
 
 	// The target agent is configured but its command is not installed, so the
 	// start fails after the handoff record and the target run were committed.

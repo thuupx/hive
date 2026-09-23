@@ -284,6 +284,10 @@ This is the difference between "try again" and "do it twice".
 Slack is the v1 production transport. It uses **Socket Mode**, so Hive needs no
 public endpoint and no inbound tunnel.
 
+> The full guide, including the app manifest, every command, and the permission
+> buttons, is in **[docs/slack.md](docs/slack.md)**. What follows is the short
+> version.
+
 ### 1. Create the app
 
 Create an app at <https://api.slack.com/apps> and enable **Socket Mode**. Slack
@@ -347,6 +351,7 @@ Restart `hive serve`. You should see `slack socket mode connected`.
 ```text
 @your-bot /new_chat            create a session
 @your-bot /agents              list agents
+@your-bot /nodes               list nodes
 @your-bot /status              show the session
 @your-bot /cancel              cancel the current run
 @your-bot /handoff <agent>     hand the session to another agent
@@ -357,7 +362,8 @@ A recognized command is never silently forwarded to the agent as a prompt, and
 ordinary text is never treated as a command.
 
 `allowed_users` is **deny by default**. If Slack messages do nothing, that list is
-the first thing to check.
+the first thing to check. The command table is generated from the transport's own
+catalog, and a test fails if this document and the code disagree.
 
 ---
 
@@ -384,6 +390,7 @@ starts a replacement, because the original execution may still be alive.
 
 More:
 
+- `docs/slack.md` — the Slack transport: setup, commands, permission buttons
 - `docs/protocol.md` — wire format, API domains, versioning, event types
 - `docs/security.md` — identity classes, authorization, permissions
 - `docs/configuration.md` — every configuration key

@@ -96,6 +96,16 @@ func (s *Service) CreateSession(ctx context.Context, principal Principal, params
 	if agentID == "" {
 		agentID = s.defaultAgent
 	}
+	// A retry of the same logical operation returns what the first call recorded.
+	// Checking the node first would fail a retry after the node went away, even
+	// though the session was already created.
+	if existing, err := s.store.GetCommand(ctx, params.CommandID); err == nil {
+		switch existing.State {
+		case command.StateCompleted, command.StateFailed:
+			return replayCreateResult(existing)
+		}
+	}
+
 	if !s.hasAgent(agentID) {
 		return nil, v1.InvalidParams("unknown agent %q", agentID)
 	}

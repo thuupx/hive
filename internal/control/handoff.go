@@ -43,6 +43,18 @@ func (s *Service) Handoff(ctx context.Context, principal Principal, params v1.Se
 	if err := s.authorizeSession(ctx, principal, params.SessionID); err != nil {
 		return nil, err
 	}
+
+	// A retry of the same logical operation returns what the first call recorded.
+	// Running the validations first would judge state the first call already
+	// changed — the routing pointer, for instance — and refuse a retry that must
+	// succeed.
+	if existing, err := s.store.GetCommand(ctx, params.CommandID); err == nil {
+		switch existing.State {
+		case command.StateCompleted, command.StateFailed:
+			return replayHandoffResult(existing)
+		}
+	}
+
 	if !s.hasAgent(params.AgentID) {
 		return nil, v1.InvalidParams("unknown agent %q", params.AgentID)
 	}
@@ -329,12 +341,17 @@ func (s *Service) sourceRunFor(ctx context.Context, sess *session.Session, expli
 	}
 
 	for _, run := range runs {
-		if run.ID == want {
-			if run.State.IsTerminal() {
-				return nil, v1.Conflict("agent run %s is %s", run.ID, run.State)
-			}
-			return run, nil
+		if run.ID != want {
+			continue
 		}
+		// A handoff is normally asked for between turns, when the source run has
+		// finished. Refusing a finished run would make the operation unusable. The
+		// one case worth refusing is a run that is still working, because its turn
+		// would be abandoned.
+		if run.State.IsWorking() {
+			return nil, v1.Conflict("agent run %s is %s; wait for the turn to finish", run.ID, run.State)
+		}
+		return run, nil
 	}
 	return nil, v1.NotFound("agent run %s", want)
 }
