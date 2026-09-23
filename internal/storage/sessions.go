@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/thupham/hive/internal/session"
 )
@@ -131,6 +132,14 @@ func decodeAgentConfig(raw string) map[string]string {
 	}
 	if err := json.Unmarshal([]byte(raw), &config); err != nil {
 		return map[string]string{}
+	}
+
+	// An empty value is not a choice. A session recorded by an older build can
+	// carry one, and applying it would fail every later run.
+	for configID, value := range config {
+		if strings.TrimSpace(value) == "" {
+			delete(config, configID)
+		}
 	}
 	return config
 }

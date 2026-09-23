@@ -41,11 +41,14 @@ func (s *Service) SessionConfig(ctx context.Context, principal Principal, params
 			"session %s has no live agent session; send a message first", params.SessionID)
 	}
 
-	// The change is recorded before it is applied, so a run that starts next keeps
-	// the choice even if the live session refuses it. Refusing the live change
-	// then surfaces as an error, which is the honest outcome: the user picked
-	// something the running agent would not accept.
-	if params.ConfigID != "" {
+	// A config id with no value is a read of that selector, not a change to it.
+	// Recording the empty value would poison every later run: the agent would be
+	// asked to apply a value that is not one.
+	if params.ConfigID != "" && params.Value != "" {
+		// The change is recorded before it is applied, so a run that starts next
+		// keeps the choice even if the live session refuses it. Refusing the live
+		// change then surfaces as an error, which is the honest outcome: the user
+		// picked something the running agent would not accept.
 		if err := s.recordConfig(ctx, sess.ID, params.ConfigID, params.Value); err != nil {
 			return nil, domainError(err)
 		}

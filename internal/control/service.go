@@ -272,16 +272,18 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 		return replayPromptResult(stored)
 	}
 
-	// A run created by routing has to be started, exactly as a run created by
-	// session.create is. Without this it would exist with no execution, and the
-	// prompt would have nowhere to go.
-	if createdRun {
-		newRun, err := s.store.GetAgentRun(ctx, runID)
-		if err != nil {
-			_ = s.failCommand(ctx, stored.ID, err)
-			return nil, domainError(err)
-		}
-
+	// A run has to have an execution before it can be prompted: one created by
+	// routing, exactly as one created by session.create.
+	//
+	// A run left in `created` is not hypothetical. A restart, or a start that
+	// failed, leaves one behind, and every later prompt routes to it. Without
+	// this the session is stuck for good, answering nothing.
+	newRun, err := s.store.GetAgentRun(ctx, runID)
+	if err != nil {
+		_ = s.failCommand(ctx, stored.ID, err)
+		return nil, domainError(err)
+	}
+	if createdRun || newRun.State == agent.StateCreated {
 		path, err := s.workspacePath(ctx, sess.WorkspaceID, newRun.NodeID)
 		if err != nil {
 			_ = s.failCommand(ctx, stored.ID, err)

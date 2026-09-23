@@ -389,3 +389,105 @@ func TestRoutingCreatedRunBecomesTheDefault(t *testing.T) {
 		t.Fatalf("default run = %q, want the new run %q", sess.DefaultInteractiveRunID, prompted.RunID)
 	}
 }
+
+// Reading a selector must not record a value for it.
+//
+// Found in a live conversation: asking to see the models recorded an empty model,
+// and every later run failed because the agent was asked to apply a value that is
+// not one.
+func TestReadingASelectorDoesNotRecordIt(t *testing.T) {
+	ctx := context.Background()
+	_, store, _, socketPath := startStack(t)
+
+	c, err := client.Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	created, err := c.CreateSession(ctx, v1.SessionCreateParams{CommandID: "cmd_1"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitForRunStarted(t, store, created.RunID)
+
+	// A read names the selector but has no value.
+	if _, err := c.SessionConfig(ctx, v1.SessionConfigParams{
+		SessionID: created.SessionID,
+		ConfigID:  "model",
+	}); err != nil {
+		t.Fatalf("SessionConfig read: %v", err)
+	}
+
+	sess, err := store.GetSession(ctx, created.SessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if value, recorded := sess.AgentConfig["model"]; recorded {
+		t.Fatalf("a read recorded model=%q", value)
+	}
+}
+
+// A run left in `created` is started when it is prompted.
+//
+// Found in a live conversation: a restart left a run that was created but never
+// launched, and every later prompt routed to it and failed. The session answered
+// nothing, for good.
+func TestPromptStartsARunThatWasNeverLaunched(t *testing.T) {
+	ctx := context.Background()
+	_, store, _, socketPath := startStack(t)
+
+	c, err := client.Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	created, err := c.CreateSession(ctx, v1.SessionCreateParams{CommandID: "cmd_1"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitForRunStarted(t, store, created.RunID)
+	finishTurn(t, store, created.RunID)
+
+	// A run that exists with no execution, as a restart leaves behind.
+	var orphan v1.SessionPromptResult
+	if err := c.PeerCall(ctx, v1.MethodSessionPrompt, v1.SessionPromptParams{
+		CommandID: "cmd_orphan",
+		SessionID: created.SessionID,
+		Text:      "first",
+	}, &orphan); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+
+	// Force it back to created, which is what a start that never happened looks
+	// like. The domain refuses the transition, so the row is written directly.
+	if err := store.WriteTx(ctx, func(tx storage.Execer) error {
+		_, err := tx.ExecContext(ctx,
+			"UPDATE agent_runs SET state = ? WHERE id = ?", string(agent.StateCreated), orphan.RunID)
+		return err
+	}); err != nil {
+		t.Fatalf("reset the run state: %v", err)
+	}
+
+	sess, err := store.GetSession(ctx, created.SessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.DefaultInteractiveRunID != orphan.RunID {
+		t.Fatalf("default run = %q, want the orphan", sess.DefaultInteractiveRunID)
+	}
+
+	if _, err := c.Prompt(ctx, v1.SessionPromptParams{
+		CommandID: "cmd_2",
+		SessionID: created.SessionID,
+		Text:      "again",
+	}); err != nil {
+		t.Fatalf("a prompt to a run that was never launched must start it: %v", err)
+	}
+
+	waitFor(t, "the run to be started", func() bool {
+		run, err := store.GetAgentRun(ctx, orphan.RunID)
+		return err == nil && run.State != agent.StateCreated
+	})
+}

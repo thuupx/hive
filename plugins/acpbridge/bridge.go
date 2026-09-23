@@ -301,8 +301,14 @@ func (b *Bridge) warn(message string, args ...any) {
 // dropped: a user who picked a model should not be left wondering which one ran.
 func (b *Bridge) applyConfig(ctx context.Context, client *acp.Client, sessionID string, wanted map[string]string) error {
 	for _, configID := range sortedKeys(wanted) {
-		if err := client.SetConfigOption(ctx, sessionID, configID, wanted[configID]); err != nil {
-			return v1.InvalidParams("agent refused %s=%s: %s", configID, wanted[configID], err.Error())
+		value := wanted[configID]
+		if strings.TrimSpace(value) == "" {
+			// An empty value is not a choice, so there is nothing to apply. A
+			// session recorded by an older build can carry one.
+			continue
+		}
+		if err := client.SetConfigOption(ctx, sessionID, configID, value); err != nil {
+			return v1.InvalidParams("agent refused %s=%s: %s", configID, value, err.Error())
 		}
 	}
 	return nil

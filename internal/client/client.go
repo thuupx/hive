@@ -137,6 +137,12 @@ func (c *Client) ListWorkspaces(ctx context.Context) (*v1.WorkspaceListResult, e
 	return &result, nil
 }
 
+// PeerCall issues a raw request. It exists for tests that need a method the
+// typed helpers do not cover.
+func (c *Client) PeerCall(ctx context.Context, method string, params, result any) error {
+	return c.peer.Call(ctx, method, params, result)
+}
+
 // SessionConfig reads or changes a session's agent selectors.
 func (c *Client) SessionConfig(ctx context.Context, params v1.SessionConfigParams) (*v1.SessionConfigResult, error) {
 	var result v1.SessionConfigResult

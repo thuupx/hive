@@ -140,7 +140,15 @@ type fakeAgent struct {
 	onMethod func(method string, id json.RawMessage, params json.RawMessage)
 	outcomes []acp.PermissionOutcome
 	loaded   []string
+	setOpts  []string
 	wg       sync.WaitGroup
+}
+
+// setOptions is how many options the agent was asked to set.
+func (a *fakeAgent) setOptions() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.setOpts)
 }
 
 // loadedSnapshot is what the agent was asked to restore.
@@ -225,6 +233,11 @@ func (a *fakeAgent) baseHandler(method string, id json.RawMessage, params json.R
 		})
 	case "session/new":
 		a.reply(id, map[string]any{"sessionId": "agent-sess-1"})
+	case "session/set_config_option":
+		a.mu.Lock()
+		a.setOpts = append(a.setOpts, string(params))
+		a.mu.Unlock()
+		a.reply(id, map[string]any{})
 	case "session/load":
 		a.mu.Lock()
 		a.loaded = append(a.loaded, string(params))
@@ -618,5 +631,35 @@ func TestStartCreatesWhenThereIsNothingToRestore(t *testing.T) {
 	}
 	if loaded := launcher.agent.loadedSnapshot(); len(loaded) != 0 {
 		t.Fatalf("the agent was asked to restore %v", loaded)
+	}
+}
+
+// An empty value is not a choice, so there is nothing to apply.
+//
+// A session recorded by an older build can carry one, and applying it would fail
+// every later run: the agent refuses a value that is not one.
+func TestStartSkipsAnEmptyConfigValue(t *testing.T) {
+	bridge, c, launcher := newBridge(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = bridge.Run(ctx) }()
+
+	var out map[string]any
+	err := c.peer.Call(ctx, v1.MethodExecutionStart, v1.ExecutionStartParams{
+		AgentRunID:    "run_1",
+		SessionID:     "sess_1",
+		Generation:    1,
+		WorkspacePath: "/tmp/ws",
+		Config:        map[string]string{"model": "", "mode": "  "},
+	}, &out)
+	if err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+	if out["runtimeSessionId"] != "agent-sess-1" {
+		t.Errorf("the run should start anyway: %v", out)
+	}
+	if got := launcher.agent.setOptions(); got != 0 {
+		t.Fatalf("the agent was asked to set %d option(s), want none", got)
 	}
 }
