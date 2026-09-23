@@ -411,6 +411,25 @@ func (e *pluginExecutor) Respond(ctx context.Context, req v1.PermissionRespondPa
 	return inst.Call(ctx, v1.MethodPermissionRespond, req, nil)
 }
 
+// Live reports whether an execution is still held.
+//
+// Anything other than a plain "no" is reported as live. Marking a run interrupted
+// abandons a turn, so the answer has to be certain: an agent that does not
+// implement the question is an agent that might be working, and losing that work
+// is worse than leaving a run alone.
+func (e *pluginExecutor) Live(ctx context.Context, req v1.ExecutionLiveParams) (*v1.ExecutionLiveResult, error) {
+	inst, err := e.instanceFor(req.AgentID)
+	if err != nil {
+		return &v1.ExecutionLiveResult{Live: true}, nil
+	}
+
+	var out v1.ExecutionLiveResult
+	if err := inst.Call(ctx, v1.MethodExecutionLive, req, &out); err != nil {
+		return &v1.ExecutionLiveResult{Live: true}, nil
+	}
+	return &out, nil
+}
+
 func (e *pluginExecutor) Config(ctx context.Context, req v1.ExecutionConfigParams) (*v1.ExecutionConfigResult, error) {
 	inst, err := e.instanceFor(req.AgentID)
 	if err != nil {

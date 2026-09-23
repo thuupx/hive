@@ -205,6 +205,13 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 		return nil, storageError(err)
 	}
 
+	// A run whose execution is gone is marked before routing, because routing
+	// decides inside the command's transaction and cannot make a network call or
+	// open a second transaction there.
+	if err := s.reconcileSessionRuns(ctx, sess.ID); err != nil {
+		return nil, domainError(err)
+	}
+
 	cmd := command.New(params.CommandID, string(principal), v1.MethodSessionPrompt)
 	cmd.SourceID = params.SourceID
 	cmd.Target = params.SessionID
@@ -753,6 +760,82 @@ func (s *Service) resolvePromptTarget(ctx context.Context, sess *session.Session
 	}
 
 	return session.RoutePrompt(explicitRunID, sess, lookup)
+}
+
+// reconcileSessionRuns marks the session's runs that have no execution behind them.
+func (s *Service) reconcileSessionRuns(ctx context.Context, sessionID string) error {
+	runs, err := s.store.ListAgentRuns(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	return s.reconcileRuns(ctx, runs)
+}
+
+// reconcileRuns marks a run that has no execution behind it as interrupted.
+//
+// A run's state is Hive's record of what happened; whether the execution is still
+// there is the node's to know. A daemon that restarted leaves runs that say they
+// are running with nothing behind them, and every later prompt routes to one and
+// fails: the session answers nothing, for good.
+//
+// Marking them is what lets the conversation continue, and it is honest: the run
+// was interrupted, which is exactly what happened to it.
+func (s *Service) reconcileRuns(ctx context.Context, runs []*agent.AgentRun) error {
+	for _, run := range runs {
+		// A run with no execution yet is one that has not been started, and
+		// starting it is the prompt's job.
+		if run.State.IsTerminal() || run.State == agent.StateCreated {
+			continue
+		}
+		if s.executionIsLive(ctx, run) {
+			continue
+		}
+
+		s.log.Warn("a run has no execution behind it; marking it interrupted",
+			"run", run.ID, "agent", run.AgentID, "state", string(run.State))
+
+		_, err := s.store.UpdateAgentRunWith(ctx, run.ID, func(current *agent.AgentRun) error {
+			if current.State.IsTerminal() {
+				return nil
+			}
+			return current.Transition(agent.StateInterrupted)
+		})
+		if err != nil {
+			return err
+		}
+		run.State = agent.StateInterrupted
+	}
+	return nil
+}
+
+// liveProbeTimeout bounds how long a prompt waits to hear whether a run is live.
+const liveProbeTimeout = 3 * time.Second
+
+// executionIsLive asks the node whether it still holds an execution for a run.
+//
+// A node that cannot be reached is not evidence that the execution is gone, so an
+// unreachable node reports live: losing a turn to a network blip would be worse
+// than leaving it alone.
+func (s *Service) executionIsLive(ctx context.Context, run *agent.AgentRun) bool {
+	n, ok := s.nodes.Node(run.NodeID)
+	if !ok || !n.Connected() {
+		return true
+	}
+
+	// A probe must never hold up a prompt, so it has its own deadline. An answer
+	// that does not arrive in time is not evidence that the execution is gone.
+	probeCtx, cancel := context.WithTimeout(ctx, liveProbeTimeout)
+	defer cancel()
+
+	var out v1.ExecutionLiveResult
+	err := n.Call(probeCtx, v1.MethodExecutionLive, v1.ExecutionLiveParams{
+		AgentRunID: run.ID,
+		AgentID:    run.AgentID,
+	}, &out)
+	if err != nil {
+		return true
+	}
+	return out.Live
 }
 
 func (s *Service) runForCancel(ctx context.Context, params v1.SessionCancelParams) (*agent.AgentRun, error) {

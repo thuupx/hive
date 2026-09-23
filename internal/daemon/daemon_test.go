@@ -130,6 +130,12 @@ func runTestAgent() {
 			Payload:    received,
 		}, nil)
 
+		// The run is no longer held once its turn ends, so a run left in a working
+		// state by a restart has nothing behind it.
+		mu.Lock()
+		delete(sessions, req.AgentRunID)
+		mu.Unlock()
+
 		_ = host.Call(ctx, v1.MethodExecutionReport, v1.ExecutionReportParams{
 			AgentRunID: req.AgentRunID,
 			Generation: req.Generation,
@@ -142,6 +148,19 @@ func runTestAgent() {
 
 	host.Handle(v1.MethodExecutionCancel, func(context.Context, json.RawMessage) (any, error) {
 		return map[string]any{"cancelled": true}, nil
+	})
+
+	host.Handle(v1.MethodExecutionLive, func(_ context.Context, params json.RawMessage) (any, error) {
+		var req v1.ExecutionLiveParams
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, v1.InvalidParams("invalid execution.live request")
+		}
+
+		mu.Lock()
+		_, held := sessions[req.AgentRunID]
+		mu.Unlock()
+
+		return v1.ExecutionLiveResult{Live: held}, nil
 	})
 
 	host.Handle(v1.MethodExecutionConfig, func(_ context.Context, params json.RawMessage) (any, error) {

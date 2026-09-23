@@ -52,6 +52,12 @@ func (f *fakeExecutor) Respond(_ context.Context, req v1.PermissionRespondParams
 	return nil
 }
 
+func (f *fakeExecutor) Live(_ context.Context, req v1.ExecutionLiveParams) (*v1.ExecutionLiveResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return &v1.ExecutionLiveResult{Live: true}, nil
+}
+
 func (f *fakeExecutor) Config(_ context.Context, req v1.ExecutionConfigParams) (*v1.ExecutionConfigResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

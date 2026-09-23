@@ -70,6 +70,14 @@ const (
 
 	// MethodExecutionConfig reads or changes a session-level agent selector.
 	MethodExecutionConfig = "execution.config"
+
+	// MethodExecutionLive reports whether an execution is still held.
+	//
+	// A run's state is Hive's record of what happened; whether the execution is
+	// still there is the node's to know. A daemon that restarted leaves a run that
+	// says it is running and has nothing behind it, and asking is the only way to
+	// tell.
+	MethodExecutionLive = "execution.live"
 )
 
 // NotificationEvent delivers an event to a subscribed plugin.
@@ -328,6 +336,17 @@ type Event struct {
 	Protocol   string          `json:"protocol,omitempty"`
 	Method     string          `json:"method,omitempty"`
 	Payload    json.RawMessage `json:"payload"`
+}
+
+// ExecutionLiveParams asks whether an execution is still held.
+type ExecutionLiveParams struct {
+	AgentRunID string `json:"agentRunId"`
+	AgentID    string `json:"agentId"`
+}
+
+// ExecutionLiveResult is whether an execution is still held.
+type ExecutionLiveResult struct {
+	Live bool `json:"live"`
 }
 
 // ExecutionConfigParams reads or changes an agent's session selectors.

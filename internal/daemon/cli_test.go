@@ -551,3 +551,79 @@ func TestAContinuedRunRestoresThePreviousAgentSession(t *testing.T) {
 			run.RuntimeSessionID, first.RuntimeSessionID)
 	}
 }
+
+// mustRun reads a run or fails.
+func mustRun(t *testing.T, store *storage.Store, runID string) *agent.AgentRun {
+	t.Helper()
+
+	run, err := store.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	return run
+}
+
+// A run left behind by a restart is marked interrupted, and the conversation
+// continues in a new run.
+//
+// Found in a live conversation: a daemon restart left a run saying it was running
+// with nothing behind it, and every later message routed to it and failed. The
+// session answered nothing, for good.
+func TestARunWithNoExecutionIsInterruptedAndReplaced(t *testing.T) {
+	ctx := context.Background()
+	_, store, _, socketPath := startStack(t)
+
+	c, err := client.Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	created, err := c.CreateSession(ctx, v1.SessionCreateParams{CommandID: "cmd_1"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	// The turn has to run first: the agent holds a run while its turn runs, and a
+	// run it still holds is live. A turn that has ended is a run it no longer
+	// holds, which is exactly the state a restart leaves behind.
+	waitForRunStarted(t, store, created.RunID)
+	if _, err := c.Prompt(ctx, v1.SessionPromptParams{
+		CommandID: "cmd_turn",
+		SessionID: created.SessionID,
+		Text:      "first",
+	}); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	waitFor(t, "the turn to finish", func() bool {
+		return mustRun(t, store, created.RunID).State.IsTerminal()
+	})
+
+	// A run that says it is working, as a restart leaves behind. The agent has no
+	// execution for it, which is what makes it a lie. The domain refuses the
+	// transition, so the row is written directly.
+	if err := store.WriteTx(ctx, func(tx storage.Execer) error {
+		_, err := tx.ExecContext(ctx,
+			"UPDATE agent_runs SET state = ? WHERE id = ?", string(agent.StateRunning), created.RunID)
+		return err
+	}); err != nil {
+		t.Fatalf("reset the run state: %v", err)
+	}
+	// The next prompt must not route into it.
+	prompted, err := c.Prompt(ctx, v1.SessionPromptParams{
+		CommandID: "cmd_2",
+		SessionID: created.SessionID,
+		Text:      "again",
+	})
+	if err != nil {
+		t.Fatalf("a prompt must recover the session, not fail: %v", err)
+	}
+	if !prompted.CreatedRun {
+		t.Fatal("the prompt should have created a new run")
+	}
+
+	// The abandoned run says what happened to it.
+	abandoned := mustRun(t, store, created.RunID)
+	if abandoned.State != agent.StateInterrupted {
+		t.Fatalf("the abandoned run is %q, want interrupted", abandoned.State)
+	}
+}

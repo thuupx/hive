@@ -33,6 +33,9 @@ type Executor interface {
 
 	// Config reads or changes the agent's session selectors.
 	Config(ctx context.Context, req v1.ExecutionConfigParams) (*v1.ExecutionConfigResult, error)
+
+	// Live reports whether an execution is still held.
+	Live(ctx context.Context, req v1.ExecutionLiveParams) (*v1.ExecutionLiveResult, error)
 }
 
 // Options configures a node.
@@ -410,6 +413,23 @@ func (c *Client) handleRequest(ctx context.Context, peer *v1.Peer, req *v1.Messa
 			return
 		}
 		_ = peer.Respond(id, map[string]any{"ok": true})
+
+	case v1.MethodExecutionLive:
+		var params v1.ExecutionLiveParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			_ = peer.RespondError(id, v1.InvalidParams("invalid execution.live request"))
+			return
+		}
+		if c.opts.Executor == nil {
+			_ = peer.RespondError(id, v1.Unavailable("node has no executor"))
+			return
+		}
+		out, err := c.opts.Executor.Live(ctx, params)
+		if err != nil {
+			_ = peer.RespondError(id, v1.AsError(err))
+			return
+		}
+		_ = peer.Respond(id, out)
 
 	case v1.MethodExecutionConfig:
 		var params v1.ExecutionConfigParams

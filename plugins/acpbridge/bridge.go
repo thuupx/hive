@@ -189,6 +189,7 @@ func (b *Bridge) Register() {
 	b.host.Handle(v1.MethodExecutionCancel, b.cancel)
 	b.host.Handle(v1.MethodPermissionRespond, b.respond)
 	b.host.Handle(v1.MethodExecutionConfig, b.config)
+	b.host.Handle(v1.MethodExecutionLive, b.live)
 }
 
 // Run serves until ctx is cancelled or the connection ends.
@@ -535,6 +536,20 @@ func (b *Bridge) promptText(r *run, text, context string) string {
 	parts = append(parts, text)
 
 	return strings.Join(parts, "\n\n")
+}
+
+// live reports whether this bridge still holds an execution for a run.
+func (b *Bridge) live(_ context.Context, params json.RawMessage) (any, error) {
+	var req v1.ExecutionLiveParams
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, v1.InvalidParams("invalid execution.live request")
+	}
+
+	b.mu.Lock()
+	held := b.runs[req.AgentRunID] != nil
+	b.mu.Unlock()
+
+	return v1.ExecutionLiveResult{Live: held}, nil
 }
 
 // config reads or changes the agent's session selectors.
