@@ -726,6 +726,7 @@ func transportPluginSpecs(cfg config.Config) []plugin.Spec {
 
 		// Acknowledgement is on unless it is turned off, so it is always passed.
 		options["acknowledgement"] = strconv.FormatBool(transport.Acknowledgement.EnabledOr())
+		options["acknowledgement_mode"] = transport.Acknowledgement.ModeOr()
 		options["acknowledgement_reaction"] = transport.Acknowledgement.ReactionOr()
 
 		command := []string{

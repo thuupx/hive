@@ -84,7 +84,13 @@ func (r Renderer) RenderEvent(ev v1.Event) (Rendered, bool) {
 // not assume the request lifetime equals the operation lifetime. This renders the
 // acknowledgement; later state arrives as events.
 func RenderOutcome(outcome v1.TransportOutcome) Message {
-	if outcome.Error != nil {
+	switch {
+	case outcome.Error == nil:
+	case outcome.Error.Code == v1.CodeRetryable:
+		// The operation is already in flight. A retry is not a failure, and a
+		// warning would read like one.
+		return textMessage("Already working on it.")
+	default:
 		return textMessage(fmt.Sprintf(":warning: %s", outcome.Error.Message))
 	}
 

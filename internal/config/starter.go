@@ -146,7 +146,7 @@ func renderTransports(b *strings.Builder, cfg Config) {
 	b.WriteString("#\n")
 	b.WriteString("# [transport.slack.acknowledgement]\n")
 	fmt.Fprintf(b, "# enabled = %t\n", cfg.Transports["slack"].Acknowledgement.EnabledOr())
-	fmt.Fprintf(b, "# mode = %q\n", "reaction")
+	fmt.Fprintf(b, "# mode = %q\n", cfg.Transports["slack"].Acknowledgement.ModeOr())
 	fmt.Fprintf(b, "# reaction = %q\n", cfg.Transports["slack"].Acknowledgement.ReactionOr())
 }
 

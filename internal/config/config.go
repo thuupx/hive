@@ -167,6 +167,25 @@ func (a AcknowledgementConfig) ReactionOr() string {
 	return a.Reaction
 }
 
+// ModeOr is how the acknowledgement is shown, with the default when unset.
+//
+// The default has to be a valid mode, or a configuration that leaves it out would
+// fail validation — which is exactly what happened when acknowledgement became on
+// by default.
+func (a AcknowledgementConfig) ModeOr() string {
+	if a.Mode == "" {
+		return AcknowledgementReaction
+	}
+	return a.Mode
+}
+
+// Acknowledgement modes.
+const (
+	AcknowledgementReaction = "reaction"
+	AcknowledgementVisual   = "visual"
+	AcknowledgementNone     = "none"
+)
+
 // Default returns the built-in configuration.
 func Default() Config {
 	return Config{
@@ -297,8 +316,8 @@ func (c Config) Validate() error {
 		if !t.Acknowledgement.EnabledOr() {
 			continue
 		}
-		switch t.Acknowledgement.Mode {
-		case "reaction", "visual", "none":
+		switch t.Acknowledgement.ModeOr() {
+		case AcknowledgementReaction, AcknowledgementVisual, AcknowledgementNone:
 		default:
 			return fmt.Errorf("transport.%s.acknowledgement.mode: unknown mode %q, want reaction, visual, or none", name, t.Acknowledgement.Mode)
 		}

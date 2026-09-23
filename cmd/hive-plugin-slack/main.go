@@ -92,7 +92,8 @@ func run() error {
 		// handed to the agent. Zero turns it off.
 		ChannelContext: options.int("channel_context", 20),
 		Acknowledgement: slack.Acknowledgement{
-			Enabled:  options.bool("acknowledgement", false),
+			Enabled:  options.bool("acknowledgement", true),
+			Mode:     options.get("acknowledgement_mode"),
 			Reaction: options.get("acknowledgement_reaction"),
 		},
 		Log: log,

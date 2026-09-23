@@ -170,3 +170,18 @@ func TestRenderOutcomeHandoff(t *testing.T) {
 		}
 	}
 }
+
+// A retry of a command still in flight is not a failure, so it must not read like
+// one.
+func TestRenderOutcomeRetryableIsNotAWarning(t *testing.T) {
+	message := RenderOutcome(v1.TransportOutcome{
+		Error: v1.NewErrorf(v1.CodeRetryable, "session.prompt has not recorded its outcome yet"),
+	})
+
+	if strings.Contains(message.Text, ":warning:") {
+		t.Fatalf("a retryable outcome rendered as a warning: %q", message.Text)
+	}
+	if !strings.Contains(message.Text, "Already working") {
+		t.Fatalf("text = %q", message.Text)
+	}
+}

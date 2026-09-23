@@ -240,3 +240,22 @@ func TestParseAcceptsSlashAndBareForms(t *testing.T) {
 		}
 	}
 }
+
+// One platform message can arrive as more than one event, and the conversation
+// must see one delivery.
+func TestAlreadyHandledDeduplicatesADelivery(t *testing.T) {
+	p := New(nil, nil, Options{})
+
+	if p.alreadyHandled("event:C1:1") {
+		t.Fatal("the first delivery is not a duplicate")
+	}
+	if !p.alreadyHandled("event:C1:1") {
+		t.Fatal("the second delivery of the same event is a duplicate")
+	}
+	if p.alreadyHandled("event:C1:2") {
+		t.Fatal("a different event is not a duplicate")
+	}
+	if p.alreadyHandled("") {
+		t.Fatal("a delivery with no source id cannot be deduplicated")
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/thupham/hive/plugins/sdk"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
@@ -37,7 +38,12 @@ type Options struct {
 // It means the message was received and recognized. It must never be read as
 // agent started, working, or finished. Its failure cannot fail the operation.
 type Acknowledgement struct {
-	Enabled  bool
+	Enabled bool
+
+	// Mode is how the acknowledgement is shown. Reaction is the default, and none
+	// means the signal is off even when it is configured on.
+	Mode string
+
 	Reaction string
 }
 
@@ -62,6 +68,10 @@ type Plugin struct {
 	// toolMessages maps a tool call to the message that represents it, so the
 	// call is one message instead of one per update.
 	toolMessages map[string]string
+
+	// handled remembers recent deliveries, because one platform message can
+	// arrive as more than one event.
+	handled map[string]time.Time
 }
 
 // New returns a Slack plugin over a connected host.
@@ -79,6 +89,7 @@ func New(host *sdk.Host, client Client, opts Options) *Plugin {
 		log:          log,
 		bound:        make(map[string]string),
 		toolMessages: make(map[string]string),
+		handled:      make(map[string]time.Time),
 	}
 }
 
@@ -142,6 +153,13 @@ func (p *Plugin) serveInbound(ctx context.Context) error {
 func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	d, ok := p.parse(inbound)
 	if !ok {
+		return
+	}
+
+	// Slack describes one message with both an app_mention and a message event
+	// when it mentions the bot, so the same delivery arrives twice. Hive would
+	// deduplicate the command, but the user would see two acknowledgements.
+	if p.alreadyHandled(d.envelope.SourceID) {
 		return
 	}
 
@@ -319,11 +337,42 @@ func (p *Plugin) renderTool(ctx context.Context, conversation string, rendered R
 	}
 }
 
+// alreadyHandled reports whether a delivery was seen recently.
+//
+// A platform redelivery and a second event describing the same message are the
+// same delivery from the conversation's point of view.
+func (p *Plugin) alreadyHandled(sourceID string) bool {
+	if sourceID == "" {
+		return false
+	}
+
+	now := time.Now()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Bound the memory: a long-lived transport must not grow forever.
+	for id, seen := range p.handled {
+		if now.Sub(seen) > handledWindow {
+			delete(p.handled, id)
+		}
+	}
+
+	if _, seen := p.handled[sourceID]; seen {
+		return true
+	}
+	p.handled[sourceID] = now
+	return false
+}
+
+// handledWindow is how long a delivery is remembered.
+const handledWindow = 10 * time.Minute
+
 // acknowledge adds the optional "received" reaction.
 //
 // It is presentation feedback only, and its failure never fails the operation.
 func (p *Plugin) acknowledge(ctx context.Context, d delivery) {
-	if !p.opts.Acknowledgement.Enabled {
+	if !p.opts.Acknowledgement.Enabled || p.opts.Acknowledgement.Mode == "none" {
 		return
 	}
 

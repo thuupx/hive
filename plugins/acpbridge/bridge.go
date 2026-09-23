@@ -647,15 +647,13 @@ func (b *Bridge) toolCall(r *run, payload json.RawMessage) (v1.ToolCall, bool) {
 		}
 		b.tools[r.agentRunID][update.ToolCallID] = true
 	}
-	if update.Title != "" {
-		// A later update may omit the title, so remember it.
+	// A later update usually omits the title, so the first one is remembered and
+	// reused. Without this a tool card would read "tool" for its whole life.
+	if update.Title == "" {
 		if titles := b.toolTitles[r.agentRunID]; titles != nil {
-			if previous := titles[update.ToolCallID]; previous != "" {
-				update.Title = previous
-			}
+			update.Title = titles[update.ToolCallID]
 		}
-	}
-	if update.Title != "" {
+	} else {
 		if b.toolTitles[r.agentRunID] == nil {
 			b.toolTitles[r.agentRunID] = make(map[string]string)
 		}

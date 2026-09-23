@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thupham/hive/plugins/acp"
+	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
 // The answer to a prompt must be readable. Without this normalization the agent's
@@ -83,5 +84,41 @@ func TestAuthMethodSelection(t *testing.T) {
 	names := authMethodNames(methods)
 	if !strings.Contains(names, "devin-browser") || !strings.Contains(names, "api-key") {
 		t.Fatalf("names = %q", names)
+	}
+}
+
+// A tool update usually omits the title, so the first one has to be remembered.
+//
+// Found in a live conversation: the card read "tool" for its whole life because
+// the remembered title was only consulted when the update already had one.
+func TestToolCallRemembersItsTitle(t *testing.T) {
+	b := &Bridge{
+		tools:      make(map[string]map[string]bool),
+		toolTitles: make(map[string]map[string]string),
+	}
+	r := &run{agentRunID: "run_1"}
+
+	first, ok := b.toolCall(r, json.RawMessage(
+		`{"sessionUpdate":"tool_call","toolCallId":"tc1","title":"Listed ./","kind":"execute"}`))
+	if !ok {
+		t.Fatal("the first update should be a tool call")
+	}
+	if first.Title != "Listed ./" || !first.Started {
+		t.Fatalf("first = %+v", first)
+	}
+
+	update, ok := b.toolCall(r, json.RawMessage(
+		`{"sessionUpdate":"tool_call_update","toolCallId":"tc1","status":"completed"}`))
+	if !ok {
+		t.Fatal("the update should be a tool call")
+	}
+	if update.Title != "Listed ./" {
+		t.Fatalf("title = %q, want the remembered one", update.Title)
+	}
+	if update.Started {
+		t.Error("a later update must not look like the first")
+	}
+	if update.Status != v1.ToolCompleted {
+		t.Errorf("status = %q", update.Status)
 	}
 }
