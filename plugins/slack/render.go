@@ -93,6 +93,15 @@ func RenderOutcome(outcome v1.TransportOutcome) Message {
 	case v1.MethodSessionCancel:
 		return textMessage("Cancelled.")
 
+	case v1.MethodSessionHandoff:
+		var handed v1.SessionHandoffResult
+		if err := json.Unmarshal(outcome.Result, &handed); err == nil && handed.AgentID != "" {
+			return textMessage(fmt.Sprintf(
+				"Handed off.\nSession: `%s`\nAgent: `%s`\nTarget run: `%s`",
+				handed.SessionID, handed.AgentID, handed.TargetRunID))
+		}
+		return textMessage("Handed off.")
+
 	case v1.MethodSessionStatus:
 		var status v1.SessionStatusResult
 		if err := json.Unmarshal(outcome.Result, &status); err == nil && status.SessionID != "" {
@@ -115,7 +124,9 @@ func RenderOutcome(outcome v1.TransportOutcome) Message {
 		return textMessage("No nodes.")
 
 	default:
-		return textMessage(fmt.Sprintf("`%s` accepted.", outcome.Method))
+		// A user must not see a Hive method name. The operation succeeded, so say
+		// that without leaking the protocol into the conversation.
+		return textMessage("Done.")
 	}
 }
 

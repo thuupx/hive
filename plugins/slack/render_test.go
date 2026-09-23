@@ -130,3 +130,43 @@ func TestRenderOutcomeStatus(t *testing.T) {
 		t.Fatalf("text = %q", message.Text)
 	}
 }
+
+// A user must not see a Hive method name in a conversation.
+func TestRenderOutcomeNeverLeaksAMethodName(t *testing.T) {
+	// Every method the transport can map, rendered with no result.
+	for _, method := range []string{
+		v1.MethodSessionCreate,
+		v1.MethodSessionPrompt,
+		v1.MethodSessionCancel,
+		v1.MethodSessionStatus,
+		v1.MethodSessionHandoff,
+		v1.MethodAgentList,
+		v1.MethodNodeList,
+	} {
+		message := RenderOutcome(v1.TransportOutcome{Method: method})
+		if strings.Contains(message.Text, "session.") || strings.Contains(message.Text, "agent.") {
+			t.Errorf("%s rendered %q, which leaks a Hive method name", method, message.Text)
+		}
+		if strings.TrimSpace(message.Text) == "" {
+			t.Errorf("%s rendered nothing", method)
+		}
+	}
+}
+
+func TestRenderOutcomeHandoff(t *testing.T) {
+	result, err := json.Marshal(v1.SessionHandoffResult{
+		SessionID:   "sess_1",
+		AgentID:     "devin",
+		TargetRunID: "run_2",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	message := RenderOutcome(v1.TransportOutcome{Method: v1.MethodSessionHandoff, Result: result})
+	for _, want := range []string{"Handed off", "sess_1", "devin", "run_2"} {
+		if !strings.Contains(message.Text, want) {
+			t.Errorf("text %q does not mention %q", message.Text, want)
+		}
+	}
+}

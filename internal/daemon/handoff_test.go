@@ -18,6 +18,39 @@ import (
 
 const targetAgent = "other-agent"
 
+// waitForRunStarted waits until a run has an execution.
+//
+// `starting` means the execution exists and no turn has run yet, which is not the
+// same as working.
+func waitForRunStarted(t *testing.T, store *storage.Store, runID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	waitFor(t, "the run to start", func() bool {
+		run, err := store.GetAgentRun(ctx, runID)
+		return err == nil && run.State != agent.StateCreated
+	})
+}
+
+// setRunState drives a run to a state and persists it.
+func setRunState(t *testing.T, store *storage.Store, runID string, state agent.State) {
+	t.Helper()
+	ctx := context.Background()
+
+	run, err := store.GetAgentRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if err := run.Transition(state); err != nil {
+		t.Fatalf("transition to %s: %v", state, err)
+	}
+	if err := store.WriteTx(ctx, func(tx storage.Execer) error {
+		return store.UpdateAgentRun(ctx, tx, run)
+	}); err != nil {
+		t.Fatalf("UpdateAgentRun: %v", err)
+	}
+}
+
 // finishTurn drives a run to completed and persists it.
 //
 // A handoff is normally asked for between turns, so a test that hands off has to
@@ -261,10 +294,7 @@ func TestHandoffIsIdempotent(t *testing.T) {
 		t.Fatalf("session.create: %v", err)
 	}
 
-	waitFor(t, "the run to start", func() bool {
-		run, err := store.GetAgentRun(ctx, created.RunID)
-		return err == nil && run.State.IsWorking()
-	})
+	waitForRunStarted(t, store, created.RunID)
 	finishTurn(t, store, created.RunID)
 
 	params := v1.SessionHandoffParams{
@@ -415,10 +445,9 @@ func TestHandoffWhileTheSourceIsWorkingIsRefused(t *testing.T) {
 		t.Fatalf("session.create: %v", err)
 	}
 
-	waitFor(t, "the run to start working", func() bool {
-		run, err := store.GetAgentRun(ctx, created.RunID)
-		return err == nil && run.State.IsWorking()
-	})
+	// A turn is in flight only while the run is `running`.
+	waitForRunStarted(t, store, created.RunID)
+	setRunState(t, store, created.RunID, agent.StateRunning)
 
 	err := peer.Call(ctx, v1.MethodSessionHandoff, v1.SessionHandoffParams{
 		CommandID: "cmd_2",
@@ -444,11 +473,14 @@ func TestHandoffWhileTheSourceIsWorkingIsRefused(t *testing.T) {
 	}
 }
 
-// A handoff to an agent that is configured but unreachable fails, and the session
-// stays usable.
+// A handoff whose target cannot start leaves the session usable: it still routes
+// to its source run, and it is not stuck in the handoff state.
 func TestFailedHandoffLeavesTheSessionUsable(t *testing.T) {
 	ctx := context.Background()
-	store, peer := startStackWithAgents(t, testAgent, targetAgent)
+	store, peer := startStackWithAgentSpecs(t,
+		[]string{testAgent, targetAgent},
+		[]plugin.Spec{agentSpecFor(testAgent), failingAgentSpecFor(targetAgent)},
+	)
 
 	var created v1.SessionCreateResult
 	if err := peer.Call(ctx, v1.MethodSessionCreate, v1.SessionCreateParams{
@@ -499,10 +531,7 @@ func TestFailedHandoffTerminatesTheTargetRun(t *testing.T) {
 		t.Fatalf("session.create: %v", err)
 	}
 
-	waitFor(t, "the run to start", func() bool {
-		run, err := store.GetAgentRun(ctx, created.RunID)
-		return err == nil && run.State.IsWorking()
-	})
+	waitForRunStarted(t, store, created.RunID)
 	finishTurn(t, store, created.RunID)
 
 	// The target agent is configured but its command is not installed, so the

@@ -141,18 +141,25 @@ func (p Parser) ParseInteraction(payload ActionPayload) v1.Envelope {
 	}
 }
 
-// stripMention removes a leading bot mention and reports whether one was there.
+// stripMention removes a bot mention and reports whether the message addressed it.
+//
+// Slack puts the mention where the user typed it, not necessarily first. Looking
+// only at the start would ignore "hey @Hive, what is this?", which is a message
+// that plainly addresses the bot.
 func (p Parser) stripMention(text string) (string, bool) {
 	if p.BotUserID == "" {
 		return text, false
 	}
 
 	mention := "<@" + p.BotUserID + ">"
-	trimmed := strings.TrimSpace(text)
-	if !strings.HasPrefix(trimmed, mention) {
+	if !strings.Contains(text, mention) {
 		return text, false
 	}
-	return strings.TrimSpace(strings.TrimPrefix(trimmed, mention)), true
+
+	// Remove every occurrence: a user may mention the bot more than once, and
+	// none of them belong in the prompt.
+	stripped := strings.ReplaceAll(text, mention, " ")
+	return strings.Join(strings.Fields(stripped), " "), true
 }
 
 // parseCommand recognizes a command in the first token and resolves it.

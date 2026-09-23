@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"strings"
 	"testing"
 
 	v1 "github.com/thupham/hive/protocol/hive/v1"
@@ -156,6 +157,86 @@ func TestCatalogMatchesCommands(t *testing.T) {
 		}
 		if entry.Description == "" {
 			t.Errorf("catalog entry %q has no description", entry.Command)
+		}
+	}
+}
+
+// Slack puts the mention where the user typed it. A message that addresses the bot
+// anywhere is addressed to the bot.
+func TestParseMentionAnywhereInTheMessage(t *testing.T) {
+	cases := map[string]struct {
+		kind   v1.EnvelopeKind
+		text   string
+		method string
+	}{
+		"mention first, command":   {v1.EnvelopeCommand, "", v1.MethodAgentList},
+		"mention first, prompt":    {v1.EnvelopeMessage, "fix the login bug", ""},
+		"mention after a greeting": {v1.EnvelopeMessage, "hey /agents", ""},
+		"mention at the end":       {v1.EnvelopeMessage, "what is this", ""},
+	}
+
+	for name, want := range cases {
+		t.Run(name, func(t *testing.T) {
+			var text string
+			switch name {
+			case "mention first, command":
+				text = "<@U0BOT> /agents"
+			case "mention first, prompt":
+				text = "<@U0BOT> fix the login bug"
+			case "mention after a greeting":
+				text = "hey <@U0BOT> /agents"
+			case "mention at the end":
+				text = "what is this <@U0BOT>"
+			}
+
+			env := parser().ParseMessage(messageEvent(text))
+			if env.Kind != want.kind {
+				t.Fatalf("kind = %q, want %q", env.Kind, want.kind)
+			}
+			switch want.kind {
+			case v1.EnvelopeCommand:
+				if env.Command.Method != want.method {
+					t.Errorf("method = %q, want %q", env.Command.Method, want.method)
+				}
+			case v1.EnvelopeMessage:
+				if env.Message.Text != want.text {
+					t.Errorf("text = %q, want %q", env.Message.Text, want.text)
+				}
+			}
+		})
+	}
+}
+
+// A message with no mention at all is not addressed to the bot.
+func TestParseIgnoresAMessageWithNoMention(t *testing.T) {
+	env := parser().ParseMessage(messageEvent("hello everyone"))
+	if env.Kind != "" {
+		t.Fatalf("kind = %q, want the message to be ignored", env.Kind)
+	}
+}
+
+// A repeated mention is removed from the prompt.
+func TestParseRemovesEveryMention(t *testing.T) {
+	env := parser().ParseMessage(messageEvent("<@U0BOT> thanks <@U0BOT>"))
+
+	if env.Kind != v1.EnvelopeMessage {
+		t.Fatalf("kind = %q", env.Kind)
+	}
+	if strings.Contains(env.Message.Text, "<@") {
+		t.Fatalf("text = %q, want the mentions removed", env.Message.Text)
+	}
+	if env.Message.Text != "thanks" {
+		t.Fatalf("text = %q, want %q", env.Message.Text, "thanks")
+	}
+}
+
+// Slack linkifies @Hive into a mention entity. Both the command form and the bare
+// form are accepted, because Slack reserves a leading slash for itself.
+func TestParseAcceptsSlashAndBareForms(t *testing.T) {
+	for _, text := range []string{"<@U0BOT> /agents", "<@U0BOT> agents"} {
+		env := parser().ParseMessage(messageEvent(text))
+		if env.Kind != v1.EnvelopeCommand || env.Command.Method != v1.MethodAgentList {
+			t.Errorf("%q parsed as %+v, want the agents command", text, env)
 		}
 	}
 }

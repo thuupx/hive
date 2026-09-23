@@ -124,13 +124,36 @@ is the first thing to check.
 
 ## Commands
 
-The catalog below is the transport's own, generated from the map in
-`plugins/slack/parse.go`. Two forms work:
+### Slack reserves a leading `/`
+
+Slack intercepts a message that **starts** with `/` and treats it as one of its
+own slash commands. Such a message never reaches Hive at all — it is not a Hive
+bug, and there is no way around it from inside the app.
+
+So `/new_chat` on its own does nothing. Address the bot first:
 
 ```text
-@your-bot /new_chat          slash form
-@your-bot new_chat           bare form
+@your-bot /new_chat          works: the / is not at the start
+@your-bot new_chat           works: the slash is optional
+/new_chat                    intercepted by Slack, never reaches Hive
 ```
+
+Both working forms are equivalent. The slash is presentation, and the transport
+accepts either.
+
+### The command catalog
+
+The catalog below is the transport's own, generated from the map in
+`plugins/slack/parse.go`.
+
+The mention may appear anywhere in the message; it is removed before parsing:
+
+```text
+@your-bot /agents            the command is first, so it is a command
+hey @your-bot /agents        the command is not first, so this is a prompt
+```
+
+Put the command first, right after the mention.
 
 | Command | Arguments | What it does |
 |---|---|---|
@@ -274,10 +297,20 @@ The bot is not in the channel. `/invite @your-bot`.
 **`slack: apps.connections.open failed: invalid_auth`.**
 The app token is wrong, or Socket Mode is not enabled for the app.
 
+**`/new_chat` does nothing at all.**
+Slack intercepted it. A message that starts with `/` is Slack's, not Hive's.
+Address the bot: `@your-bot /new_chat`.
+
 **A command is reported as unknown.**
 Compare against the table above. The transport recognises a command form and
 reports an unknown operation as an error, rather than forwarding the text to the
 agent — that is deliberate.
+
+**A reply never appears, and the log says `chat.postMessage failed: invalid_auth`.**
+Slack occasionally answers a valid token this way. It is transient: the same call
+succeeds moments later. Hive does not retry a failed post, because
+`chat.postMessage` has no idempotency key and a retry could duplicate a message.
+Re-send your message if a reply is lost.
 
 **A turn never finishes.**
 The agent is probably waiting for permission. See *Permission buttons*.

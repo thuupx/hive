@@ -91,7 +91,19 @@ func (p *Plugin) Run(ctx context.Context) error {
 
 	go p.renderEvents(ctx, subscription.SubscriptionID)
 
-	return p.serveInbound(ctx)
+	// The SDK loop is what dispatches core-invoked methods and delivers subscribed
+	// events. A transport that subscribes without running it receives nothing:
+	// the subscription exists in the core and the delivered events are never read.
+	//
+	// Either loop ending ends the plugin, so a dead connection is not a silent
+	// half-running transport.
+	ended := make(chan error, 2)
+	go func() { ended <- p.host.Run(ctx) }()
+	go func() { ended <- p.serveInbound(ctx) }()
+
+	err = <-ended
+	cancel()
+	return err
 }
 
 // serveInbound reads platform deliveries, normalizes them, and renders the
