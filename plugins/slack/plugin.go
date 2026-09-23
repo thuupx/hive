@@ -39,6 +39,10 @@ type Options struct {
 	// output under the message that asked for it. A direct message is always flat.
 	FlatReplies bool
 
+	// TypingIndicator shows that a turn is working by animating one message, which
+	// the answer then replaces. Off means a turn says nothing until it answers.
+	TypingIndicator bool
+
 	Log *slog.Logger
 }
 
@@ -132,6 +136,10 @@ type Plugin struct {
 	// forgotten.
 	threadOrder []string
 
+	// typing is the message showing that a conversation's turn is working, keyed
+	// by conversation because the run is not known when it is posted.
+	typing map[string]*typing
+
 	// turnThreads is the thread of the turn a conversation is currently having.
 	//
 	// An agent can emit a tool call before the delivery that caused it has
@@ -160,6 +168,7 @@ func New(host *sdk.Host, client Client, opts Options) *Plugin {
 		cursors:      make(map[string]int64),
 		runThreads:   make(map[string]string),
 		turnThreads:  make(map[string]string),
+		typing:       make(map[string]*typing),
 	}
 }
 
@@ -189,6 +198,9 @@ func (p *Plugin) Run(ctx context.Context) error {
 	render := make(chan v1.DeliveredEvent, renderQueue)
 	go p.renderWorker(ctx, subscription.SubscriptionID, render)
 	go p.drain(ctx, render)
+
+	// The typing indicator is animated for as long as the transport runs.
+	go p.tickTyping(ctx)
 
 	// The SDK loop is what dispatches core-invoked methods and delivers subscribed
 	// events. A transport that subscribes without running it receives nothing:
@@ -307,13 +319,15 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	p.beginTurn(d.conversationID, d.thread)
 	defer p.endTurn(d.conversationID)
 
-	// A prompt is acknowledged before the work starts, for the same reason. The
-	// acknowledgement means "Hive received this", which is true now, and the
-	// first tool call would otherwise arrive before the acknowledgement that
-	// precedes it in the conversation.
-	acknowledged := d.envelope.Kind == v1.EnvelopeMessage
-	if acknowledged {
-		p.post(ctx, d.conversationID, d.thread, textMessage("Working on it."))
+	// A turn shows that it is working before the work starts, for the same reason:
+	// the agent can emit its first tool call before the delivery returns, and the
+	// indicator has to come first in the conversation.
+	//
+	// It is one message, and the answer replaces it, so a turn does not leave an
+	// acknowledgement behind to say what the answer already says.
+	working := d.envelope.Kind == v1.EnvelopeMessage
+	if working {
+		p.startTyping(ctx, d.conversationID, d.thread)
 	}
 
 	var outcome v1.TransportOutcome
@@ -346,13 +360,22 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 		)
 	}
 
-	// The acknowledgement already went out, and the turn runs in the background.
-	// A failure is still reported: the acknowledgement is not a promise.
-	if acknowledged && outcome.Method == v1.MethodSessionPrompt && outcome.Error == nil {
+	// The turn runs in the background, so there is nothing to say yet. The
+	// reaction on the message is the acknowledgement, and the answer is the
+	// response: a message that only says "working on it" is noise between the two.
+	//
+	// A failure is different. The turn is not running, so silence would be a lie.
+	if working && outcome.Method == v1.MethodSessionPrompt && outcome.Error == nil {
+		// The indicator, if one is showing, keeps ticking until the answer replaces
+		// it. Nothing else is posted.
 		return
 	}
 
-	p.post(ctx, d.conversationID, d.thread, RenderOutcome(outcome))
+	// The outcome replaces the indicator, so a failure or a command answer lands
+	// where the user is already looking.
+	if !p.replaceTyping(ctx, d.conversationID, RenderOutcome(outcome)) {
+		p.post(ctx, d.conversationID, d.thread, RenderOutcome(outcome))
+	}
 }
 
 // commandName is the command a delivery carried, if it carried one.
@@ -522,6 +545,18 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 
 			renderer := Renderer{SessionID: delivered.Event.SessionID}
 			rendered, ok := renderer.RenderEvent(delivered.Event)
+
+			// The answer takes the place of the indicator, so the turn ends with one
+			// message where the indicator was.
+			if ok && isAnswer(delivered.Event) {
+				for _, conversation := range conversations {
+					if p.replaceTyping(ctx, conversation, rendered.Message) {
+						ok = false
+						break
+					}
+				}
+			}
+
 			if ok {
 				p.log.Info("rendering an event",
 					"session", delivered.Event.SessionID,

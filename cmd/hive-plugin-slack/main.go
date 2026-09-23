@@ -99,6 +99,10 @@ func run() error {
 		// A channel is shared, so a turn's output is threaded under the message
 		// that asked for it. This keeps it flat for someone who prefers that.
 		FlatReplies: !options.bool("thread_replies", true),
+
+		// Slack has no typing indicator a bot can send, so a turn shows one by
+		// animating a message that the answer replaces.
+		TypingIndicator: options.bool("typing_indicator", true),
 		Acknowledgement: slack.Acknowledgement{
 			Enabled:  options.bool("acknowledgement", true),
 			Mode:     options.get("acknowledgement_mode"),

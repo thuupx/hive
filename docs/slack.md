@@ -356,6 +356,35 @@ A restore that fails is not fatal: the run starts fresh rather than refusing, an
 says so in the log. A cursor that has been pruned is reported rather than
 pretended away.
 
+### While a turn is working
+
+Slack has no typing indicator a bot can send, so a turn shows one by animating a
+message: a clock that ticks.
+
+```
+#team
+  you:  @Hive fix the failing test
+        └── thread
+              Hive: :clock1:          ← ticks while the agent works
+              Hive: :clock2:
+              Hive: :wrench: Listed ./
+              Hive: :white_check_mark: Listed ./
+              Hive: the test was failing because ...   ← replaces the clock
+```
+
+The indicator is **the message the answer replaces**, so a turn leaves one message
+per thing it has to say instead of an acknowledgement followed by an answer that
+repeats it. A tool card is a step, not the answer, so it lands after the indicator
+rather than in place of it.
+
+The clock stops when the answer arrives. A turn that ends without one stops
+ticking after 30 minutes, because a clock that ticks forever is a lie.
+
+```toml
+[transport.slack.options]
+typing_indicator = "true"     # default; "false" says nothing until the answer
+```
+
 ### Where the reply goes
 
 A direct message is a private pipe, so everything stays flat. A **channel** is
