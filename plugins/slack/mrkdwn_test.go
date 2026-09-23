@@ -129,3 +129,69 @@ func TestFallbackTextIsNeverEmpty(t *testing.T) {
 		t.Error("fallback text must not be empty for whitespace")
 	}
 }
+
+// A real answer, exactly as an agent wrote it.
+//
+// The shapes an agent actually produces are what the conversion has to survive,
+// so this is a real one rather than a hand-picked example.
+func TestMrkdwnConvertsARealAnswer(t *testing.T) {
+	answer := "````markdown\n" +
+		"# Go Concurrency\n" +
+		"\n" +
+		"Go makes concurrent programming simple with **goroutines** and **channels**.\n" +
+		"\n" +
+		"## Key Concepts\n" +
+		"\n" +
+		"- **Goroutine**: a lightweight thread managed by the Go runtime.\n" +
+		"- **Channel**: a typed conduit for communicating between goroutines.\n" +
+		"\n" +
+		"See [the docs](https://go.dev) for more.\n" +
+		"````\n"
+
+	got := mrkdwn(answer)
+
+	// The heading became bold, the bullets became bullets, and the link became a
+	// Slack link.
+	if !strings.Contains(got, "*Key Concepts*") {
+		t.Errorf("a heading was not converted:\n%s", got)
+	}
+	if !strings.Contains(got, "• *Goroutine*") {
+		t.Errorf("a bullet with a bold term was not converted:\n%s", got)
+	}
+	if !strings.Contains(got, "<https://go.dev|the docs>") {
+		t.Errorf("a link was not converted:\n%s", got)
+	}
+	if strings.Contains(got, "##") {
+		t.Errorf("a heading marker survived:\n%s", got)
+	}
+}
+
+// A fence labelled with a real language is code and stays as it is.
+//
+// Unwrapping it would rewrite the one thing a reader needs verbatim.
+func TestARealCodeFenceIsKept(t *testing.T) {
+	answer := "```go\nfunc main() {\n\t# not a heading\n\t**not bold**\n}\n```"
+
+	got := mrkdwn(answer)
+
+	for _, want := range []string{"# not a heading", "**not bold**", "func main()"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("code was rewritten: %q is missing from\n%s", want, got)
+		}
+	}
+}
+
+// A fence that does not wrap the whole answer is left alone, because the prose
+// around it is the point.
+func TestAFenceInsideAnAnswerIsKept(t *testing.T) {
+	answer := "Here is the fix:\n\n```go\nx := 1\n```\n\nThat should do it."
+
+	got := mrkdwn(answer)
+
+	if !strings.Contains(got, "```go\nx := 1\n```") {
+		t.Errorf("the code block was rewritten:\n%s", got)
+	}
+	if !strings.Contains(got, "Here is the fix:") {
+		t.Errorf("the prose was lost:\n%s", got)
+	}
+}

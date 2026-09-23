@@ -31,6 +31,8 @@ const (
 // Code is left exactly as it is, because the one thing a reader needs from a code
 // block is that nothing was rewritten.
 func mrkdwn(text string) string {
+	text = unwrapProseFence(text)
+
 	lines := strings.Split(text, "\n")
 	out := make([]string, 0, len(lines))
 
@@ -52,6 +54,58 @@ func mrkdwn(text string) string {
 		out = append(out, mrkdwnLine(line))
 	}
 	return strings.Join(out, "\n")
+}
+
+// unwrapProseFence removes a fence an agent wrapped its whole answer in.
+//
+// Agents often label an answer ````markdown` and fence the lot. Slack then renders
+// the source in monospace, which is exactly the wall of punctuation a reader was
+// trying to avoid. The agent said what it was, so this is not a guess: a fence
+// labelled markdown, md, text, or nothing is unwrapped, and a fence labelled with
+// a real language is left alone because it is code.
+func unwrapProseFence(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "```") {
+		return text
+	}
+
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) < 3 {
+		return text
+	}
+
+	open, language, ok := fence(strings.TrimSpace(lines[0]))
+	if !ok {
+		return text
+	}
+	// The closing fence carries no language and must be at least as long as the
+	// opening one, which is what tells a fence from a line that starts with code.
+	closing, rest, ok := fence(strings.TrimSpace(lines[len(lines)-1]))
+	if !ok || rest != "" || closing < open {
+		return text
+	}
+
+	switch strings.ToLower(language) {
+	case "", "markdown", "md", "text", "txt":
+	default:
+		// A real language: this is code, and code stays as it is.
+		return text
+	}
+
+	return strings.Join(lines[1:len(lines)-1], "\n")
+}
+
+// fence reads a code fence, returning its length, its language, and the rest of
+// the line after it.
+func fence(line string) (int, string, bool) {
+	length := 0
+	for length < len(line) && line[length] == '`' {
+		length++
+	}
+	if length < 3 {
+		return 0, "", false
+	}
+	return length, strings.TrimSpace(line[length:]), true
 }
 
 // mrkdwnLine converts one line outside a code fence.
