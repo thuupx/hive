@@ -101,6 +101,10 @@ type SessionPromptParams struct {
 
 	Text     string `json:"text"`
 	SourceID string `json:"sourceId,omitempty"`
+
+	// Context is a preamble the agent receives before this prompt, such as the
+	// surrounding conversation in a channel.
+	Context string `json:"context,omitempty"`
 }
 
 // SessionPromptResult is the outcome of session.prompt.

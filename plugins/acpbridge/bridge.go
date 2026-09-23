@@ -282,7 +282,7 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 		return nil, err
 	}
 
-	stopReason, err := client.Prompt(ctx, r.sessionID, b.promptText(r, req.Text))
+	stopReason, err := client.Prompt(ctx, r.sessionID, b.promptText(r, req.Text, req.Context))
 	if err != nil {
 		return nil, v1.Unavailable("agent prompt failed: %s", err.Error())
 	}
@@ -298,19 +298,29 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 	return map[string]any{"stopReason": stopReason}, nil
 }
 
-// promptText delivers the handoff context with the first prompt.
+// promptText assembles what the agent actually receives.
 //
-// ACP has no field for seeding a session, so the context is prepended exactly
-// once. A later prompt must not repeat it.
-func (b *Bridge) promptText(r *run, text string) string {
+// ACP has no field for seeding a session, so the handoff preamble is prepended
+// exactly once: a later prompt must not repeat it. A per-prompt context is for
+// that prompt alone, because it describes a moment.
+func (b *Bridge) promptText(r *run, text, context string) string {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if r.seeded || r.preamble == "" {
-		return text
+	seed := ""
+	if !r.seeded && r.preamble != "" {
+		seed = r.preamble
+		r.seeded = true
 	}
-	r.seeded = true
-	return r.preamble + "\n\n" + text
+	b.mu.Unlock()
+
+	parts := make([]string, 0, 3)
+	for _, part := range []string{seed, context} {
+		if strings.TrimSpace(part) != "" {
+			parts = append(parts, part)
+		}
+	}
+	parts = append(parts, text)
+
+	return strings.Join(parts, "\n\n")
 }
 
 // config reads or changes the agent's session selectors.

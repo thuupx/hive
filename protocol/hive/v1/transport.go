@@ -1,6 +1,9 @@
 package v1
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Transport API method.
 //
@@ -49,6 +52,9 @@ type Envelope struct {
 	Message     *IncomingMessage
 	Command     *IncomingCommand
 	Interaction *IncomingInteraction
+
+	// ChannelContext is what else is being said in the conversation.
+	ChannelContext []ChannelMessage
 }
 
 // IncomingMessage is ordinary user text.
@@ -106,6 +112,23 @@ type TransportInboundParams struct {
 	// Interaction fields.
 	Action string `json:"action,omitempty"`
 	Value  string `json:"value,omitempty"`
+
+	// ChannelContext is what else is being said in the conversation.
+	//
+	// A channel is not a private 1:1 pipe: a message means what it means in the
+	// context of the room. The transport reads that context, because reading the
+	// platform is its job, and the core decides what to do with it.
+	ChannelContext []ChannelMessage `json:"channelContext,omitempty"`
+}
+
+// ChannelMessage is one thing said in a conversation.
+type ChannelMessage struct {
+	Author string    `json:"author,omitempty"`
+	Text   string    `json:"text"`
+	At     time.Time `json:"at,omitempty"`
+	// Self marks a message this bot sent, so a prompt does not read back its own
+	// output as if a person had said it.
+	Self bool `json:"self,omitempty"`
 }
 
 // TransportOutcome is what an inbound delivery produced.

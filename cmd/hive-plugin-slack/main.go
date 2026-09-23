@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -86,6 +87,10 @@ func run() error {
 	plugin := slack.New(host, client, slack.Options{
 		BotUserID:      options.get("bot_user_id"),
 		RequireMention: options.bool("require_mention", true),
+
+		// A channel is not a private pipe, so a bounded amount of the room is
+		// handed to the agent. Zero turns it off.
+		ChannelContext: options.int("channel_context", 20),
 		Acknowledgement: slack.Acknowledgement{
 			Enabled:  options.bool("acknowledgement", false),
 			Reaction: options.get("acknowledgement_reaction"),
@@ -127,6 +132,18 @@ func (o *optionFlags) Set(value string) error {
 }
 
 func (o optionFlags) get(key string) string { return o[key] }
+
+func (o optionFlags) int(key string, fallback int) int {
+	value, ok := o[key]
+	if !ok {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
 
 func (o optionFlags) bool(key string, fallback bool) bool {
 	value, ok := o[key]

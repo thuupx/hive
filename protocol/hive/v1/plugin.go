@@ -216,6 +216,10 @@ type ExecutionPromptParams struct {
 	AgentID    string `json:"agentId"`
 	Generation int64  `json:"generation"`
 	Text       string `json:"text"`
+
+	// Context is a preamble for this prompt only, such as the surrounding
+	// conversation in a channel.
+	Context string `json:"context,omitempty"`
 }
 
 // ExecutionCancelParams asks an agent plugin to cancel an execution.

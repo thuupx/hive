@@ -25,6 +25,10 @@ type Options struct {
 	// Acknowledgement is the optional immediate visual feedback.
 	Acknowledgement Acknowledgement
 
+	// ChannelContext is how many recent messages of a conversation to hand to the
+	// agent, so a prompt means what it means in the room. Zero disables it.
+	ChannelContext int
+
 	Log *slog.Logger
 }
 
@@ -158,6 +162,43 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 		p.rememberBinding(d.conversationID, outcome.SessionID)
 	}
 	p.post(ctx, d.conversationID, "", RenderOutcome(outcome))
+}
+
+// readRoom reads what else is being said in the conversation.
+//
+// A channel is not a private pipe: "do it" means whatever it means in the room.
+// Reading the platform is the transport's job, and it is bounded because the
+// context costs tokens on every turn.
+func (p *Plugin) readRoom(ctx context.Context, d delivery) []v1.ChannelMessage {
+	if p.opts.ChannelContext <= 0 || d.conversationID == "" {
+		return nil
+	}
+
+	history, err := p.client.ChannelHistory(ctx, d.conversationID, p.opts.ChannelContext)
+	if err != nil {
+		// A missing history is not a reason to refuse the message.
+		p.log.Debug("could not read the conversation", "conversation", d.conversationID, "error", err)
+		return nil
+	}
+
+	// The platform returns newest first and includes the message being handled.
+	context := make([]v1.ChannelMessage, 0, len(history))
+	for _, message := range history {
+		if message.Timestamp == d.timestamp {
+			continue
+		}
+		context = append(context, v1.ChannelMessage{
+			Author: message.Author,
+			Text:   message.Text,
+			Self:   message.Self,
+		})
+	}
+
+	// Oldest first reads as a conversation.
+	for i, j := 0, len(context)-1; i < j; i, j = i+1, j-1 {
+		context[i], context[j] = context[j], context[i]
+	}
+	return context
 }
 
 // parse turns a platform delivery into an envelope, reporting false when the

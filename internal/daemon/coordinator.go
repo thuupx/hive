@@ -361,6 +361,7 @@ func envelopeOf(params v1.TransportInboundParams) v1.Envelope {
 		Principal:      params.Principal,
 		SourceID:       params.SourceID,
 		Kind:           v1.EnvelopeKind(params.Kind),
+		ChannelContext: params.ChannelContext,
 	}
 
 	switch env.Kind {

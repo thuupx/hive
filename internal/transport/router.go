@@ -317,15 +317,58 @@ func (r *Router) handleMessage(ctx context.Context, env v1.Envelope, principal c
 		return failed(commandID, apierr.From(err))
 	}
 
-	return r.prompt(ctx, principal, commandID, env.SourceID, sessionID, env.Message.Text)
+	return r.promptWithContext(ctx, principal, commandID, env.SourceID, sessionID, env.Message.Text, env.ChannelContext)
+}
+
+// renderRoom describes the surrounding conversation.
+//
+// It is bounded and labelled: an agent must be able to tell what it was told from
+// what it was asked, and must not read its own output back as a person speaking.
+func renderRoom(room []v1.ChannelMessage) string {
+	if len(room) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("Recent messages in this conversation, oldest first. This is context, not the request.\n")
+	for _, message := range room {
+		author := message.Author
+		if message.Self {
+			author = "this agent"
+		}
+		if author == "" {
+			author = "someone"
+		}
+
+		text := strings.Join(strings.Fields(message.Text), " ")
+		if text == "" {
+			continue
+		}
+		if len(text) > 400 {
+			text = text[:400] + "…"
+		}
+		fmt.Fprintf(&b, "- %s: %s\n", author, text)
+	}
+
+	b.WriteString("\nThe request follows.")
+	return b.String()
 }
 
 func (r *Router) prompt(ctx context.Context, principal control.Principal, commandID, sourceID, sessionID, text string) *Outcome {
+	return r.promptWithContext(ctx, principal, commandID, sourceID, sessionID, text, nil)
+}
+
+// promptWithContext sends a prompt together with what else is being said.
+//
+// The core renders the preamble, so a transport does not decide how Hive
+// describes a room to an agent.
+func (r *Router) promptWithContext(ctx context.Context, principal control.Principal, commandID, sourceID, sessionID, text string, room []v1.ChannelMessage) *Outcome {
 	result, err := r.control.Prompt(ctx, principal, v1.SessionPromptParams{
 		CommandID: commandID,
 		SessionID: sessionID,
 		Text:      text,
 		SourceID:  sourceID,
+		Context:   renderRoom(room),
 	})
 	if err != nil {
 		return failed(commandID, apierr.From(err))

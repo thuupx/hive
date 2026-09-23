@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ const (
 	connectionsOpenURL = "https://slack.com/api/apps.connections.open"
 	postMessageURL     = "https://slack.com/api/chat.postMessage"
 	updateMessageURL   = "https://slack.com/api/chat.update"
+	historyURL         = "https://slack.com/api/conversations.history"
 	addReactionURL     = "https://slack.com/api/reactions.add"
 )
 
@@ -43,6 +45,9 @@ type Client interface {
 	// not fail the underlying Hive operation.
 	AddReaction(ctx context.Context, req ReactionRequest) error
 
+	// ChannelHistory reads the recent messages of a conversation, newest first.
+	ChannelHistory(ctx context.Context, channel string, limit int) ([]HistoryMessage, error)
+
 	// Close releases the connection.
 	Close() error
 }
@@ -66,6 +71,14 @@ type UpdateMessageRequest struct {
 	Channel   string
 	Timestamp string
 	Message   Message
+}
+
+// HistoryMessage is one message read from a conversation.
+type HistoryMessage struct {
+	Author    string
+	Text      string
+	Timestamp string
+	Self      bool
 }
 
 // ReactionRequest is a reaction to add.
@@ -247,6 +260,48 @@ func (c *SocketClient) PostMessage(ctx context.Context, req PostMessageRequest) 
 	return response.Timestamp, nil
 }
 
+// ChannelHistory reads a conversation through the Web API.
+func (c *SocketClient) ChannelHistory(ctx context.Context, channel string, limit int) ([]HistoryMessage, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	url := fmt.Sprintf("%s?channel=%s&limit=%d", c.endpoint(historyURL), url.QueryEscape(channel), limit)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.config.BotToken)
+
+	var response struct {
+		OK       bool   `json:"ok"`
+		Error    string `json:"error"`
+		Messages []struct {
+			User  string `json:"user"`
+			BotID string `json:"bot_id"`
+			Text  string `json:"text"`
+			TS    string `json:"ts"`
+		} `json:"messages"`
+	}
+	if err := c.do(req, &response); err != nil {
+		return nil, err
+	}
+	if !response.OK {
+		return nil, fmt.Errorf("slack: conversations.history failed: %s", response.Error)
+	}
+
+	out := make([]HistoryMessage, 0, len(response.Messages))
+	for _, message := range response.Messages {
+		out = append(out, HistoryMessage{
+			Author:    message.User,
+			Text:      message.Text,
+			Timestamp: message.TS,
+			Self:      message.BotID != "",
+		})
+	}
+	return out, nil
+}
+
 // UpdateMessage edits a message through the Web API.
 func (c *SocketClient) UpdateMessage(ctx context.Context, req UpdateMessageRequest) error {
 	body := map[string]any{
@@ -355,6 +410,8 @@ func (c *SocketClient) endpoint(fallback string) string {
 		return c.config.BaseURL + "/chat.postMessage"
 	case updateMessageURL:
 		return c.config.BaseURL + "/chat.update"
+	case historyURL:
+		return c.config.BaseURL + "/conversations.history"
 	case addReactionURL:
 		return c.config.BaseURL + "/reactions.add"
 	default:

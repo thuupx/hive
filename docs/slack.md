@@ -206,6 +206,33 @@ Anything else is **not** a command:
   → Cancelled.
 ```
 
+### Channel awareness
+
+A channel is not a private pipe: "do it" means whatever it means in the room. The
+transport reads a bounded amount of the surrounding conversation and hands it to
+the agent as context, labelled so the agent can tell what it was *told* from what
+it was *asked*.
+
+```toml
+[transport.slack.options]
+channel_context = "20"     # recent messages; 0 turns it off
+```
+
+The agent sees:
+
+```text
+Recent messages in this conversation, oldest first. This is context, not the request.
+- U123ABC: the deploy failed again on staging
+- this agent: I can look at the logs
+- U456DEF: it is the migration step
+
+The request follows.
+```
+
+The bot's own messages are labelled as its own, so it does not read its own output
+back as if a person had said it. Set `channel_context = "0"` if the context costs
+more than it is worth.
+
 ### Agent settings
 
 An agent declares what it lets you configure. Hive renders whatever it sent: it
