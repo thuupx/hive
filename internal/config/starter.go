@@ -40,6 +40,11 @@ func RenderStarter(opts StarterOptions) string {
 	fmt.Fprintf(&b, "data_dir = %q\n", cfg.DataDir)
 	b.WriteString("#   ^ empty uses ~/.hive/data\n\n")
 
+	fmt.Fprintf(&b, "workspace_dir = %q\n", cfg.WorkspaceDir)
+	b.WriteString("#   ^ where a run works when its workspace names no location for the node.\n")
+	b.WriteString("#     Empty uses the node's working directory. A run must have one: an\n")
+	b.WriteString("#     agent that writes files needs to know where.\n\n")
+
 	fmt.Fprintf(&b, "default_agent = %q\n", opts.DefaultAgent)
 	b.WriteString("#   ^ the agent a session uses when it does not choose one\n\n")
 

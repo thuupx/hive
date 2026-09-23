@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/thupham/hive/plugins/acp"
@@ -117,6 +118,10 @@ type run struct {
 	// the first prompt, because ACP has no field for seeding a session.
 	preamble string
 	seeded   bool
+
+	// answer accumulates the assistant text of the current turn, so the answer to
+	// a prompt can be surfaced as one readable message.
+	answer strings.Builder
 }
 
 // pendingPermission keeps what is needed to answer an ACP permission request in
@@ -153,6 +158,15 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 	var req v1.ExecutionStartParams
 	if err := json.Unmarshal(params, &req); err != nil {
 		return nil, v1.InvalidParams("invalid execution.start request")
+	}
+
+	// ACP requires a working directory to create a session. The node supplies one;
+	// if it did not, the directory this process was started in is the honest
+	// answer, because that is where the node was running.
+	if req.WorkspacePath == "" {
+		if dir, err := os.Getwd(); err == nil {
+			req.WorkspacePath = dir
+		}
 	}
 	if req.AgentRunID == "" {
 		return nil, v1.InvalidParams("agentRunId is required")
@@ -211,6 +225,9 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 	if err != nil {
 		return nil, v1.Unavailable("agent prompt failed: %s", err.Error())
 	}
+
+	// The turn is over, so the answer is complete.
+	b.publishAnswer(ctx, r)
 
 	if stopReason == "cancelled" {
 		_ = b.report(ctx, req.AgentRunID, req.Generation, "terminal", r.sessionID, "cancelled")
@@ -329,6 +346,14 @@ func (b *Bridge) publish(update acp.Update) {
 	if r == nil {
 		return
 	}
+
+	// Collect the assistant text while the turn runs. It becomes one readable
+	// message when the turn ends; the raw stream is preserved separately.
+	if text, ok := agentMessageText(update.Payload); ok {
+		b.mu.Lock()
+		r.answer.WriteString(text)
+		b.mu.Unlock()
+	}
 	// No event id is set here on purpose: the node owns the buffer and the
 	// durable upload, so it assigns a stable id that survives a replay.
 	_ = b.host.Call(context.Background(), v1.MethodEventPublish, v1.PublishEventParams{
@@ -339,6 +364,60 @@ func (b *Bridge) publish(update acp.Update) {
 		Method:     update.Method,
 		Payload:    update.Payload,
 	}, nil)
+}
+
+// publishAnswer surfaces the agent's answer to the turn that just ended.
+//
+// This is the one normalization Hive needs from an agent stream. Without it the
+// answer to a prompt is only reachable as raw protocol chunks, which no client can
+// read. Everything else stays protocol-native.
+func (b *Bridge) publishAnswer(ctx context.Context, r *run) {
+	b.mu.Lock()
+	text := strings.TrimSpace(r.answer.String())
+	r.answer.Reset()
+	b.mu.Unlock()
+
+	if text == "" {
+		return
+	}
+
+	payload, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return
+	}
+
+	_ = b.host.Call(ctx, v1.MethodEventPublish, v1.PublishEventParams{
+		AgentRunID: r.agentRunID,
+		SessionID:  r.hiveSessionID,
+		Type:       v1.EventMessage,
+		Protocol:   "acp",
+		Method:     "session/update",
+		Payload:    payload,
+	}, nil)
+}
+
+// agentMessageText extracts assistant text from an agent message chunk.
+//
+// The extraction is deliberately narrow: it reads only what Hive needs to surface
+// a turn's answer, and every other notification stays raw.
+func agentMessageText(payload json.RawMessage) (string, bool) {
+	var chunk struct {
+		SessionUpdate string `json:"sessionUpdate"`
+		Content       struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(payload, &chunk); err != nil {
+		return "", false
+	}
+	if chunk.SessionUpdate != "agent_message_chunk" || chunk.Content.Type != "text" {
+		return "", false
+	}
+	if chunk.Content.Text == "" {
+		return "", false
+	}
+	return chunk.Content.Text, true
 }
 
 func (b *Bridge) forwardPermission(perm acp.PermissionRequest) {

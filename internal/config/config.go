@@ -34,13 +34,20 @@ const (
 // Config is the root Hive configuration.
 type Config struct {
 	// DataDir is the data directory. Empty means ~/.hive/data.
-	DataDir    string                     `toml:"data_dir"`
-	Cluster    ClusterConfig              `toml:"cluster"`
-	Log        LogConfig                  `toml:"log"`
-	EventStore EventStoreConfig           `toml:"event_store"`
-	Security   SecurityConfig             `toml:"security"`
-	Agents     map[string]AgentConfig     `toml:"agents"`
-	Transports map[string]TransportConfig `toml:"transport"`
+	DataDir string `toml:"data_dir"`
+
+	// WorkspaceDir is where a run works when its workspace names no location for
+	// the node. Empty uses the node process's working directory.
+	//
+	// A run must have a working directory: an agent that writes files needs to
+	// know where, and ACP requires one to create a session.
+	WorkspaceDir string                     `toml:"workspace_dir"`
+	Cluster      ClusterConfig              `toml:"cluster"`
+	Log          LogConfig                  `toml:"log"`
+	EventStore   EventStoreConfig           `toml:"event_store"`
+	Security     SecurityConfig             `toml:"security"`
+	Agents       map[string]AgentConfig     `toml:"agents"`
+	Transports   map[string]TransportConfig `toml:"transport"`
 
 	// DefaultAgent names the agent used when a session does not choose one.
 	// Empty falls back to the only configured agent, or the first in name

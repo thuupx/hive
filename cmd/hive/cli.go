@@ -521,19 +521,21 @@ func commandIDOr(explicit string) string {
 	return ids.New("cmd")
 }
 
+// eventSummary renders an event for a human.
+//
+// Readable text wins over an identifier: a message event carries the agent's
+// answer, and showing the run id instead would hide the thing the user asked for.
 func eventSummary(ev v1.Event) string {
+	if len(ev.Payload) > 0 {
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(ev.Payload, &payload); err == nil && payload.Text != "" {
+			return payload.Text
+		}
+	}
 	if ev.RunID != "" {
 		return ev.RunID
-	}
-	if len(ev.Payload) == 0 {
-		return ""
-	}
-
-	var payload struct {
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(ev.Payload, &payload); err == nil && payload.Text != "" {
-		return payload.Text
 	}
 	return string(ev.Payload)
 }

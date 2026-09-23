@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,10 @@ type NodeOptions struct {
 
 	CoordinatorURL string
 	TLSConfig      *tls.Config
+
+	// WorkspaceDir is where a run works when the coordinator names no location.
+	// Empty uses the node process's working directory.
+	WorkspaceDir string
 
 	// AgentPlugins are the agent plugins this node runs.
 	AgentPlugins []plugin.Spec
@@ -80,7 +85,11 @@ func NewNode(opts NodeOptions) (*Node, error) {
 		eventPrefix: ids.New("ev"),
 	}
 	n.supervisor = plugin.NewSupervisor(log)
-	n.executor = &pluginExecutor{supervisor: n.supervisor, pluginID: opts.AgentPluginID}
+	n.executor = &pluginExecutor{
+		supervisor:   n.supervisor,
+		pluginID:     opts.AgentPluginID,
+		workspaceDir: opts.WorkspaceDir,
+	}
 	n.client = node.New(node.Options{
 		NodeID:       opts.NodeID,
 		Version:      opts.Version,
@@ -320,6 +329,28 @@ type uploadResult struct {
 type pluginExecutor struct {
 	supervisor *plugin.Supervisor
 	pluginID   string
+
+	// workspaceDir is where a run works when the coordinator names no location.
+	workspaceDir string
+}
+
+// resolveWorkspace returns the working directory for an execution.
+//
+// A run must have one: an agent that writes files needs to know where, and ACP
+// requires a cwd to create a session. An explicit location wins; otherwise the
+// node's own working directory is the honest default, because that is where the
+// node was started.
+func (e *pluginExecutor) resolveWorkspace(requested string) string {
+	if requested != "" {
+		return requested
+	}
+	if e.workspaceDir != "" {
+		return e.workspaceDir
+	}
+	if dir, err := os.Getwd(); err == nil {
+		return dir
+	}
+	return ""
 }
 
 // instanceFor picks the plugin that runs a given agent.
@@ -342,6 +373,7 @@ func (e *pluginExecutor) Start(ctx context.Context, req v1.ExecutionStartParams)
 	if err != nil {
 		return "", err
 	}
+	req.WorkspacePath = e.resolveWorkspace(req.WorkspacePath)
 
 	var out struct {
 		RuntimeSessionID string `json:"runtimeSessionId"`

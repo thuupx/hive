@@ -639,6 +639,7 @@ func serveNode(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Version:        Version,
 		LeaseSeconds:   cfg.Cluster.LeaseSeconds,
 		CoordinatorURL: cfg.Cluster.CoordinatorURL,
+		WorkspaceDir:   cfg.WorkspaceDir,
 		TLSConfig:      node.ClientTLSConfig(cert),
 		AgentPlugins:   specs,
 		AgentPluginID:  agentName,

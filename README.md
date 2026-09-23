@@ -114,6 +114,10 @@ The `command` is the program Hive launches and talks ACP to. The agent name is
 also the plugin identity, so it is what you pass to `-agent` and what a node
 declares it can run.
 
+A run also needs a working directory: agents write files, and ACP requires a
+`cwd` to create a session. `workspace_dir` sets it. Empty means the directory the
+node was started in, which is usually what you want.
+
 > **This is the step people miss.** Without an `[agents.*]` section, Hive starts
 > and serves status, but it cannot create a session, and it will not start a node
 > child process. `hive agent list` prints `no agents configured`.
@@ -154,13 +158,24 @@ node:    your-host
 command: cmd_b31f7baa139d552e
 ```
 
-Then prompt it and watch what happens:
+Then prompt it and read the answer:
 
 ```sh
 ./bin/hive session prompt sess_b1d8d6dd8a860f4b "explain this repository"
 ./bin/hive session status sess_b1d8d6dd8a860f4b
 ./bin/hive session events sess_b1d8d6dd8a860f4b
 ```
+
+```text
+$ ./bin/hive session events sess_b1d8d6dd8a860f4b
+     1  agent.raw              run_15ae8808f22c5ec5
+     ...
+     8  message                This repository is a self-hosted agent gateway...
+```
+
+`agent.raw` is the protocol-native stream, preserved unmodified. `message` is the
+one thing Hive normalizes out of it: the answer to your prompt, because otherwise
+it would only be reachable as raw protocol chunks.
 
 ### 5. See the management plane
 
