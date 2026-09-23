@@ -491,3 +491,63 @@ func TestPromptStartsARunThatWasNeverLaunched(t *testing.T) {
 		return err == nil && run.State != agent.StateCreated
 	})
 }
+
+// A continued conversation restores the agent session of the previous run.
+//
+// Found in a live conversation: a new run created after the previous one finished
+// started a fresh agent session, so the agent had lost everything it had been
+// told. A conversation belongs to the session even though the agent session
+// belongs to a run.
+func TestAContinuedRunRestoresThePreviousAgentSession(t *testing.T) {
+	ctx := context.Background()
+	_, store, _, socketPath := startStack(t)
+
+	c, err := client.Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	created, err := c.CreateSession(ctx, v1.SessionCreateParams{CommandID: "cmd_1"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitForRunStarted(t, store, created.RunID)
+
+	// The first run has an agent session of its own.
+	first, err := store.GetAgentRun(ctx, created.RunID)
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if first.RuntimeSessionID == "" {
+		t.Fatal("the first run should have an agent session")
+	}
+	finishTurn(t, store, created.RunID)
+
+	// The next prompt creates a run, which must ask for that session back.
+	prompted, err := c.Prompt(ctx, v1.SessionPromptParams{
+		CommandID: "cmd_2",
+		SessionID: created.SessionID,
+		Text:      "again",
+	})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !prompted.CreatedRun {
+		t.Fatal("a finished default run means a new run")
+	}
+
+	waitFor(t, "the new run to start", func() bool {
+		run, err := store.GetAgentRun(ctx, prompted.RunID)
+		return err == nil && run.State != agent.StateCreated
+	})
+
+	run, err := store.GetAgentRun(ctx, prompted.RunID)
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.RuntimeSessionID != first.RuntimeSessionID {
+		t.Fatalf("runtime session = %q, want the previous run's %q",
+			run.RuntimeSessionID, first.RuntimeSessionID)
+	}
+}

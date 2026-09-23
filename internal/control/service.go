@@ -654,7 +654,7 @@ func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePa
 		WorkspacePath: workspacePath,
 		Context:       preamble,
 		Config:        config,
-		Resume:        run.RuntimeSessionID,
+		Resume:        s.resumeSeed(ctx, run),
 	}, &out)
 	if err != nil {
 		return err
@@ -671,6 +671,41 @@ func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePa
 		return nil
 	})
 	return err
+}
+
+// resumeSeed is the agent session this run should restore.
+//
+// A run's own runtime session is the obvious answer. When a run has none, it is
+// the first run of a continued conversation: the previous run of the same agent
+// in the same session holds the agent's history, and starting fresh would throw
+// that history away. A conversation belongs to the session, even though the
+// agent session belongs to a run.
+func (s *Service) resumeSeed(ctx context.Context, run *agent.AgentRun) string {
+	if run.RuntimeSessionID != "" {
+		return run.RuntimeSessionID
+	}
+
+	runs, err := s.store.ListAgentRuns(ctx, run.SessionID)
+	if err != nil {
+		return ""
+	}
+
+	var newest *agent.AgentRun
+	for _, candidate := range runs {
+		if candidate.ID == run.ID || candidate.AgentID != run.AgentID {
+			continue
+		}
+		if candidate.RuntimeSessionID == "" {
+			continue
+		}
+		if newest == nil || candidate.StartedAt.After(newest.StartedAt) {
+			newest = candidate
+		}
+	}
+	if newest == nil {
+		return ""
+	}
+	return newest.RuntimeSessionID
 }
 
 func (s *Service) dispatchPrompt(ctx context.Context, runID string, params v1.SessionPromptParams) error {
