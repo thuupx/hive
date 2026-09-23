@@ -20,6 +20,14 @@ const targetAgent = "other-agent"
 
 // agentSpecFor runs the test agent under a given plugin identity, so a handoff
 // between two agents can be exercised with one test binary.
+// failingAgentSpecFor runs the test agent so that its start always fails, which
+// makes the failed-target path reachable.
+func failingAgentSpecFor(id string) plugin.Spec {
+	spec := agentSpecFor(id)
+	spec.Env = append(spec.Env, "HIVE_TEST_AGENT_FAIL_START=1")
+	return spec
+}
+
 func agentSpecFor(id string) plugin.Spec {
 	return plugin.Spec{
 		ID:      id,
@@ -36,6 +44,17 @@ func agentSpecFor(id string) plugin.Spec {
 // startStackWithAgents brings up a coordinator and a node running every named
 // agent.
 func startStackWithAgents(t *testing.T, agents ...string) (*storage.Store, *v1.Peer) {
+	t.Helper()
+
+	specs := make([]plugin.Spec, 0, len(agents))
+	for _, id := range agents {
+		specs = append(specs, agentSpecFor(id))
+	}
+	return startStackWithAgentSpecs(t, agents, specs)
+}
+
+// startStackWithAgentSpecs is startStackWithAgents with explicit plugin specs.
+func startStackWithAgentSpecs(t *testing.T, agents []string, specs []plugin.Spec) (*storage.Store, *v1.Peer) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -64,11 +83,6 @@ func startStackWithAgents(t *testing.T, agents ...string) (*storage.Store, *v1.P
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() { _ = coordinator.Close() })
-
-	specs := make([]plugin.Spec, 0, len(agents))
-	for _, id := range agents {
-		specs = append(specs, agentSpecFor(id))
-	}
 
 	nodeStore := openNodeStore(t)
 	executionNode, err := daemon.NewNode(daemon.NodeOptions{
@@ -349,5 +363,71 @@ func TestFailedHandoffLeavesTheSessionUsable(t *testing.T) {
 		if record.State.IsUsable() {
 			t.Fatalf("handoff %s claims a transfer that did not happen", record.ID)
 		}
+	}
+}
+
+// A handoff whose target cannot start must not leave a live run behind.
+//
+// An orphan run would look like work in progress, and it would keep a workspace
+// location looking shared by runs that will never execute.
+func TestFailedHandoffTerminatesTheTargetRun(t *testing.T) {
+	ctx := context.Background()
+	store, peer := startStackWithAgentSpecs(t,
+		[]string{testAgent, targetAgent},
+		[]plugin.Spec{agentSpecFor(testAgent), failingAgentSpecFor(targetAgent)},
+	)
+
+	var created v1.SessionCreateResult
+	if err := peer.Call(ctx, v1.MethodSessionCreate, v1.SessionCreateParams{
+		CommandID: "cmd_1",
+		AgentID:   testAgent,
+	}, &created); err != nil {
+		t.Fatalf("session.create: %v", err)
+	}
+
+	// The target agent is configured but its command is not installed, so the
+	// start fails after the handoff record and the target run were committed.
+	err := peer.Call(ctx, v1.MethodSessionHandoff, v1.SessionHandoffParams{
+		CommandID: "cmd_2",
+		SessionID: created.SessionID,
+		AgentID:   targetAgent,
+	}, nil)
+	if err == nil {
+		t.Fatal("expected the handoff to fail")
+	}
+
+	records, err := store.ListHandoffs(ctx, created.SessionID)
+	if err != nil {
+		t.Fatalf("ListHandoffs: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("handoffs = %d, want the failed attempt to be inspectable", len(records))
+	}
+	if records[0].State != handoff.StateFailed {
+		t.Fatalf("handoff state = %q, want failed", records[0].State)
+	}
+	if records[0].State.IsUsable() {
+		t.Fatal("a failed handoff must not count as a transfer")
+	}
+
+	// The target run is terminated rather than left live.
+	target, err := store.GetAgentRun(ctx, records[0].TargetRunID)
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if !target.State.IsTerminal() {
+		t.Fatalf("target run state = %q, want a terminal state", target.State)
+	}
+
+	// And the session still routes to the source run.
+	sess, err := store.GetSession(ctx, created.SessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.DefaultInteractiveRunID != created.RunID {
+		t.Fatalf("default run = %q, want the source %q", sess.DefaultInteractiveRunID, created.RunID)
+	}
+	if sess.State != session.StateActive {
+		t.Fatalf("session state = %q, want active", sess.State)
 	}
 }

@@ -267,7 +267,18 @@ func TestReconnectSyncRequestsMissingEvents(t *testing.T) {
 		return len(srv.Store.(*fakeStore).queriedIDs()) == 2
 	})
 
-	requested := client.RequestedEvents()
+	// The store is queried before the client records the request, so the store is
+	// not a sufficient signal. Poll the client's own state; reading clears it, so
+	// the first non-empty read is the answer.
+	var requested []*event.Event
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if requested = client.RequestedEvents(); len(requested) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	if len(requested) != 1 || requested[0].ID != "ev_2" {
 		t.Fatalf("requested = %+v, want only ev_2", requested)
 	}

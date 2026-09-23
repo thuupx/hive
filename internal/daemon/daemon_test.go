@@ -74,6 +74,9 @@ func runTestAgent() {
 		if err := json.Unmarshal(params, &req); err != nil {
 			return nil, v1.InvalidParams("invalid start")
 		}
+		if os.Getenv("HIVE_TEST_AGENT_FAIL_START") != "" {
+			return nil, v1.Unavailable("agent %s could not be started", pluginID)
+		}
 		mu.Lock()
 		sessions[req.AgentRunID] = req.SessionID
 		mu.Unlock()

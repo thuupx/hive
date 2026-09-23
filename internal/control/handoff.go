@@ -3,9 +3,11 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/thupham/hive/internal/agent"
+	"github.com/thupham/hive/internal/apierr"
 	"github.com/thupham/hive/internal/command"
 	"github.com/thupham/hive/internal/event"
 	"github.com/thupham/hive/internal/handoff"
@@ -99,7 +101,7 @@ func (s *Service) Handoff(ctx context.Context, principal Principal, params v1.Se
 	if err := s.runHandoff(ctx, sess, record, targetRun, params); err != nil {
 		// The handoff is recorded as failed, and the session is returned to a
 		// usable state so the source run can continue.
-		_ = s.failHandoff(ctx, sess.ID, record.ID)
+		_ = s.failHandoff(ctx, sess.ID, record.ID, targetRun.ID)
 		_ = s.failCommand(ctx, stored.ID, err)
 		return nil, domainError(err)
 	}
@@ -268,20 +270,34 @@ func (s *Service) activateHandoff(ctx context.Context, sessionID, handoffID, tar
 }
 
 // failHandoff records the failure and returns the session to a usable state.
-func (s *Service) failHandoff(ctx context.Context, sessionID, handoffID string) error {
-	_, err := s.store.UpdateHandoffWith(ctx, handoffID, func(current *handoff.Handoff) error {
+//
+// The target run is terminated too. Leaving it in a live state would make it look
+// like work in progress, and it would keep a workspace location looking shared by
+// runs that will never execute.
+func (s *Service) failHandoff(ctx context.Context, sessionID, handoffID, targetRunID string) error {
+	if _, err := s.store.UpdateHandoffWith(ctx, handoffID, func(current *handoff.Handoff) error {
 		if current.State.IsTerminal() {
 			return nil
 		}
 		return current.Transition(handoff.StateFailed)
-	})
-	if err != nil {
+	}); err != nil {
 		return err
+	}
+
+	if targetRunID != "" {
+		if _, err := s.store.UpdateAgentRunWith(ctx, targetRunID, func(run *agent.AgentRun) error {
+			if run.State.IsTerminal() {
+				return apierr.ErrNoChange
+			}
+			return run.Transition(agent.StateFailed)
+		}); err != nil && !errors.Is(err, apierr.ErrNoChange) {
+			return err
+		}
 	}
 
 	// The session must not stay in handoff: the source run is still the one that
 	// can serve prompts.
-	_, err = s.store.UpdateSessionWith(ctx, sessionID, func(current *session.Session) error {
+	_, err := s.store.UpdateSessionWith(ctx, sessionID, func(current *session.Session) error {
 		if current.State == session.StateHandoff {
 			return current.Transition(session.StateActive)
 		}

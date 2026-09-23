@@ -172,9 +172,38 @@ func Load(path string) (Config, error) {
 	dec := toml.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
+		// The strict-mode error does not name the offending key, so name the
+		// unrecognized top-level keys instead. A typo in a config file is a common
+		// mistake and the message is where the user finds out.
+		if unknown := unknownTopLevelKeys(b); len(unknown) > 0 {
+			return Config{}, fmt.Errorf("config %s: unknown keys: %s", path, strings.Join(unknown, ", "))
+		}
 		return Config{}, fmt.Errorf("config %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// unknownTopLevelKeys lists the top-level keys in a document that the Config
+// struct does not define.
+func unknownTopLevelKeys(body []byte) []string {
+	var document map[string]any
+	if err := toml.Unmarshal(body, &document); err != nil {
+		return nil
+	}
+
+	known := map[string]bool{
+		"data_dir": true, "default_agent": true, "cluster": true, "log": true,
+		"event_store": true, "security": true, "agents": true, "transport": true,
+	}
+
+	var unknown []string
+	for key := range document {
+		if !known[key] {
+			unknown = append(unknown, key)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
 }
 
 // Validate reports whether the configuration is usable.
