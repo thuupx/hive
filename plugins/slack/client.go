@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sync"
@@ -105,12 +106,18 @@ type Config struct {
 
 	// HTTPClient overrides the HTTP client.
 	HTTPClient *http.Client
+
+	// Log reports what arrives over the socket. A delivery that is never seen
+	// cannot be explained by anything else, and "the button did nothing" is
+	// exactly that case.
+	Log *slog.Logger
 }
 
 // SocketClient is the live Slack client.
 type SocketClient struct {
 	config Config
 	http   *http.Client
+	log    *slog.Logger
 
 	mu     sync.Mutex
 	conn   *websocket.Conn
@@ -131,7 +138,10 @@ func NewSocketClient(config Config) (*SocketClient, error) {
 	if config.HTTPClient == nil {
 		config.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &SocketClient{config: config, http: config.HTTPClient}, nil
+	if config.Log == nil {
+		config.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return &SocketClient{config: config, http: config.HTTPClient, log: config.Log}, nil
 }
 
 // Events opens a Socket Mode connection and streams inbound deliveries.
@@ -203,6 +213,10 @@ func (c *SocketClient) readLoop(ctx context.Context, conn *websocket.Conn, out c
 				return
 			}
 		}
+
+		// Every envelope is reported, because an envelope Hive does not handle is
+		// the answer to "why did nothing happen" and would otherwise leave no trace.
+		c.log.Debug("socket envelope", "type", envelope.Type)
 
 		switch envelope.Type {
 		case "events_api", "interactive":

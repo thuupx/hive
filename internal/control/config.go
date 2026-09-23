@@ -36,11 +36,9 @@ func (s *Service) SessionConfig(ctx context.Context, principal Principal, params
 
 	// An agent session lives in the agent process, so it does not survive a
 	// restart. Saying so is more useful than a bare failure.
-	if !run.State.IsWorking() && run.RuntimeSessionID == "" {
-		return nil, v1.Conflict(
-			"session %s has no live agent session; send a message first", params.SessionID)
-	}
-
+	// A run with no live session is brought up below rather than refused. Asking to
+	// see the settings is a request to have the agent there, and a conversation that
+	// has not been spoken in yet still has settings to choose.
 	// A config id with no value is a read of that selector, not a change to it.
 	// Recording the empty value would poison every later run: the agent would be
 	// asked to apply a value that is not one.

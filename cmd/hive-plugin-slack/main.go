@@ -79,6 +79,7 @@ func run() error {
 	client, err := slack.NewSocketClient(slack.Config{
 		AppToken: os.Getenv("SLACK_APP_TOKEN"),
 		BotToken: os.Getenv("SLACK_BOT_TOKEN"),
+		Log:      log,
 	})
 	if err != nil {
 		return err
