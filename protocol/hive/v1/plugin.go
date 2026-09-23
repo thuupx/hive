@@ -148,8 +148,13 @@ type DeliveredEvent struct {
 
 // ExecutionStartParams asks an agent plugin to start an execution.
 type ExecutionStartParams struct {
-	AgentRunID    string `json:"agentRunId"`
-	SessionID     string `json:"sessionId"`
+	AgentRunID string `json:"agentRunId"`
+	SessionID  string `json:"sessionId"`
+
+	// AgentID names the agent that must run this execution. A node runs several
+	// agents, so the execution surface has to say which one.
+	AgentID string `json:"agentId"`
+
 	Generation    int64  `json:"generation"`
 	WorkspacePath string `json:"workspacePath"`
 }
@@ -157,6 +162,7 @@ type ExecutionStartParams struct {
 // ExecutionPromptParams asks an agent plugin to prompt an execution.
 type ExecutionPromptParams struct {
 	AgentRunID string `json:"agentRunId"`
+	AgentID    string `json:"agentId"`
 	Generation int64  `json:"generation"`
 	Text       string `json:"text"`
 }
@@ -164,6 +170,7 @@ type ExecutionPromptParams struct {
 // ExecutionCancelParams asks an agent plugin to cancel an execution.
 type ExecutionCancelParams struct {
 	AgentRunID string `json:"agentRunId"`
+	AgentID    string `json:"agentId"`
 	Generation int64  `json:"generation"`
 }
 
@@ -213,6 +220,7 @@ type PermissionRequestParams struct {
 // PermissionRespondParams delivers a permission decision to a plugin.
 type PermissionRespondParams struct {
 	AgentRunID     string `json:"agentRunId"`
+	AgentID        string `json:"agentId"`
 	AgentRequestID string `json:"agentRequestId"`
 	Approved       bool   `json:"approved"`
 

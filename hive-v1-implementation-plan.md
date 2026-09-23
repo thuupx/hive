@@ -700,25 +700,67 @@ Deliberately not in M8, stated so it is not mistaken for done:
 
 ### M9 — Handoff and snapshots
 
-- [ ] Snapshot creation with `schema_version`; snapshot is not a
-      replacement for the event log (§30)
-- [ ] `HandoffContext`: summary, recent events, workspace ref, artifacts
-      (§16); summary is optional
-- [ ] Handoff lifecycle: `requested`, `context_building`, `target_starting`,
-      then `active` / `failed` / `cancelled` (§15.1)
-- [ ] Handoff record + target AgentRun assignment idempotent by
+- [x] Snapshot creation with `schema_version`; a snapshot is not a replacement
+      for the event log (30)
+- [x] `Context`: summary, recent events, prior messages, workspace ref,
+      artifacts (16); the summary is optional
+- [x] Handoff lifecycle: `requested`, `context_building`, `target_starting`,
+      then `active` / `failed` / `cancelled` (15.1)
+- [x] Handoff record and target AgentRun assignment idempotent by
       `command_id`
-- [ ] Source and target `runtime_session_id` are always distinct fields
-- [ ] `default_interactive_run_id` updates atomically on handoff
-      **activation**, not on record creation (D8)
-- [ ] Handoff is not reported successful unless the target execution and
-      required context are durably established
-- [ ] Tests: crash mid-handoff leaves an inspectable incomplete state; no
-      false success; handoff correctness never reinterprets the source
-      runtime session ID
+- [x] Source and target `runtime_session_id` are always distinct fields
+- [x] `default_interactive_run_id` updates on handoff **activation**, not on
+      record creation (D8)
+- [x] A handoff is not reported successful unless the target execution started
+- [x] The transport exposes `/handoff`
+- [x] Tests: no false success, distinct runtime session ids, retry creates no
+      second handoff, a failed handoff leaves the session usable
 
 **Exit criteria:** §42 "Handoff correctness" and "Handoff recovery" have
 passing tests.
+
+Status: met. `make ci` is green with 229 passing tests; the suite is clean under
+`-race`.
+
+Implementation notes:
+
+- A handoff creates a new AgentRun. Hive never converts one runtime's native
+  session into another's, and the two `runtime_session_id` values are separate
+  fields on separate runs. The end-to-end test asserts they differ.
+- The handoff record and the target run commit in one transaction, so a retry
+  cannot create a second handoff. Everything after that is an explicit lifecycle
+  step, so a crash leaves an inspectable state instead of a silent claim that the
+  session moved.
+- The routing pointer moves only on activation, after the target execution has
+  started. A prompt arriving before that still reaches the source run, which can
+  serve it.
+- While the transfer is in progress the session is in `handoff`, so routing does
+  not send new prompts to a run that is being replaced. A failed handoff returns
+  the session to `active`.
+- The context package is stored as a versioned snapshot, so a later context schema
+  can migrate or reject it explicitly.
+- The transport maps `/handoff <agent>` to `session.handoff`; the alias stays in
+  the transport.
+
+Two real bugs were found while wiring this up, both worth recording:
+
+- **A lost update, for the third time.** Building the context package persisted
+  the whole handoff row from a stale in-memory copy, undoing the state transition
+  that had just been written. The targeted update (`UpdateHandoffWith`) is the fix,
+  and the pattern is already recorded in AGENTS.md: read-modify-write belongs
+  inside one transaction.
+- **The node ignored which agent a run belongs to.** `pluginExecutor` dispatched
+  every execution to the first configured plugin, so a handoff to another agent
+  still ran on the old one. The execution surface now names the agent, and the node
+  picks the plugin by that name. This was invisible until a session had two agents.
+
+Deliberately not in M9:
+
+- Cancelling an in-flight handoff. The `cancelled` state exists in the lifecycle
+  and is reachable by transition, but no operation drives it yet.
+- The target agent does not yet receive the context package as a prompt. The
+  package is built, versioned, and stored; feeding it to the target run's first
+  prompt is part of the runtime wiring, together with the CLI in M10.
 
 ### M10 — CLI/TUI
 

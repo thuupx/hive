@@ -37,6 +37,7 @@ var Commands = CommandMap{
 	"nodes":    v1.MethodNodeList,
 	"status":   v1.MethodSessionStatus,
 	"cancel":   v1.MethodSessionCancel,
+	"handoff":  v1.MethodSessionHandoff,
 }
 
 // Catalog is the discoverable command list this transport exposes.
@@ -57,6 +58,7 @@ var Descriptions = map[string]string{
 	"nodes":    "List connected nodes",
 	"status":   "Show the current session status",
 	"cancel":   "Cancel the current run",
+	"handoff":  "Hand off the session to another agent",
 }
 
 // Catalog returns the commands this transport exposes, in a stable order.

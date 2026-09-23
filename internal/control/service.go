@@ -262,6 +262,7 @@ func (s *Service) Cancel(ctx context.Context, principal Principal, params v1.Ses
 
 	err = n.Call(ctx, v1.MethodExecutionCancel, v1.ExecutionCancelParams{
 		AgentRunID: run.ID,
+		AgentID:    run.AgentID,
 		Generation: run.ExecutionGeneration,
 	}, nil)
 	if err != nil {
@@ -464,6 +465,7 @@ func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePa
 	err := n.Call(ctx, v1.MethodExecutionStart, v1.ExecutionStartParams{
 		AgentRunID:    run.ID,
 		SessionID:     run.SessionID,
+		AgentID:       run.AgentID,
 		Generation:    run.ExecutionGeneration,
 		WorkspacePath: workspacePath,
 	}, &out)
@@ -500,6 +502,7 @@ func (s *Service) dispatchPrompt(ctx context.Context, runID, text string) error 
 
 	err = n.Call(ctx, v1.MethodExecutionPrompt, v1.ExecutionPromptParams{
 		AgentRunID: run.ID,
+		AgentID:    run.AgentID,
 		Generation: run.ExecutionGeneration,
 		Text:       text,
 	}, nil)

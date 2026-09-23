@@ -139,7 +139,7 @@ func TestControlCreatePromptAndReplay(t *testing.T) {
 
 	waitFor(t, "the run to record its runtime session", func() bool {
 		run, err := store.GetAgentRun(ctx, created.RunID)
-		return err == nil && run.State == agent.StateStarting && run.RuntimeSessionID == "agent-session-1"
+		return err == nil && run.State == agent.StateStarting && run.RuntimeSessionID == "agent-session-test-agent"
 	})
 
 	var prompted v1.SessionPromptResult
@@ -195,7 +195,7 @@ func TestControlCreatePromptAndReplay(t *testing.T) {
 	if len(status.Runs) != 1 {
 		t.Fatalf("runs = %d, want 1", len(status.Runs))
 	}
-	if status.Runs[0].RuntimeSessionID != "agent-session-1" {
+	if status.Runs[0].RuntimeSessionID != "agent-session-test-agent" {
 		t.Errorf("runtime session = %q", status.Runs[0].RuntimeSessionID)
 	}
 

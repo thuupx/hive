@@ -94,11 +94,15 @@ is an example of the internal form.
 
 ### Concurrency
 
-- Read-modify-write must happen inside one write transaction. An AgentRun's
-  state and execution generation are written by the node, the lease sweep, and
-  the control plane, so persisting a stale in-memory copy silently overwrites a
-  newer one. Use `Store.UpdateAgentRunWith` rather than loading, mutating, and
-  calling `UpdateAgentRun`.
+- Read-modify-write must happen inside one write transaction. An AgentRun, a
+  Session, and a Handoff are each written by more than one writer, so persisting
+  a stale in-memory copy silently overwrites a newer one. Use
+  `Store.UpdateAgentRunWith`, `Store.UpdateSessionWith`, or
+  `Store.UpdateHandoffWith` rather than loading, mutating, and calling the plain
+  `Update...` method. This bug has been introduced three times; the helper exists
+  to make it hard to write.
+- The execution surface names the agent. A node runs several agents, so
+  dispatching to a fixed plugin would silently run the wrong one.
 
 ### Transports
 

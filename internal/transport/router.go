@@ -172,6 +172,33 @@ func (r *Router) handleCommand(ctx context.Context, env v1.Envelope, principal c
 		}
 		return &Outcome{Method: method, CommandID: commandID, SessionID: sessionID, Result: map[string]any{"cancelled": true}}
 
+	case v1.MethodSessionHandoff:
+		sessionID, err := r.sessionFor(ctx, env)
+		if err != nil {
+			return failed(commandID, apierr.From(err))
+		}
+		if len(env.Command.Args) == 0 {
+			return failed(commandID, v1.InvalidParams("handoff requires a target agent"))
+		}
+
+		result, err := r.control.Handoff(ctx, principal, v1.SessionHandoffParams{
+			CommandID: commandID,
+			SessionID: sessionID,
+			AgentID:   env.Command.Args[0],
+			SourceID:  env.SourceID,
+		})
+		if err != nil {
+			return failed(commandID, apierr.From(err))
+		}
+		return &Outcome{
+			Method:    method,
+			CommandID: commandID,
+			SessionID: sessionID,
+			RunID:     result.TargetRunID,
+			Created:   true,
+			Result:    result,
+		}
+
 	case v1.MethodSessionStatus:
 		sessionID, err := r.sessionFor(ctx, env)
 		if err != nil {
@@ -327,6 +354,7 @@ func (r *Router) respondToPermission(ctx context.Context, sessionID string, para
 
 	err = executionNode.Call(ctx, v1.MethodPermissionRespond, v1.PermissionRespondParams{
 		AgentRunID:     run.ID,
+		AgentID:        run.AgentID,
 		AgentRequestID: params.AgentRequestID,
 		Approved:       params.Approved,
 		OptionID:       params.OptionID,

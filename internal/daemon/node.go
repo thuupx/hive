@@ -322,16 +322,23 @@ type pluginExecutor struct {
 	pluginID   string
 }
 
-func (e *pluginExecutor) instance() (*plugin.Instance, error) {
-	inst, ok := e.supervisor.Instance(e.pluginID)
+// instanceFor picks the plugin that runs a given agent.
+//
+// A node runs several agents, so the execution surface names the agent. Falling
+// back to the default plugin would silently run the wrong agent.
+func (e *pluginExecutor) instanceFor(agentID string) (*plugin.Instance, error) {
+	if agentID == "" {
+		agentID = e.pluginID
+	}
+	inst, ok := e.supervisor.Instance(agentID)
 	if !ok {
-		return nil, v1.Unavailable("agent plugin %s is not running", e.pluginID)
+		return nil, v1.Unavailable("agent plugin %s is not running", agentID)
 	}
 	return inst, nil
 }
 
 func (e *pluginExecutor) Start(ctx context.Context, req v1.ExecutionStartParams) (string, error) {
-	inst, err := e.instance()
+	inst, err := e.instanceFor(req.AgentID)
 	if err != nil {
 		return "", err
 	}
@@ -349,7 +356,7 @@ func (e *pluginExecutor) Start(ctx context.Context, req v1.ExecutionStartParams)
 }
 
 func (e *pluginExecutor) Prompt(ctx context.Context, req v1.ExecutionPromptParams) error {
-	inst, err := e.instance()
+	inst, err := e.instanceFor(req.AgentID)
 	if err != nil {
 		return err
 	}
@@ -357,7 +364,7 @@ func (e *pluginExecutor) Prompt(ctx context.Context, req v1.ExecutionPromptParam
 }
 
 func (e *pluginExecutor) Cancel(ctx context.Context, req v1.ExecutionCancelParams) error {
-	inst, err := e.instance()
+	inst, err := e.instanceFor(req.AgentID)
 	if err != nil {
 		return err
 	}
@@ -365,7 +372,7 @@ func (e *pluginExecutor) Cancel(ctx context.Context, req v1.ExecutionCancelParam
 }
 
 func (e *pluginExecutor) Respond(ctx context.Context, req v1.PermissionRespondParams) error {
-	inst, err := e.instance()
+	inst, err := e.instanceFor(req.AgentID)
 	if err != nil {
 		return err
 	}

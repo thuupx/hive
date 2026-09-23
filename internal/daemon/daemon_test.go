@@ -44,8 +44,14 @@ func TestMain(m *testing.M) {
 func runTestAgent() {
 	ctx := context.Background()
 
+	pluginID := os.Getenv("HIVE_TEST_AGENT_ID")
+	if pluginID == "" {
+		pluginID = testAgent
+	}
+	runtimeSessionID := "agent-session-" + pluginID
+
 	host, err := sdk.Connect(ctx, sdk.Stdio(), sdk.Options{
-		ID:      testAgent,
+		ID:      pluginID,
 		Type:    v1.PluginTypeAgent,
 		Version: "test",
 		Capabilities: []string{
@@ -76,10 +82,10 @@ func runTestAgent() {
 			AgentRunID:       req.AgentRunID,
 			Generation:       req.Generation,
 			State:            "starting",
-			RuntimeSessionID: "agent-session-1",
+			RuntimeSessionID: runtimeSessionID,
 		}, nil)
 
-		return map[string]any{"runtimeSessionId": "agent-session-1"}, nil
+		return map[string]any{"runtimeSessionId": runtimeSessionID}, nil
 	})
 
 	host.Handle(v1.MethodExecutionPrompt, func(ctx context.Context, params json.RawMessage) (any, error) {
@@ -260,14 +266,14 @@ func TestCoordinatorNodeAgentEndToEnd(t *testing.T) {
 	}, &started); err != nil {
 		t.Fatalf("execution.start: %v", err)
 	}
-	if started["runtimeSessionId"] != "agent-session-1" {
+	if started["runtimeSessionId"] != "agent-session-test-agent" {
 		t.Fatalf("started = %v", started)
 	}
 
 	// The agent's own report must have reached the coordinator and moved the run.
 	waitFor(t, "the run to record its runtime session", func() bool {
 		r, err := coordinatorStore.GetAgentRun(ctx, testRun)
-		return err == nil && r.RuntimeSessionID == "agent-session-1" && r.State == agent.StateStarting
+		return err == nil && r.RuntimeSessionID == "agent-session-test-agent" && r.State == agent.StateStarting
 	})
 
 	// The prompt is acknowledged; the turn outcome arrives separately as an

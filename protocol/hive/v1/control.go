@@ -82,6 +82,40 @@ type SessionPromptResult struct {
 	CreatedRun bool `json:"createdRun"`
 }
 
+// SessionHandoffParams transfers a session to another agent.
+//
+// A handoff creates a new AgentRun rather than migrating an existing agent
+// process, and the source and target runtime session ids stay distinct fields.
+type SessionHandoffParams struct {
+	CommandID string `json:"commandId"`
+	SessionID string `json:"sessionId"`
+
+	// RunID names the source AgentRun. Empty uses the session's default run.
+	RunID string `json:"runId,omitempty"`
+
+	// AgentID selects the target agent.
+	AgentID string `json:"agentId"`
+
+	// Summary is an optional source-agent summary. A handoff must remain valid
+	// when the source cannot generate one.
+	Summary string `json:"summary,omitempty"`
+
+	Workspace string `json:"workspace,omitempty"`
+	SourceID  string `json:"sourceId,omitempty"`
+}
+
+// SessionHandoffResult is the outcome of session.handoff.
+type SessionHandoffResult struct {
+	CommandID   string `json:"commandId"`
+	HandoffID   string `json:"handoffId"`
+	SessionID   string `json:"sessionId"`
+	SourceRunID string `json:"sourceRunId,omitempty"`
+	TargetRunID string `json:"targetRunId"`
+	AgentID     string `json:"agentId"`
+	NodeID      string `json:"nodeId"`
+	State       string `json:"state"`
+}
+
 // SessionCancelParams cancels the current turn of an AgentRun.
 type SessionCancelParams struct {
 	CommandID string `json:"commandId"`

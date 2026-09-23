@@ -94,6 +94,13 @@ func (g *Gateway) HandleAs(ctx context.Context, principal Principal, req *v1.Mes
 		}
 		return g.service.Prompt(ctx, principal, params)
 
+	case v1.MethodSessionHandoff:
+		var params v1.SessionHandoffParams
+		if err := decode(req, &params); err != nil {
+			return nil, err
+		}
+		return g.service.Handoff(ctx, principal, params)
+
 	case v1.MethodSessionCancel:
 		var params v1.SessionCancelParams
 		if err := decode(req, &params); err != nil {
