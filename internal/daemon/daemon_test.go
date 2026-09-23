@@ -65,8 +65,9 @@ func runTestAgent() {
 	}
 
 	var (
-		mu       sync.Mutex
-		sessions = map[string]string{}
+		mu        sync.Mutex
+		sessions  = map[string]string{}
+		responded = map[string]bool{}
 	)
 
 	host.Handle(v1.MethodExecutionStart, func(ctx context.Context, params json.RawMessage) (any, error) {
@@ -121,6 +122,17 @@ func runTestAgent() {
 
 	host.Handle(v1.MethodExecutionCancel, func(context.Context, json.RawMessage) (any, error) {
 		return map[string]any{"cancelled": true}, nil
+	})
+
+	host.Handle(v1.MethodPermissionRespond, func(_ context.Context, params json.RawMessage) (any, error) {
+		var req v1.PermissionRespondParams
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, v1.InvalidParams("invalid permission.respond request")
+		}
+		mu.Lock()
+		responded[req.AgentRequestID] = req.Approved
+		mu.Unlock()
+		return map[string]any{"ok": true}, nil
 	})
 
 	// Optional: publish one event immediately, which lets a test exercise the

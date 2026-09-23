@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/thupham/hive/internal/agent"
 	"github.com/thupham/hive/internal/apierr"
@@ -213,8 +214,16 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 		}
 
 		if target.NewRun {
-			newRun := agent.New(ids.New("run"), sess.ID, s.defaultAgent, protocolForAgent())
-			executionNode, err := s.nodeForAgent(s.defaultAgent)
+			// A new run continues the same conversation, so it uses the agent the
+			// session was already talking to. Silently switching to the configured
+			// default would surprise a user who chose an agent.
+			agentID := s.agentForNewRun(ctx, sess)
+			if agentID == "" {
+				return v1.InvalidParams("no agent is configured")
+			}
+
+			newRun := agent.New(ids.New("run"), sess.ID, agentID, protocolForAgent())
+			executionNode, err := s.nodeForAgent(agentID)
 			if err != nil {
 				return err
 			}
@@ -242,17 +251,61 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 		return replayPromptResult(stored)
 	}
 
-	// Dispatch after commit. The node reports what actually happened, so a
-	// failure here is recoverable rather than silently successful.
-	if err := s.dispatchPrompt(ctx, runID, params.Text); err != nil {
-		_ = s.failCommand(ctx, stored.ID, err)
-		return nil, domainError(err)
+	// A run created by routing has to be started, exactly as a run created by
+	// session.create is. Without this it would exist with no execution, and the
+	// prompt would have nowhere to go.
+	if createdRun {
+		newRun, err := s.store.GetAgentRun(ctx, runID)
+		if err != nil {
+			_ = s.failCommand(ctx, stored.ID, err)
+			return nil, domainError(err)
+		}
+
+		path, err := s.workspacePath(ctx, sess.WorkspaceID, newRun.NodeID)
+		if err != nil {
+			_ = s.failCommand(ctx, stored.ID, err)
+			return nil, domainError(err)
+		}
+
+		if err := s.startRun(ctx, newRun, path, ""); err != nil {
+			_ = s.failCommand(ctx, stored.ID, err)
+			return nil, domainError(err)
+		}
 	}
 
-	if err := s.completeCommand(ctx, stored.ID, result); err != nil {
-		s.log.Warn("command result could not be recorded", "command", stored.ID, "error", err)
-	}
+	// The turn runs in the background.
+	//
+	// A command's lifetime is not a request's lifetime: a turn can take minutes,
+	// and holding the request open would tie the operation to a connection that
+	// may go away. The caller follows the operation through command.get, which is
+	// what the durable command record is for.
+	go s.runTurn(stored.ID, runID, params.Text)
+
 	return result, nil
+}
+
+// TurnTimeout bounds one agent turn.
+//
+// It is generous because an agent may explore a repository, run tools, and think
+// for a while. It exists so a wedged agent cannot pin a run forever.
+const TurnTimeout = 30 * time.Minute
+
+// runTurn dispatches a prompt and records the outcome.
+func (s *Service) runTurn(commandID, runID, text string) {
+	ctx, cancel := context.WithTimeout(context.Background(), TurnTimeout)
+	defer cancel()
+
+	if err := s.dispatchPrompt(ctx, runID, text); err != nil {
+		s.log.Warn("turn could not be dispatched", "run", runID, "error", err)
+		_ = s.failCommand(ctx, commandID, err)
+		return
+	}
+
+	// The turn ended, so the command is complete. The agent's answer travels as
+	// an event, which is what a client reads.
+	if err := s.completeCommand(ctx, commandID, map[string]any{"runId": runID}); err != nil {
+		s.log.Warn("command result could not be recorded", "command", commandID, "error", err)
+	}
 }
 
 // Cancel cancels the current turn of an AgentRun.
@@ -776,6 +829,19 @@ func storageError(err error) error { return apierr.From(err) }
 
 // domainError maps an operation error onto a protocol error.
 func domainError(err error) error { return apierr.From(err) }
+
+// agentForNewRun picks the agent a routing-created run should use.
+//
+// The session's previous default run names the agent the conversation was using,
+// which is the honest choice: a user who chose an agent should keep it.
+func (s *Service) agentForNewRun(ctx context.Context, sess *session.Session) string {
+	if sess.DefaultInteractiveRunID != "" {
+		if previous, err := s.store.GetAgentRun(ctx, sess.DefaultInteractiveRunID); err == nil && previous.AgentID != "" {
+			return previous.AgentID
+		}
+	}
+	return s.defaultAgent
+}
 
 // workspacePath returns the location a workspace has on a node.
 //

@@ -9,6 +9,7 @@ import (
 
 	"github.com/thupham/hive/internal/agent"
 	"github.com/thupham/hive/internal/client"
+	"github.com/thupham/hive/internal/storage"
 	"github.com/thupham/hive/internal/tui"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
@@ -213,5 +214,79 @@ func TestTUIRunStopsOnCancel(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not stop on cancellation")
+	}
+}
+
+// A prompt to a session whose default run has finished starts a new run, and it
+// continues with the same agent.
+//
+// Found by prompting twice against a real agent: routing created the run but
+// never started it, so the second prompt had nowhere to go.
+func TestPromptAfterTerminalRunStartsANewRun(t *testing.T) {
+	ctx := context.Background()
+	_, store, _, socketPath := startStack(t)
+
+	c, err := client.Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	created, err := c.CreateSession(ctx, v1.SessionCreateParams{
+		CommandID: "cmd_1",
+		AgentID:   testAgent,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	waitFor(t, "the first run to start", func() bool {
+		run, err := store.GetAgentRun(ctx, created.RunID)
+		return err == nil && run.State == agent.StateStarting
+	})
+
+	// Finish the run through the domain, then persist it.
+	run, err := store.GetAgentRun(ctx, created.RunID)
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if err := run.Transition(agent.StateCompleted); err != nil {
+		t.Fatalf("transition: %v", err)
+	}
+	if err := store.WriteTx(ctx, func(tx storage.Execer) error {
+		return store.UpdateAgentRun(ctx, tx, run)
+	}); err != nil {
+		t.Fatalf("UpdateAgentRun: %v", err)
+	}
+
+	prompted, err := c.Prompt(ctx, v1.SessionPromptParams{
+		CommandID: "cmd_2",
+		SessionID: created.SessionID,
+		Text:      "keep going",
+	})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if !prompted.CreatedRun {
+		t.Fatal("a finished default run means a new run is created")
+	}
+	if prompted.RunID == created.RunID {
+		t.Fatal("the new run should be a different AgentRun")
+	}
+
+	// The new run has an execution. Before the fix it was created and then left
+	// behind, so it stayed in `created` with no runtime session.
+	waitFor(t, "the new run to have an execution", func() bool {
+		next, err := store.GetAgentRun(ctx, prompted.RunID)
+		return err == nil && next.State != agent.StateCreated && next.RuntimeSessionID != ""
+	})
+
+	next, err := store.GetAgentRun(ctx, prompted.RunID)
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	// It continues the conversation with the agent the session was already using.
+	if next.AgentID != testAgent {
+		t.Errorf("agent = %q, want %q", next.AgentID, testAgent)
 	}
 }

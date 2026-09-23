@@ -12,6 +12,7 @@ const ProtocolVersion = 1
 // ACP method names.
 const (
 	methodInitialize        = "initialize"
+	methodAuthenticate      = "authenticate"
 	methodSessionNew        = "session/new"
 	methodSessionLoad       = "session/load"
 	methodSessionPrompt     = "session/prompt"
@@ -58,6 +59,11 @@ type Capabilities struct {
 
 	AgentName    string
 	AgentVersion string
+
+	// AuthMethods are the ways this agent accepts authentication. A non-empty
+	// list means the agent refuses to create a session until the client
+	// authenticates.
+	AuthMethods []AuthMethod
 }
 
 type initializeRequest struct {
@@ -85,7 +91,26 @@ type initializeResponse struct {
 	ProtocolVersion   int               `json:"protocolVersion"`
 	AgentCapabilities agentCapabilities `json:"agentCapabilities"`
 	AgentInfo         *Implementation   `json:"agentInfo,omitempty"`
-	AuthMethods       []json.RawMessage `json:"authMethods,omitempty"`
+	AuthMethods       []AuthMethod      `json:"authMethods,omitempty"`
+}
+
+// AuthMethod is one way an agent can authenticate.
+//
+// An agent that advertises auth methods refuses to create a session until the
+// client has authenticated. Hive does not own agent credentials, so which method
+// to use is configuration.
+type AuthMethod struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+type authenticateRequest struct {
+	MethodID string `json:"methodId"`
+
+	// Meta carries protocol extensions. An agent that authenticates with an API
+	// key reads it from here.
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 type agentCapabilities struct {

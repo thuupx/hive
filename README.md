@@ -167,15 +167,28 @@ Then prompt it and read the answer:
 ```
 
 ```text
+$ ./bin/hive session prompt sess_b1d8d6dd8a860f4b "explain this repository"
+prompted run_15ae8808f22c5ec5 (the current run)
+  accepted
+  completed
+
+This repository is a self-hosted agent gateway...
+```
+
+A turn runs in the background, because a command's lifetime is not a request's
+lifetime. The CLI follows the durable command record and prints the answer when
+the turn ends. `-no-wait` returns immediately instead.
+
+The event stream itself:
+
+```text
 $ ./bin/hive session events sess_b1d8d6dd8a860f4b
-     1  agent.raw              run_15ae8808f22c5ec5
-     ...
      8  message                This repository is a self-hosted agent gateway...
 ```
 
-`agent.raw` is the protocol-native stream, preserved unmodified. `message` is the
-one thing Hive normalizes out of it: the answer to your prompt, because otherwise
-it would only be reachable as raw protocol chunks.
+`agent.raw` is the protocol-native stream, preserved unmodified, and one turn can
+produce hundreds of chunks. It is hidden by default so the answer is what you see;
+`-all` shows everything and `-type agent.raw` shows only that.
 
 ### 5. See the management plane
 
@@ -212,11 +225,33 @@ hive version                   # build and protocol version
 hive session create [-agent <id>] [-workspace <name>] [-command-id <id>]
 hive session list [-limit <n>]
 hive session status <session-id>
-hive session prompt <session-id> <text...> [-run <run-id>]
+hive session prompt <session-id> <text...> [-run <run-id>] [-no-wait]
 hive session cancel <session-id> [-run <run-id>]
 hive session handoff <session-id> <agent-id> [-summary <text>]
-hive session events <session-id> [-from <sequence>] [-limit <n>] [-json]
+hive session events <session-id> [-from <sequence>] [-limit <n>] [-all] [-type <t>] [-json]
 ```
+
+### Permissions
+
+An agent may ask before running a tool. The request reaches Hive and **fails
+closed**: it never becomes an implicit approval, and it waits until someone
+answers or it expires.
+
+```sh
+hive permission list
+hive permission respond <agent-request-id> -allow    # or -deny
+```
+
+```text
+$ ./bin/hive permission list
+perm_429863e9672d337e  session sess_a480866bea2e854a  run run_d4fc509f861088c2
+    agent request: 1a9743fc-5654-48c7-9ecd-adc971914d56
+    waiting since: 2026-09-23T05:41:00Z
+    answer with:   hive permission respond 1a9743fc-5654-48c7-9ecd-adc971914d56 -allow   (or -deny)
+```
+
+With a transport connected, the same request arrives as buttons in the
+conversation, and the CLI is the fallback when there is none.
 
 ### Everything else
 
@@ -398,6 +433,11 @@ The key is nested inside a section rather than at the top level. Compare against
 That is the designed behaviour: a handoff is only reported successful if the
 target execution actually started. The failed attempt stays inspectable, the
 target run is terminated, and the session keeps routing to its original run.
+
+**A turn never finishes, and `hive permission list` shows a pending request.**
+The agent is waiting for permission to run a tool. Answer it with
+`hive permission respond <id> -allow`. This is the fail-closed design: nothing
+authorizes an unknown action on your behalf.
 
 **`cursor expired: requested 0, next valid 5`.**
 The events you asked for have been pruned by `event_store.retention_days`.

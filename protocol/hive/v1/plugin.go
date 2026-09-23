@@ -229,7 +229,11 @@ type PermissionRequestParams struct {
 
 // PermissionRespondParams delivers a permission decision to a plugin.
 type PermissionRespondParams struct {
-	AgentRunID     string `json:"agentRunId"`
+	AgentRunID string `json:"agentRunId"`
+
+	// SessionID scopes the lookup when the caller knows which conversation the
+	// request belongs to.
+	SessionID      string `json:"sessionId,omitempty"`
 	AgentID        string `json:"agentId"`
 	AgentRequestID string `json:"agentRequestId"`
 	Approved       bool   `json:"approved"`

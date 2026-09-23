@@ -146,6 +146,11 @@ func (c *Client) ListPermissions(ctx context.Context, params v1.PermissionListPa
 	return &result, nil
 }
 
+// RespondToPermission answers a pending permission request.
+func (c *Client) RespondToPermission(ctx context.Context, params v1.PermissionRespondParams) error {
+	return c.peer.Call(ctx, v1.MethodPermissionRespond, params, nil)
+}
+
 // ListAgents returns the configured agents.
 func (c *Client) ListAgents(ctx context.Context) (*v1.AgentListResult, error) {
 	var result v1.AgentListResult

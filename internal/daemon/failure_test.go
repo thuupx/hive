@@ -8,6 +8,7 @@ import (
 
 	"github.com/thupham/hive/internal/agent"
 	"github.com/thupham/hive/internal/client"
+	"github.com/thupham/hive/internal/control"
 	"github.com/thupham/hive/internal/event"
 	"github.com/thupham/hive/internal/ids"
 	"github.com/thupham/hive/internal/permission"
@@ -305,5 +306,92 @@ func TestPluginFailureDoesNotStopTheCoordinator(t *testing.T) {
 	}
 	if status.SessionID != created.SessionID {
 		t.Fatalf("status = %+v", status)
+	}
+}
+
+// Answering a pending permission request relays the decision to the agent and
+// records it.
+//
+// Without a way to answer, a turn that asks for permission hangs forever: the
+// request fails closed, which is correct, but nothing can resolve it.
+func TestPermissionResponseIsRelayedAndRecorded(t *testing.T) {
+	ctx := context.Background()
+	_, store, _, socketPath := startStack(t)
+
+	c, err := client.Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	created, err := c.CreateSession(ctx, v1.SessionCreateParams{CommandID: "cmd_1"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// The agent's own request id is a JSON value, so a string id is stored quoted.
+	request := permissionRequestFor(t, created.SessionID, created.RunID,
+		`"agent-req-1"`, time.Now().UTC().Add(time.Hour))
+	if err := store.WriteTx(ctx, func(tx storage.Execer) error {
+		return store.InsertPermissionRequest(ctx, tx, request)
+	}); err != nil {
+		t.Fatalf("InsertPermissionRequest: %v", err)
+	}
+
+	pending, err := c.ListPermissions(ctx, v1.PermissionListParams{})
+	if err != nil {
+		t.Fatalf("ListPermissions: %v", err)
+	}
+	if len(pending.Permissions) != 1 {
+		t.Fatalf("permissions = %+v", pending.Permissions)
+	}
+
+	// A caller types the id the way it is displayed, without the JSON quoting.
+	if err := c.RespondToPermission(ctx, v1.PermissionRespondParams{
+		AgentRequestID: control.UnquoteRequestID(pending.Permissions[0].AgentRequestID),
+		SessionID:      created.SessionID,
+		Approved:       true,
+	}); err != nil {
+		t.Fatalf("RespondToPermission: %v", err)
+	}
+
+	resolved, err := store.GetPermissionRequest(ctx, request.ID)
+	if err != nil {
+		t.Fatalf("GetPermissionRequest: %v", err)
+	}
+	if resolved.State != "approved" {
+		t.Fatalf("state = %q, want approved", resolved.State)
+	}
+
+	// The request no longer appears as pending.
+	after, err := c.ListPermissions(ctx, v1.PermissionListParams{})
+	if err != nil {
+		t.Fatalf("ListPermissions: %v", err)
+	}
+	if len(after.Permissions) != 0 {
+		t.Fatalf("permissions = %+v, want none", after.Permissions)
+	}
+
+	// A second answer observes the resolved state instead of authorizing twice.
+	if _, won, err := store.ResolvePermissionRequest(ctx, request.ID, "denied"); err != nil {
+		t.Fatalf("ResolvePermissionRequest: %v", err)
+	} else if won {
+		t.Fatal("a second answer won after the request was resolved")
+	}
+}
+
+// A caller may pass the agent request id with or without the JSON quoting.
+func TestPermissionRequestIDQuotingIsForgiving(t *testing.T) {
+	cases := map[string]string{
+		`"abc"`:     "abc",
+		`abc`:       "abc",
+		`  "abc"  `: "abc",
+		`123`:       "123",
+		``:          "",
+	}
+	for stored, want := range cases {
+		if got := control.UnquoteRequestID(stored); got != want {
+			t.Errorf("UnquoteRequestID(%q) = %q, want %q", stored, got, want)
+		}
 	}
 }

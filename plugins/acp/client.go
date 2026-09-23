@@ -145,6 +145,7 @@ func (c *Client) Initialize(ctx context.Context) (*Capabilities, error) {
 
 	caps := &Capabilities{
 		ProtocolVersion: resp.ProtocolVersion,
+		AuthMethods:     resp.AuthMethods,
 		LoadSession:     resp.AgentCapabilities.LoadSession,
 		PromptImages:    resp.AgentCapabilities.PromptCapabilities.Image,
 		PromptAudio:     resp.AgentCapabilities.PromptCapabilities.Audio,
@@ -155,6 +156,18 @@ func (c *Client) Initialize(ctx context.Context) (*Capabilities, error) {
 		caps.AgentVersion = resp.AgentInfo.Version
 	}
 	return caps, nil
+}
+
+// Authenticate selects one of the agent's advertised auth methods.
+//
+// An agent that advertises auth methods refuses to create a session until this
+// succeeds. Which method to use is the caller's decision, because it depends on
+// credentials Hive does not own.
+func (c *Client) Authenticate(ctx context.Context, methodID string, meta json.RawMessage) error {
+	if methodID == "" {
+		return errors.New("acp: an auth method id is required")
+	}
+	return c.call(ctx, methodAuthenticate, authenticateRequest{MethodID: methodID, Meta: meta}, nil)
 }
 
 // NewSession creates an agent session and returns its runtime session id.

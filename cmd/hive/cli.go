@@ -143,6 +143,7 @@ func sessionPrompt(f flags, args []string) error {
 	fs := flag.NewFlagSet("session prompt", flag.ContinueOnError)
 	runID := fs.String("run", "", "target a specific AgentRun")
 	commandID := fs.String("command-id", "", "idempotency key (default: a fresh one)")
+	noWait := fs.Bool("no-wait", false, "return as soon as the turn is accepted")
 	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
@@ -153,7 +154,8 @@ func sessionPrompt(f flags, args []string) error {
 	sessionID := fs.Arg(0)
 	text := strings.Join(fs.Args()[1:], " ")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// The call itself is quick. The turn is not, so it is followed separately.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	c, err := connect(ctx, f)
@@ -177,7 +179,81 @@ func sessionPrompt(f flags, args []string) error {
 		target = "a new run"
 	}
 	fmt.Printf("prompted %s (%s)\n", result.RunID, target)
-	fmt.Printf("command: %s\n", result.CommandID)
+
+	if *noWait {
+		fmt.Printf("\nThe turn runs in the background. Follow it with:\n")
+		fmt.Printf("  hive command get %s\n", result.CommandID)
+		fmt.Printf("  hive session events %s\n", sessionID)
+		return nil
+	}
+
+	// A command's lifetime is not a request's lifetime, so the client follows the
+	// durable record rather than holding the prompt open.
+	waitCtx, stopWaiting := context.WithTimeout(context.Background(), turnWaitTimeout)
+	defer stopWaiting()
+
+	if err := followCommand(waitCtx, c, result.CommandID); err != nil {
+		return err
+	}
+
+	return showRunAnswer(waitCtx, c, sessionID, result.RunID)
+}
+
+// turnWaitTimeout bounds how long the CLI follows a turn.
+const turnWaitTimeout = 30 * time.Minute
+
+// followCommand reports a command until it reaches a terminal state.
+func followCommand(ctx context.Context, c *client.Client, commandID string) error {
+	last := ""
+
+	for {
+		cmd, err := c.GetCommand(ctx, commandID)
+		if err != nil {
+			return err
+		}
+
+		if cmd.State != last {
+			fmt.Printf("  %s\n", cmd.State)
+			last = cmd.State
+		}
+
+		switch cmd.State {
+		case "completed":
+			return nil
+		case "failed", "rejected":
+			if len(cmd.Error) > 0 {
+				return fmt.Errorf("the operation %s: %s", cmd.State, cmd.Error)
+			}
+			return fmt.Errorf("the operation %s", cmd.State)
+		}
+
+		select {
+		case <-ctx.Done():
+			fmt.Printf("\nstill running; follow it with `hive command get %s`\n", commandID)
+			return nil
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// showRunAnswer prints the readable events a run produced.
+func showRunAnswer(ctx context.Context, c *client.Client, sessionID, runID string) error {
+	replay, err := c.Replay(ctx, v1.EventReplayParams{SessionID: sessionID, Limit: 500})
+	if err != nil {
+		return err
+	}
+
+	printed := 0
+	for _, ev := range replay.Events {
+		if ev.RunID != runID || ev.Type == v1.EventAgentRaw {
+			continue
+		}
+		if printed == 0 {
+			fmt.Println()
+		}
+		fmt.Println(eventSummary(ev))
+		printed++
+	}
 	return nil
 }
 
@@ -258,6 +334,8 @@ func sessionEvents(f flags, args []string) error {
 	from := fs.Int64("from", 0, "resume after this sequence")
 	limit := fs.Int("limit", 50, "maximum events to show")
 	asJSON := fs.Bool("json", false, "print raw events")
+	all := fs.Bool("all", false, "include agent.raw protocol traffic")
+	types := fs.String("type", "", "only events of this type")
 	if err := parseArgsAndFlags(fs, args); err != nil {
 		return err
 	}
@@ -294,7 +372,13 @@ func sessionEvents(f flags, args []string) error {
 		return errors.New("rehydrate before continuing the stream")
 	}
 
+	shown := 0
 	for _, ev := range result.Events {
+		if !visibleEvent(ev, *all, *types) {
+			continue
+		}
+		shown++
+
 		if *asJSON {
 			encoded, err := json.Marshal(ev)
 			if err != nil {
@@ -305,7 +389,31 @@ func sessionEvents(f flags, args []string) error {
 		}
 		fmt.Printf("%6d  %-22s %s\n", ev.Sequence, ev.Type, eventSummary(ev))
 	}
+
+	if shown == 0 && !*asJSON {
+		// Say why the stream looked empty rather than leaving it ambiguous.
+		if *all || *types != "" {
+			fmt.Println("no events matched")
+		} else {
+			fmt.Printf("no readable events; %d are protocol traffic (use -all)\n", len(result.Events))
+		}
+	}
 	return nil
+}
+
+// visibleEvent decides whether an event is worth showing.
+//
+// Agent protocol traffic dominates a stream by volume: one turn can produce
+// hundreds of chunks and exactly one answer. Showing all of it by default would
+// bury the thing the user asked for.
+func visibleEvent(ev v1.Event, all bool, only string) bool {
+	if only != "" {
+		return ev.Type == only
+	}
+	if all {
+		return true
+	}
+	return ev.Type != v1.EventAgentRaw
 }
 
 func agentCommand(f flags, args []string) error {
@@ -635,6 +743,98 @@ func workspaceList(f flags, args []string) error {
 	for _, warning := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "warning: %d active runs share %s on %s: %v\n",
 			len(warning.RunIDs), warning.Path, warning.NodeID, warning.RunIDs)
+	}
+	return nil
+}
+
+// permissionCommand handles `hive permission <action>`.
+func permissionCommand(f flags, args []string) error {
+	if len(args) == 0 {
+		return errors.New("permission requires an action: list, respond")
+	}
+
+	action, rest := args[0], args[1:]
+	switch action {
+	case "list":
+		return permissionList(f, rest)
+	case "respond":
+		return permissionRespond(f, rest)
+	default:
+		return fmt.Errorf("unknown permission action %q", action)
+	}
+}
+
+func permissionList(f flags, args []string) error {
+	fs := flag.NewFlagSet("permission list", flag.ContinueOnError)
+	sessionID := fs.String("session", "", "only this session")
+	if err := parseArgsAndFlags(fs, args); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	c, err := connect(ctx, f)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	result, err := c.ListPermissions(ctx, v1.PermissionListParams{SessionID: *sessionID})
+	if err != nil {
+		return err
+	}
+	if len(result.Permissions) == 0 {
+		fmt.Println("no pending permissions")
+		return nil
+	}
+
+	for _, pending := range result.Permissions {
+		fmt.Printf("%s  session %s  run %s\n", pending.PermissionID, pending.SessionID, pending.RunID)
+		requestID := control.UnquoteRequestID(pending.AgentRequestID)
+		fmt.Printf("    agent request: %s\n", requestID)
+		fmt.Printf("    waiting since: %s\n", pending.CreatedAt.Format(time.RFC3339))
+		fmt.Printf("    answer with:   hive permission respond %s -allow   (or -deny)\n", requestID)
+	}
+	return nil
+}
+
+func permissionRespond(f flags, args []string) error {
+	fs := flag.NewFlagSet("permission respond", flag.ContinueOnError)
+	allow := fs.Bool("allow", false, "approve the request")
+	deny := fs.Bool("deny", false, "reject the request")
+	sessionID := fs.String("session", "", "the session the request belongs to")
+	if err := parseArgsAndFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("permission respond requires the agent request id")
+	}
+	if *allow == *deny {
+		return errors.New("pass exactly one of -allow or -deny")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	c, err := connect(ctx, f)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	if err := c.RespondToPermission(ctx, v1.PermissionRespondParams{
+		AgentRequestID: fs.Arg(0),
+		SessionID:      *sessionID,
+		Approved:       *allow,
+	}); err != nil {
+		return err
+	}
+
+	if *allow {
+		fmt.Println("approved")
+	} else {
+		fmt.Println("denied")
 	}
 	return nil
 }

@@ -93,6 +93,7 @@ func (t *processTransport) Close() error {
 type Bridge struct {
 	host     *sdk.Host
 	launcher Launcher
+	opts     Options
 
 	mu     sync.Mutex
 	client *acp.Client
@@ -131,11 +132,23 @@ type pendingPermission struct {
 	options   []acp.PermissionOption
 }
 
+// Options configures a bridge.
+type Options struct {
+	// AuthMethod selects which of the agent's advertised auth methods to use.
+	// Empty uses the first one the agent offers.
+	AuthMethod string
+
+	// APIKey is passed as _meta.api_key for a method that authenticates that way.
+	// It is read from the environment by the caller, never from configuration.
+	APIKey string
+}
+
 // New returns a bridge over a connected host.
-func New(host *sdk.Host, launcher Launcher) *Bridge {
+func New(host *sdk.Host, launcher Launcher, opts Options) *Bridge {
 	return &Bridge{
 		host:     host,
 		launcher: launcher,
+		opts:     opts,
 		runs:     make(map[string]*run),
 		perms:    make(map[string]pendingPermission),
 	}
@@ -312,6 +325,13 @@ func (b *Bridge) ensureAgent(ctx context.Context) (*acp.Client, error) {
 		return nil, v1.Unavailable("agent could not be started: %s", err.Error())
 	}
 
+	// An agent that advertises auth methods refuses to create a session until the
+	// client has authenticated.
+	if err := b.authenticate(ctx, client, caps); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+
 	b.mu.Lock()
 	b.client = client
 	b.caps = caps
@@ -319,6 +339,56 @@ func (b *Bridge) ensureAgent(ctx context.Context) (*acp.Client, error) {
 
 	go b.pump(client)
 	return client, nil
+}
+
+// authenticate satisfies the agent's auth requirement, when it has one.
+//
+// Hive does not own agent credentials, so which method to use and what to pass are
+// configuration rather than something the core can infer. A method that needs a
+// browser is the user's to complete, and the error says which method was tried.
+func (b *Bridge) authenticate(ctx context.Context, client *acp.Client, caps *acp.Capabilities) error {
+	if caps == nil || len(caps.AuthMethods) == 0 {
+		return nil
+	}
+
+	method := b.opts.AuthMethod
+	if method == "" {
+		method = caps.AuthMethods[0].ID
+	} else if !hasAuthMethod(caps.AuthMethods, method) {
+		return v1.InvalidParams("agent does not offer auth method %q; it offers: %s",
+			method, authMethodNames(caps.AuthMethods))
+	}
+
+	var meta json.RawMessage
+	if b.opts.APIKey != "" {
+		encoded, err := json.Marshal(map[string]string{"api_key": b.opts.APIKey})
+		if err != nil {
+			return v1.Internal("the api key could not be encoded")
+		}
+		meta = encoded
+	}
+
+	if err := client.Authenticate(ctx, method, meta); err != nil {
+		return v1.Unavailable("agent authentication with %q failed: %s", method, err.Error())
+	}
+	return nil
+}
+
+func hasAuthMethod(methods []acp.AuthMethod, id string) bool {
+	for _, method := range methods {
+		if method.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func authMethodNames(methods []acp.AuthMethod) string {
+	names := make([]string, 0, len(methods))
+	for _, method := range methods {
+		names = append(names, method.ID)
+	}
+	return strings.Join(names, ", ")
 }
 
 // pump forwards ACP notifications to the core without interpreting them.

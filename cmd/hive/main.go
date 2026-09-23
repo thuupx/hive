@@ -64,6 +64,8 @@ Commands:
   session events <id>        replay a session event stream
   workspace create <name>    register a workspace
   workspace list             list workspaces and shared-location warnings
+  permission list            list pending permission requests
+  permission respond <id>    answer a pending request with -allow or -deny
   agent list                 list configured agents
   node list                  list nodes
   command get <id>           show a command status resource
@@ -125,6 +127,8 @@ func run(args []string) error {
 		return commandCommand(f, rest[1:])
 	case "workspace":
 		return workspaceCommand(f, rest[1:])
+	case "permission":
+		return permissionCommand(f, rest[1:])
 	case "tui":
 		return tuiCommand(f, rest[1:])
 	default:
@@ -686,6 +690,8 @@ func agentPluginSpecs(cfg config.Config) ([]plugin.Spec, error) {
 				"-id", name,
 				"-version", Version,
 				"-agent-command", strings.Join(agentCfg.Command, " "),
+				"-auth-method", agentCfg.AuthMethod,
+				"-api-key-env", agentCfg.APIKeyEnv,
 			},
 			MaxRestarts:  3,
 			RestartDelay: time.Second,

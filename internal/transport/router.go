@@ -249,7 +249,7 @@ func (r *Router) handleInteraction(ctx context.Context, env v1.Envelope, princip
 		if err := json.Unmarshal([]byte(env.Interaction.Value), &params); err != nil {
 			return failed(commandID, v1.InvalidParams("invalid permission response"))
 		}
-		if err := r.respondToPermission(ctx, sessionID, params); err != nil {
+		if err := r.respondToPermission(ctx, principal, sessionID, params); err != nil {
 			return failed(commandID, apierr.From(err))
 		}
 		return &Outcome{
@@ -316,57 +316,13 @@ func (r *Router) prompt(ctx context.Context, principal control.Principal, comman
 	}
 }
 
-// respondToPermission relays a permission decision to the agent, then records it.
+// respondToPermission delegates to the Control API.
 //
-// The relay comes first: recording a decision the agent never received would
-// leave the request pending while the coordinator believed it was resolved. A
-// failed relay leaves the request pending, which fails closed.
-func (r *Router) respondToPermission(ctx context.Context, sessionID string, params v1.PermissionRespondParams) error {
-	if params.AgentRequestID == "" {
-		return v1.InvalidParams("agentRequestId is required")
-	}
-
-	open, err := r.store.ListOpenPermissionRequests(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-
-	var match *permission.Request
-	for _, req := range open {
-		if req.AgentRequestID == params.AgentRequestID {
-			match = req
-			break
-		}
-	}
-	if match == nil {
-		return v1.NotFound("permission request %s", params.AgentRequestID)
-	}
-
-	run, err := r.store.GetAgentRun(ctx, match.RunID)
-	if err != nil {
-		return err
-	}
-
-	executionNode, ok := r.nodes.Node(run.NodeID)
-	if !ok || !executionNode.Connected() {
-		return v1.Unavailable("node %s is not connected", run.NodeID)
-	}
-
-	err = executionNode.Call(ctx, v1.MethodPermissionRespond, v1.PermissionRespondParams{
-		AgentRunID:     run.ID,
-		AgentID:        run.AgentID,
-		AgentRequestID: params.AgentRequestID,
-		Approved:       params.Approved,
-		OptionID:       params.OptionID,
-	}, nil)
-	if err != nil {
-		return err
-	}
-
-	// Only the first valid terminal transition wins, so a repeated response
-	// observes the resolved state instead of authorizing twice.
-	_, _, err = r.store.ResolvePermissionRequest(ctx, match.ID, permissionState(params.Approved))
-	return err
+// Resolution is a domain operation: the transport supplies the authenticated
+// principal and the agent's request id, and Hive does the rest.
+func (r *Router) respondToPermission(ctx context.Context, principal control.Principal, sessionID string, params v1.PermissionRespondParams) error {
+	params.SessionID = sessionID
+	return r.control.RespondToPermission(ctx, principal, params)
 }
 
 // sessionFor resolves the conversation's session, or ErrNotFound.

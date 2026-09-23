@@ -29,6 +29,10 @@ func run() error {
 	id := flag.String("id", "acp", "stable plugin identity")
 	agentCommand := flag.String("agent-command", "", "agent invocation, space separated, for example \"devin acp\"")
 	version := flag.String("version", "0.1.0-dev", "plugin version")
+	authMethod := flag.String("auth-method", "",
+		"which of the agent's advertised ACP auth methods to use; empty uses the first")
+	apiKeyEnv := flag.String("api-key-env", "",
+		"environment variable holding an API key, passed to the agent as _meta.api_key")
 	flag.Parse()
 
 	if strings.TrimSpace(*agentCommand) == "" {
@@ -53,9 +57,19 @@ func run() error {
 	}
 	defer host.Close()
 
+	// The API key is read from the environment, so it never appears in
+	// configuration and never reaches a log.
+	var apiKey string
+	if *apiKeyEnv != "" {
+		apiKey = os.Getenv(*apiKeyEnv)
+	}
+
 	bridge := acpbridge.New(host, acpbridge.CommandLauncher{
 		Command:       strings.Fields(*agentCommand),
 		ClientVersion: *version,
+	}, acpbridge.Options{
+		AuthMethod: *authMethod,
+		APIKey:     apiKey,
 	})
 	bridge.Register()
 

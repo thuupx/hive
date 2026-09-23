@@ -114,6 +114,18 @@ type AgentConfig struct {
 	Protocol string   `toml:"protocol"`
 	Command  []string `toml:"command"`
 	Endpoint string   `toml:"endpoint"`
+
+	// AuthMethod selects which of the agent's advertised ACP auth methods to
+	// use. Empty uses the first one the agent offers.
+	//
+	// An agent that advertises auth methods refuses to create a session until the
+	// client authenticates, and Hive does not own agent credentials.
+	AuthMethod string `toml:"auth_method"`
+
+	// APIKeyEnv names an environment variable holding an API key, passed to the
+	// agent as _meta.api_key. It is an environment variable so the key never
+	// appears in this file.
+	APIKeyEnv string `toml:"api_key_env"`
 }
 
 // TransportConfig holds per-transport presentation configuration.

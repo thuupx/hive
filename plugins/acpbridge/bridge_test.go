@@ -258,7 +258,7 @@ func newBridge(t *testing.T) (*acpbridge.Bridge, *core, *fakeLauncher) {
 	c := newCore(t)
 	launcher := &fakeLauncher{t: t}
 
-	bridge := acpbridge.New(c.host, launcher)
+	bridge := acpbridge.New(c.host, launcher, acpbridge.Options{})
 	bridge.Register()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -329,7 +329,7 @@ func TestStartCreatesAnAgentSessionAndReports(t *testing.T) {
 // reconcile instead of starting a second execution.
 func TestStartReportsAbsentWhenTheAgentCannotStart(t *testing.T) {
 	c := newCore(t)
-	bridge := acpbridge.New(c.host, &fakeLauncher{t: t, fail: true})
+	bridge := acpbridge.New(c.host, &fakeLauncher{t: t, fail: true}, acpbridge.Options{})
 	bridge.Register()
 	go func() { _ = bridge.Run(context.Background()) }()
 
@@ -379,23 +379,54 @@ func TestPromptForwardsUpdatesAndReportsTerminal(t *testing.T) {
 		t.Fatalf("result = %v", out)
 	}
 
-	waitFor(t, "a published update", func() bool { return len(c.publishedSnapshot()) > 0 })
-	published := c.publishedSnapshot()[0]
-	if published.AgentRunID != "run_1" {
-		t.Errorf("agent run = %q", published.AgentRunID)
+	// The raw stream and the turn's answer are both published, and the order
+	// between them is not something a test should depend on.
+	waitFor(t, "the raw stream and the answer", func() bool {
+		var raw, answer bool
+		for _, published := range c.publishedSnapshot() {
+			switch published.Type {
+			case "agent.raw":
+				raw = true
+			case v1.EventMessage:
+				answer = true
+			}
+		}
+		return raw && answer
+	})
+
+	var sawRaw, sawAnswer bool
+	for _, published := range c.publishedSnapshot() {
+		if published.AgentRunID != "run_1" {
+			t.Errorf("agent run = %q", published.AgentRunID)
+		}
+		if published.Protocol != "acp" || published.Method != "session/update" {
+			t.Errorf("published = %+v", published)
+		}
+
+		switch published.Type {
+		case "agent.raw":
+			sawRaw = true
+			var payload map[string]any
+			if err := json.Unmarshal(published.Payload, &payload); err != nil {
+				t.Fatalf("payload: %v", err)
+			}
+			if payload["sessionUpdate"] != "agent_message_chunk" {
+				t.Errorf("payload = %v, want the raw ACP update", payload)
+			}
+
+		case v1.EventMessage:
+			sawAnswer = true
+			var payload map[string]any
+			if err := json.Unmarshal(published.Payload, &payload); err != nil {
+				t.Fatalf("answer payload: %v", err)
+			}
+			if payload["text"] != "working" {
+				t.Errorf("answer = %v, want the assistant text", payload)
+			}
+		}
 	}
-	if published.Protocol != "acp" || published.Method != "session/update" {
-		t.Errorf("published = %+v", published)
-	}
-	if published.Type != "agent.raw" {
-		t.Errorf("type = %q, want agent.raw", published.Type)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(published.Payload, &payload); err != nil {
-		t.Fatalf("payload: %v", err)
-	}
-	if payload["sessionUpdate"] != "agent_message_chunk" {
-		t.Errorf("payload = %v, want the raw ACP update", payload)
+	if !sawRaw || !sawAnswer {
+		t.Fatalf("raw = %v, answer = %v; both should be published", sawRaw, sawAnswer)
 	}
 
 	waitFor(t, "a terminal report", func() bool {

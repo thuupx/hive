@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/thupham/hive/plugins/acp"
 )
 
 // The answer to a prompt must be readable. Without this normalization the agent's
@@ -60,5 +62,26 @@ func TestRunAccumulatesOneAnswerPerTurn(t *testing.T) {
 	r.answer.Reset()
 	if got := strings.TrimSpace(r.answer.String()); got != "" {
 		t.Fatalf("the buffer did not reset: %q", got)
+	}
+}
+
+// An agent that advertises auth methods refuses to create a session until the
+// client authenticates, and which method to use is configuration.
+func TestAuthMethodSelection(t *testing.T) {
+	methods := []acp.AuthMethod{
+		{ID: "devin-browser", Name: "Log in with browser"},
+		{ID: "api-key", Name: "API key"},
+	}
+
+	if !hasAuthMethod(methods, "api-key") {
+		t.Error("api-key should be offered")
+	}
+	if hasAuthMethod(methods, "nope") {
+		t.Error("nope is not offered")
+	}
+
+	names := authMethodNames(methods)
+	if !strings.Contains(names, "devin-browser") || !strings.Contains(names, "api-key") {
+		t.Fatalf("names = %q", names)
 	}
 }
