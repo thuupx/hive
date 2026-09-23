@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/thupham/hive/internal/session"
 )
 
 // PutSnapshot stores a context snapshot.
@@ -13,7 +15,7 @@ import (
 // SchemaVersion is required: a snapshot must identify the context schema it
 // was built with so a later version can migrate or reject it explicitly. A
 // snapshot is not a replacement for the event log.
-func (s *Store) PutSnapshot(ctx context.Context, tx Execer, snap *Snapshot) error {
+func (s *Store) PutSnapshot(ctx context.Context, tx Execer, snap *session.Snapshot) error {
 	switch {
 	case snap == nil:
 		return errors.New("storage: nil snapshot")
@@ -44,7 +46,7 @@ func (s *Store) PutSnapshot(ctx context.Context, tx Execer, snap *Snapshot) erro
 
 // LatestSnapshot returns the snapshot with the highest sequence for a
 // session, or ErrNotFound.
-func (s *Store) LatestSnapshot(ctx context.Context, sessionID string) (*Snapshot, error) {
+func (s *Store) LatestSnapshot(ctx context.Context, sessionID string) (*session.Snapshot, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, session_id, schema_version, sequence, payload, created_at
 		FROM session_snapshots
@@ -53,7 +55,7 @@ func (s *Store) LatestSnapshot(ctx context.Context, sessionID string) (*Snapshot
 		LIMIT 1`, sessionID)
 
 	var (
-		snap    Snapshot
+		snap    session.Snapshot
 		payload string
 		created int64
 	)

@@ -258,23 +258,52 @@ Implementation notes:
 
 ### M2 — Domain: Session, AgentRun, Command
 
-- [ ] Session state machine: `active`, `idle`, `handoff`, `archived`
-- [ ] AgentRun state machine: `created`, `queued`, `starting`, `running`,
+- [x] Session state machine: `active`, `idle`, `handoff`, `archived`
+- [x] AgentRun state machine: `created`, `queued`, `starting`, `running`,
       `completed`, `cancelled`, `failed`, `interrupted`
-- [ ] Domain-validated transitions only; no arbitrary state strings
-- [ ] Session field `default_interactive_run_id` (domain field)
-- [ ] Define "interactive AgentRun" (O3) and encode it
-- [ ] Prompt routing resolution per D7, including terminal-run rule (O4)
-- [ ] `execution_generation` and `node_execution_id` on AgentRun
-- [ ] Command lifecycle: `received`, `accepted`, `completed`, `rejected`,
+- [x] Domain-validated transitions only; no arbitrary state strings
+- [x] Session field `default_interactive_run_id` (domain field)
+- [x] Define "interactive AgentRun" (O3) and encode it
+- [x] Prompt routing resolution per D7, including terminal-run rule (O4)
+- [x] `execution_generation` and `node_execution_id` on AgentRun
+- [x] Command lifecycle: `received`, `accepted`, `completed`, `rejected`,
       `failed`, `retryable`
-- [ ] `command.get` status resource for async operations
-- [ ] Tests: routing determinism, retry with same `command_id` returns the
+- [x] Command status resource at the domain and storage level
+- [x] Tests: routing determinism, retry with same `command_id` returns the
       same logical result, completed AgentRun does not destroy Session,
       execution fencing rejects older generation
 
 **Exit criteria:** §42 "Session continuity", "Command idempotency",
 "Execution fencing", and "Agent isolation" have passing tests.
+
+Status: met. `make ci` is green with 95 passing tests; the suite is clean
+under `-race`.
+
+Implementation notes:
+
+- **Dependency direction changed.** Domain packages now own the entity
+  types, and `internal/storage` is an adapter over them. This is the
+  opposite of the M1 arrangement, where storage owned the types. It was
+  changed now because every later milestone (event bus, agent runtime, node,
+  transports) would otherwise have to import the database package.
+  `internal/storage/types.go` was removed; the entities moved to
+  `internal/agent`, `internal/command`, `internal/event`, and
+  `internal/session`.
+- New packages: `internal/agent`, `internal/command`, `internal/event`,
+  `internal/session`.
+- `interrupted -> starting` is deliberately absent from the AgentRun
+  transition table. Only `Recover` can make that move, and it increments
+  `execution_generation`. This is how §11.3 is encoded: lease expiry
+  classifies a run as interrupted without authorizing automatic
+  replacement, because the original execution may still be alive.
+- `archived -> active` is allowed so a session can be unarchived; every
+  other transition out of `archived` is rejected.
+- Prompt routing takes a lookup function instead of a repository, so routing
+  is pure and depends on nothing but the session and the runs.
+- AgentRun persistence was added to storage so session continuity and
+  generation fencing are covered end to end.
+- The `command.get` protocol method itself is a Control API concern and
+  lands in M7. M2 provides the durable record plus `IsTerminal`/`IsPending`.
 
 ### M3 — Event architecture
 

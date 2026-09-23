@@ -50,6 +50,19 @@ is an example of the internal form.
   separate directory for integration tests, and give those files a
   `//go:build integration` tag so `go test ./...` stays fast.
 
+### Layering
+
+Domain packages own the entity types; storage is an adapter over them.
+
+- `internal/agent`, `internal/command`, `internal/event`, and
+  `internal/session` define entities, states, and transition rules. They
+  must not import `internal/storage`.
+- `internal/storage` persists those entities and may import them.
+- State transitions are validated by the domain. Storage must never write a
+  state string the domain does not define.
+- Prompt routing takes a lookup function rather than a repository, so it
+  stays pure.
+
 ### Storage
 
 - Migrations are embedded SQL files in `internal/storage/migrations/`,

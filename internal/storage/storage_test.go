@@ -10,6 +10,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thupham/hive/internal/agent"
+	"github.com/thupham/hive/internal/command"
+	"github.com/thupham/hive/internal/event"
+	"github.com/thupham/hive/internal/session"
 	"github.com/thupham/hive/internal/storage"
 )
 
@@ -30,28 +34,30 @@ func openStoreAt(t *testing.T, path string) *storage.Store {
 	return s
 }
 
-func createSession(t *testing.T, s *storage.Store, id string) {
+func createSession(t *testing.T, s *storage.Store, id string) *session.Session {
 	t.Helper()
 	ctx := context.Background()
+	sess := session.New(id)
 	err := s.WriteTx(ctx, func(tx storage.Execer) error {
-		return s.InsertSession(ctx, tx, &storage.Session{ID: id, State: "active"})
+		return s.InsertSession(ctx, tx, sess)
 	})
 	if err != nil {
 		t.Fatalf("create session %s: %v", id, err)
 	}
+	return sess
 }
 
-func newEvent(sessionID, id string) *storage.Event {
-	return &storage.Event{
+func newEvent(sessionID, id string) *event.Event {
+	return &event.Event{
 		ID:        id,
 		SessionID: sessionID,
-		Type:      "message",
+		Type:      event.TypeMessage,
 		Version:   1,
 		Payload:   json.RawMessage(`{"text":"hi"}`),
 	}
 }
 
-func appendEvents(t *testing.T, s *storage.Store, evs ...*storage.Event) int {
+func appendEvents(t *testing.T, s *storage.Store, evs ...*event.Event) int {
 	t.Helper()
 	ctx := context.Background()
 	inserted := 0
@@ -131,7 +137,7 @@ func TestEventSequenceIsMonotonic(t *testing.T) {
 	s := openStore(t)
 	createSession(t, s, testSession)
 
-	evs := []*storage.Event{
+	evs := []*event.Event{
 		newEvent(testSession, "ev_1"),
 		newEvent(testSession, "ev_2"),
 		newEvent(testSession, "ev_3"),
@@ -266,22 +272,23 @@ func TestAcceptCommandIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	createSession(t, s, testSession)
 
-	cmd := &storage.Command{ID: "cmd_1", Actor: "slack:U1", Method: "session.create", SourceID: "slack:ev:1"}
-	stored, created, err := s.AcceptCommand(ctx, cmd, []*storage.Event{newEvent(testSession, "ev_1")})
+	cmd := command.New("cmd_1", "slack:U1", "session.create")
+	cmd.SourceID = "slack:ev:1"
+	stored, created, err := s.AcceptCommand(ctx, cmd, []*event.Event{newEvent(testSession, "ev_1")})
 	if err != nil {
 		t.Fatalf("AcceptCommand: %v", err)
 	}
 	if !created {
 		t.Fatal("first AcceptCommand should create the operation")
 	}
-	if stored.ID != "cmd_1" || stored.State != storage.CommandReceived {
+	if stored.ID != "cmd_1" || stored.State != command.StateReceived {
 		t.Fatalf("stored = %+v", stored)
 	}
 
 	// A retry of the same logical operation must not create a second one and
 	// must not append its events.
-	retry := &storage.Command{ID: "cmd_1", Actor: "slack:U1", Method: "session.create"}
-	again, created, err := s.AcceptCommand(ctx, retry, []*storage.Event{newEvent(testSession, "ev_2")})
+	retry := command.New("cmd_1", "slack:U1", "session.create")
+	again, created, err := s.AcceptCommand(ctx, retry, []*event.Event{newEvent(testSession, "ev_2")})
 	if err != nil {
 		t.Fatalf("retry AcceptCommand: %v", err)
 	}
@@ -308,8 +315,8 @@ func TestAcceptCommandRollsBackOnFailure(t *testing.T) {
 
 	// An event with no id fails validation after the command row was written
 	// in the same transaction, so the whole transaction must roll back.
-	bad := &storage.Event{SessionID: testSession, Type: "message", Version: 1}
-	_, _, err := s.AcceptCommand(ctx, &storage.Command{ID: "cmd_2", Actor: "a", Method: "m"}, []*storage.Event{bad})
+	bad := &event.Event{SessionID: testSession, Type: event.TypeMessage, Version: 1}
+	_, _, err := s.AcceptCommand(ctx, command.New("cmd_2", "a", "m"), []*event.Event{bad})
 	if err == nil {
 		t.Fatal("expected AcceptCommand to fail")
 	}
@@ -331,13 +338,13 @@ func TestCommandStateTransition(t *testing.T) {
 	ctx := context.Background()
 	createSession(t, s, testSession)
 
-	if _, _, err := s.AcceptCommand(ctx, &storage.Command{ID: "cmd_3", Actor: "a", Method: "m"}, nil); err != nil {
+	if _, _, err := s.AcceptCommand(ctx, command.New("cmd_3", "a", "m"), nil); err != nil {
 		t.Fatalf("AcceptCommand: %v", err)
 	}
 
 	result := json.RawMessage(`{"session_id":"sess_1"}`)
 	err := s.WriteTx(ctx, func(tx storage.Execer) error {
-		return s.SetCommandState(ctx, tx, "cmd_3", storage.CommandCompleted, result, nil)
+		return s.SetCommandState(ctx, tx, "cmd_3", command.StateCompleted, result, nil)
 	})
 	if err != nil {
 		t.Fatalf("SetCommandState: %v", err)
@@ -347,15 +354,18 @@ func TestCommandStateTransition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCommand: %v", err)
 	}
-	if got.State != storage.CommandCompleted {
+	if got.State != command.StateCompleted {
 		t.Errorf("state = %q, want completed", got.State)
 	}
 	if string(got.Result) != string(result) {
 		t.Errorf("result = %s, want %s", got.Result, result)
 	}
+	if !got.IsTerminal() {
+		t.Error("completed command should be terminal")
+	}
 
 	err = s.WriteTx(ctx, func(tx storage.Execer) error {
-		return s.SetCommandState(ctx, tx, "absent", storage.CommandFailed, nil, nil)
+		return s.SetCommandState(ctx, tx, "absent", command.StateFailed, nil, nil)
 	})
 	if !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -367,7 +377,7 @@ func TestSnapshotSchemaVersion(t *testing.T) {
 	ctx := context.Background()
 	createSession(t, s, testSession)
 
-	snap := &storage.Snapshot{
+	snap := &session.Snapshot{
 		ID:            "snap_1",
 		SessionID:     testSession,
 		SchemaVersion: 3,
@@ -391,7 +401,7 @@ func TestSnapshotSchemaVersion(t *testing.T) {
 
 	// A snapshot must identify its context schema version.
 	err = s.WriteTx(ctx, func(tx storage.Execer) error {
-		return s.PutSnapshot(ctx, tx, &storage.Snapshot{ID: "snap_2", SessionID: testSession, Sequence: 8})
+		return s.PutSnapshot(ctx, tx, &session.Snapshot{ID: "snap_2", SessionID: testSession, Sequence: 8})
 	})
 	if err == nil {
 		t.Fatal("expected a snapshot without a schema version to be rejected")
@@ -417,9 +427,8 @@ func TestOutboxLifecycle(t *testing.T) {
 		t.Fatalf("pending = %d, want 2", len(pending))
 	}
 
-	ids := []string{pending[0].ID, pending[1].ID}
 	err = s.WriteTx(ctx, func(tx storage.Execer) error {
-		return s.MarkPublished(ctx, tx, ids...)
+		return s.MarkPublished(ctx, tx, pending[0].ID, pending[1].ID)
 	})
 	if err != nil {
 		t.Fatalf("MarkPublished: %v", err)
@@ -446,5 +455,150 @@ func TestForeignKeysAreEnforced(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected a foreign key violation")
+	}
+}
+
+func TestAgentRunPersistsExecutionGeneration(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	createSession(t, s, testSession)
+
+	run := agent.New("run_1", testSession, "devin", "acp")
+	run.NodeID = "node_a"
+	if err := s.WriteTx(ctx, func(tx storage.Execer) error {
+		return s.InsertAgentRun(ctx, tx, run)
+	}); err != nil {
+		t.Fatalf("InsertAgentRun: %v", err)
+	}
+
+	loaded, err := s.GetAgentRun(ctx, "run_1")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if loaded.ExecutionGeneration != 1 || loaded.State != agent.StateCreated {
+		t.Fatalf("loaded = %+v", loaded)
+	}
+
+	// Interrupt, then recover: the generation must be durable and bump.
+	if err := loaded.Transition(agent.StateStarting); err != nil {
+		t.Fatalf("transition: %v", err)
+	}
+	if err := loaded.Transition(agent.StateInterrupted); err != nil {
+		t.Fatalf("transition: %v", err)
+	}
+	if err := loaded.Recover("node_exec_2"); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if err := s.WriteTx(ctx, func(tx storage.Execer) error {
+		return s.UpdateAgentRun(ctx, tx, loaded)
+	}); err != nil {
+		t.Fatalf("UpdateAgentRun: %v", err)
+	}
+
+	reloaded, err := s.GetAgentRun(ctx, "run_1")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if reloaded.ExecutionGeneration != 2 {
+		t.Fatalf("generation = %d, want 2", reloaded.ExecutionGeneration)
+	}
+	if reloaded.NodeExecutionID != "node_exec_2" {
+		t.Fatalf("node execution id = %q", reloaded.NodeExecutionID)
+	}
+	if err := reloaded.CheckGeneration(1); !errors.Is(err, agent.ErrStaleGeneration) {
+		t.Fatalf("old generation was not fenced: %v", err)
+	}
+
+	runs, err := s.ListAgentRuns(ctx, testSession)
+	if err != nil {
+		t.Fatalf("ListAgentRuns: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(runs))
+	}
+}
+
+func TestUpdateSessionPersistsRoutingPointer(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	sess := createSession(t, s, testSession)
+
+	if err := sess.SetDefaultInteractiveRun("run_1"); err != nil {
+		t.Fatalf("SetDefaultInteractiveRun: %v", err)
+	}
+	if err := sess.Transition(session.StateIdle); err != nil {
+		t.Fatalf("Transition: %v", err)
+	}
+	if err := s.WriteTx(ctx, func(tx storage.Execer) error {
+		return s.UpdateSession(ctx, tx, sess)
+	}); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+
+	loaded, err := s.GetSession(ctx, testSession)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if loaded.DefaultInteractiveRunID != "run_1" {
+		t.Errorf("default run = %q, want run_1", loaded.DefaultInteractiveRunID)
+	}
+	if loaded.State != session.StateIdle {
+		t.Errorf("state = %q, want idle", loaded.State)
+	}
+
+	err = s.WriteTx(ctx, func(tx storage.Execer) error {
+		return s.UpdateSession(ctx, tx, session.New("sess_absent"))
+	})
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestSessionContinuityAcrossRuns checks the central claim of the session
+// model: a completed AgentRun does not destroy or end the Hive Session.
+func TestSessionContinuityAcrossRuns(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	createSession(t, s, testSession)
+
+	for _, id := range []string{"run_1", "run_2"} {
+		run := agent.New(id, testSession, "devin", "acp")
+		if err := s.WriteTx(ctx, func(tx storage.Execer) error {
+			return s.InsertAgentRun(ctx, tx, run)
+		}); err != nil {
+			t.Fatalf("InsertAgentRun %s: %v", id, err)
+		}
+
+		for _, next := range []agent.State{agent.StateStarting, agent.StateRunning, agent.StateCompleted} {
+			if err := run.Transition(next); err != nil {
+				t.Fatalf("run %s transition to %s: %v", id, next, err)
+			}
+		}
+		if err := s.WriteTx(ctx, func(tx storage.Execer) error {
+			return s.UpdateAgentRun(ctx, tx, run)
+		}); err != nil {
+			t.Fatalf("UpdateAgentRun %s: %v", id, err)
+		}
+	}
+
+	sess, err := s.GetSession(ctx, testSession)
+	if err != nil {
+		t.Fatalf("session did not survive completed runs: %v", err)
+	}
+	if sess.State != session.StateActive {
+		t.Errorf("session state = %q, want active", sess.State)
+	}
+
+	runs, err := s.ListAgentRuns(ctx, testSession)
+	if err != nil {
+		t.Fatalf("ListAgentRuns: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %d, want 2", len(runs))
+	}
+	for _, run := range runs {
+		if !run.IsTerminal() {
+			t.Errorf("run %s state = %q, want terminal", run.ID, run.State)
+		}
 	}
 }

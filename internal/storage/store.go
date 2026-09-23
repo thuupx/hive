@@ -50,6 +50,11 @@ type Execer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// scanner is satisfied by *sql.Row and *sql.Rows.
+type scanner interface {
+	Scan(dest ...any) error
+}
+
 // Store is a handle to a Hive database.
 type Store struct {
 	db      *sql.DB
@@ -141,6 +146,22 @@ func now() time.Time { return time.Now().UTC() }
 func unixNano(t time.Time) int64 { return t.UTC().UnixNano() }
 
 func fromUnixNano(n int64) time.Time { return time.Unix(0, n).UTC() }
+
+// nullableTime stores a zero time as SQL NULL.
+func nullableTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return unixNano(t)
+}
+
+// timeFromNull reads a nullable timestamp column.
+func timeFromNull(n sql.NullInt64) time.Time {
+	if !n.Valid {
+		return time.Time{}
+	}
+	return fromUnixNano(n.Int64)
+}
 
 // connectorOpener is the exported method set of the libSQL driver that
 // yields a reusable connector, letting Hive wrap it with per-connection

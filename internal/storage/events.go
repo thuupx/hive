@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/thupham/hive/internal/event"
 )
 
 // AppendEvents makes events durable on their session stream.
@@ -19,7 +21,7 @@ import (
 //
 // AppendEvents must run inside a write transaction so that sequence
 // assignment and insertion are atomic.
-func (s *Store) AppendEvents(ctx context.Context, tx Execer, evs ...*Event) (int, error) {
+func (s *Store) AppendEvents(ctx context.Context, tx Execer, evs ...*event.Event) (int, error) {
 	maxSeq := make(map[string]int64)
 	inserted := 0
 
@@ -74,7 +76,7 @@ func (s *Store) AppendEvents(ctx context.Context, tx Execer, evs ...*Event) (int
 
 // ReadEvents returns durable events for a session with sequence greater than
 // fromSequence, in stream order.
-func (s *Store) ReadEvents(ctx context.Context, sessionID string, fromSequence int64, limit int) ([]*Event, error) {
+func (s *Store) ReadEvents(ctx context.Context, sessionID string, fromSequence int64, limit int) ([]*event.Event, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
@@ -102,7 +104,7 @@ func (s *Store) EventCount(ctx context.Context, sessionID string) (int64, error)
 
 // PendingOutbox returns durable events that have not been published to the
 // event bus yet, in stream order.
-func (s *Store) PendingOutbox(ctx context.Context, limit int) ([]*Event, error) {
+func (s *Store) PendingOutbox(ctx context.Context, limit int) ([]*event.Event, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -135,7 +137,7 @@ func (s *Store) MarkPublished(ctx context.Context, tx Execer, eventIDs ...string
 	return nil
 }
 
-func validateEvent(ev *Event) error {
+func validateEvent(ev *event.Event) error {
 	switch {
 	case ev == nil:
 		return errors.New("storage: nil event")
@@ -157,13 +159,13 @@ func validateEvent(ev *Event) error {
 	return nil
 }
 
-func scanEvents(rows *sql.Rows) ([]*Event, error) {
+func scanEvents(rows *sql.Rows) ([]*event.Event, error) {
 	defer rows.Close()
 
-	var out []*Event
+	var out []*event.Event
 	for rows.Next() {
 		var (
-			ev       Event
+			ev       event.Event
 			runID    sql.NullString
 			origin   sql.NullString
 			protocol sql.NullString

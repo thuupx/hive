@@ -6,18 +6,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/thupham/hive/internal/command"
+	"github.com/thupham/hive/internal/event"
 )
 
 // EnsureCommand inserts cmd when its id is new and otherwise returns the
 // existing record. The bool reports whether cmd was created.
 //
-// This is the idempotency boundary required for mutating commands: retrying
-// the same command id returns the existing logical operation instead of
-// creating a second one.
-func (s *Store) EnsureCommand(ctx context.Context, tx Execer, cmd *Command) (*Command, bool, error) {
-	if err := validateCommand(cmd); err != nil {
+// This is the idempotency boundary for mutating commands: retrying the same
+// command id returns the existing logical operation instead of creating a
+// second one.
+func (s *Store) EnsureCommand(ctx context.Context, tx Execer, cmd *command.Command) (*command.Command, bool, error) {
+	if err := cmd.Validate(); err != nil {
 		return nil, false, err
 	}
+	applyCommandTimestamps(cmd)
 
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO commands
@@ -47,12 +51,12 @@ func (s *Store) EnsureCommand(ctx context.Context, tx Execer, cmd *Command) (*Co
 }
 
 // GetCommand returns a command by id, or ErrNotFound.
-func (s *Store) GetCommand(ctx context.Context, id string) (*Command, error) {
+func (s *Store) GetCommand(ctx context.Context, id string) (*command.Command, error) {
 	return s.getCommand(ctx, s.db, id)
 }
 
 // SetCommandState records a lifecycle transition and its outcome.
-func (s *Store) SetCommandState(ctx context.Context, tx Execer, id string, state CommandState, result, errData json.RawMessage) error {
+func (s *Store) SetCommandState(ctx context.Context, tx Execer, id string, state command.State, result, errData json.RawMessage) error {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE commands
 		SET state = ?, result = ?, error = ?, updated_at = ?
@@ -77,9 +81,9 @@ func (s *Store) SetCommandState(ctx context.Context, tx Execer, id string, state
 // When the command id is already bound to a logical operation, the existing
 // record is returned and its events are not appended again. The bool reports
 // whether the operation was created by this call.
-func (s *Store) AcceptCommand(ctx context.Context, cmd *Command, evs []*Event) (*Command, bool, error) {
+func (s *Store) AcceptCommand(ctx context.Context, cmd *command.Command, evs []*event.Event) (*command.Command, bool, error) {
 	var (
-		stored  *Command
+		stored  *command.Command
 		created bool
 	)
 	err := s.WriteTx(ctx, func(tx Execer) error {
@@ -100,7 +104,7 @@ func (s *Store) AcceptCommand(ctx context.Context, cmd *Command, evs []*Event) (
 	return stored, created, nil
 }
 
-func (s *Store) getCommand(ctx context.Context, q Execer, id string) (*Command, error) {
+func (s *Store) getCommand(ctx context.Context, q Execer, id string) (*command.Command, error) {
 	row := q.QueryRowContext(ctx, `
 		SELECT id, actor, source_id, method, accepted_term, target, state, result, error, created_at, updated_at
 		FROM commands WHERE id = ?`, id)
@@ -114,37 +118,25 @@ func (s *Store) getCommand(ctx context.Context, q Execer, id string) (*Command, 
 	return cmd, nil
 }
 
-func validateCommand(cmd *Command) error {
-	switch {
-	case cmd == nil:
-		return errors.New("storage: nil command")
-	case cmd.ID == "":
-		return errors.New("storage: command id is required")
-	case cmd.Method == "":
-		return fmt.Errorf("storage: command %s: method is required", cmd.ID)
-	}
-	if cmd.State == "" {
-		cmd.State = CommandReceived
-	}
+func applyCommandTimestamps(cmd *command.Command) {
 	if cmd.CreatedAt.IsZero() {
 		cmd.CreatedAt = now()
 	}
 	if cmd.UpdatedAt.IsZero() {
 		cmd.UpdatedAt = cmd.CreatedAt
 	}
-	return nil
 }
 
-func scanCommand(row scanner) (*Command, error) {
+func scanCommand(row scanner) (*command.Command, error) {
 	var (
-		cmd    Command
-		source sql.NullString
-		term   sql.NullInt64
-		target sql.NullString
-		result sql.NullString
-		errCol sql.NullString
-		state  string
-		created,
+		cmd     command.Command
+		source  sql.NullString
+		term    sql.NullInt64
+		target  sql.NullString
+		result  sql.NullString
+		errCol  sql.NullString
+		state   string
+		created int64
 		updated int64
 	)
 	if err := row.Scan(&cmd.ID, &cmd.Actor, &source, &cmd.Method, &term, &target,
@@ -154,7 +146,7 @@ func scanCommand(row scanner) (*Command, error) {
 	cmd.SourceID = source.String
 	cmd.AcceptedTerm = term.Int64
 	cmd.Target = target.String
-	cmd.State = CommandState(state)
+	cmd.State = command.State(state)
 	if result.Valid {
 		cmd.Result = json.RawMessage(result.String)
 	}
