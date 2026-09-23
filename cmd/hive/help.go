@@ -75,7 +75,7 @@ var helpTable = []commandHelp{
 	{
 		path:    "service",
 		summary: "run the daemon in the background at login",
-		usage:   "hive service <install|uninstall|status>",
+		usage:   "hive service <install|restart|uninstall|status>",
 		details: []string{
 			"`install` writes a launchd agent on macOS and a systemd user unit on",
 			"Linux, copies the binaries next to the data directory, and writes the",
@@ -83,7 +83,11 @@ var helpTable = []commandHelp{
 			"Installing again over a running service restarts it, which is how a new",
 			"build is picked up.",
 		},
-		examples: []string{"hive service install", "hive service status"},
+		examples: []string{
+			"hive service install",
+			"hive service restart",
+			"hive service status",
+		},
 	},
 	{
 		path:    "session create",

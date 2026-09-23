@@ -8,12 +8,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	"github.com/thupham/hive/internal/logging"
 	"github.com/thupham/hive/plugins/acpbridge"
 	"github.com/thupham/hive/plugins/sdk"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
@@ -68,13 +68,18 @@ func run() error {
 	// The logger is what makes a restore that did not work visible. Without it the
 	// bridge discarded its own warnings, including the one that explains why an
 	// agent answered as if it had never spoken to the user before.
+	// The plugin's log goes where the installation's log goes, so a restore that
+	// did not work is visible in `hive logs` rather than only on a terminal.
+	log, closeLog := logging.NewForProcess()
+	defer closeLog()
+
 	bridge := acpbridge.New(host, acpbridge.CommandLauncher{
 		Command:       strings.Fields(*agentCommand),
 		ClientVersion: *version,
 	}, acpbridge.Options{
 		AuthMethod: *authMethod,
 		APIKey:     apiKey,
-		Log:        slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Log:        log,
 	})
 	bridge.Register()
 

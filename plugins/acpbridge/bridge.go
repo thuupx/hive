@@ -489,6 +489,13 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 		return nil, v1.Unavailable("agent prompt failed: %s", err.Error())
 	}
 
+	// The agent sends its updates before it answers the prompt, on the same stream,
+	// so when the prompt returns they are all in the channel — but the collector
+	// reads them in another goroutine and may not have finished. Publishing the
+	// answer before they arrive loses it, which is a turn that answered and said
+	// nothing.
+	b.settle(client, r)
+
 	// The turn is over, so the answer is complete.
 	b.publishAnswer(ctx, r)
 
@@ -830,6 +837,37 @@ func (b *Bridge) publish(update acp.Update) {
 	}
 	b.publishUpdate(r, update)
 }
+
+// settle waits until the agent's updates for this turn have been collected.
+//
+// The updates are already in the channel when the prompt returns, so this is a
+// matter of waiting for the collector to catch up: the channel is empty and the
+// answer has stopped growing. It is bounded, because a turn must not hang on a
+// collector that has stopped.
+func (b *Bridge) settle(client *acp.Client, r *run) {
+	deadline := time.Now().Add(settleTimeout)
+	last := -1
+
+	for time.Now().Before(deadline) {
+		b.mu.Lock()
+		size := r.answer.Len()
+		b.mu.Unlock()
+
+		if len(client.Updates()) == 0 && size == last {
+			return
+		}
+		last = size
+		time.Sleep(settleStep)
+	}
+}
+
+const (
+	// settleTimeout bounds how long a turn waits for its own updates.
+	settleTimeout = 3 * time.Second
+
+	// settleStep is how long to wait between checks.
+	settleStep = 10 * time.Millisecond
+)
 
 // collectAnswer accumulates the assistant text of a turn.
 //

@@ -334,7 +334,14 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	err := p.host.Call(ctx, v1.MethodTransportInbound, wireParams(d.envelope), &outcome)
 	if err != nil {
 		p.log.Warn("inbound delivery failed", "error", err)
-		p.post(ctx, d.conversationID, d.thread, textMessage(fmt.Sprintf(":warning: %s", err.Error())))
+
+		// The indicator is replaced rather than left behind: a clock that keeps
+		// ticking says the turn is still working, and it is not. Saying what
+		// happened is the honest end to it.
+		failure := textMessage(fmt.Sprintf(":warning: %s", err.Error()))
+		if !p.replaceTyping(ctx, d.conversationID, failure) {
+			p.post(ctx, d.conversationID, d.thread, failure)
+		}
 		return
 	}
 

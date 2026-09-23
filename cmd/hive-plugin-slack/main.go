@@ -13,13 +13,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/thupham/hive/internal/logging"
 	"github.com/thupham/hive/plugins/sdk"
 	"github.com/thupham/hive/plugins/slack"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
@@ -53,7 +53,8 @@ func run() error {
 
 	// The plugin does not link the core, so it logs with the standard library
 	// rather than the core logging package.
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log, closeLog := logging.NewForProcess()
+	defer closeLog()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

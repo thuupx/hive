@@ -34,6 +34,13 @@ func daemonLogger(cfg config.Config) (*slog.Logger, func()) {
 		return logging.New(os.Stderr, cfg.Log.Level, cfg.Log.Format), func() {}
 	}
 
+	// Every process this installation starts appends to the same file, so one log
+	// holds the daemon and the transports that speak for it, at the level the
+	// installation was configured with.
+	_ = os.Setenv(logging.LogFileEnv, file.Path())
+	_ = os.Setenv(logging.LogLevelEnv, cfg.Log.Level)
+	_ = os.Setenv(logging.LogFormatEnv, cfg.Log.Format)
+
 	// Both, because a daemon in a terminal should still say what it is doing there.
 	both := io.MultiWriter(os.Stderr, file)
 	return logging.New(both, cfg.Log.Level, cfg.Log.Format), func() { _ = file.Close() }

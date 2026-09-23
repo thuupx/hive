@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,5 +202,34 @@ func TestASuccessfulPromptPostsNoAcknowledgement(t *testing.T) {
 
 	if len(client.posted) != 1 {
 		t.Fatalf("posted %d message(s) in total, want one", len(client.posted))
+	}
+}
+
+// A delivery that fails replaces the indicator.
+//
+// Found in a live conversation: a restart killed a delivery, and the clock it had
+// posted kept ticking for the rest of its thirty minutes, saying the turn was
+// still working when it was not.
+func TestAFailedDeliveryReplacesTheIndicator(t *testing.T) {
+	client := &fakeClient{}
+	p := New(nil, client, Options{TypingIndicator: true})
+
+	p.startTyping(context.Background(), "C1", "")
+
+	// What the transport does when the delivery fails.
+	failure := textMessage(":warning: hive: connection closed")
+	if !p.replaceTyping(context.Background(), "C1", failure) {
+		t.Fatal("the failure should have replaced the indicator")
+	}
+
+	if len(client.updated) != 1 {
+		t.Fatalf("updated %d message(s), want one", len(client.updated))
+	}
+	if !strings.Contains(client.updated[0].Message.Text, "connection closed") {
+		t.Fatalf("the message is %q, want the failure", client.updated[0].Message.Text)
+	}
+	// And there is nothing left to tick.
+	if p.replaceTyping(context.Background(), "C1", failure) {
+		t.Fatal("there should be no indicator left")
 	}
 }

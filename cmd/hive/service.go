@@ -42,6 +42,8 @@ func runService(f flags, args []string) error {
 		return installService(f)
 	case "uninstall":
 		return uninstallService(f)
+	case "restart":
+		return restartService(f)
 	case "status":
 		return serviceStatus()
 	default:
@@ -442,6 +444,47 @@ func uninstallService(f flags) error {
 		fmt.Println("hive: run `hive service install` from a shell that has them to put them back")
 	}
 	return nil
+}
+
+// restartService stops and starts the daemon.
+//
+// Restarting is the normal thing to do after a new build, and doing it by
+// uninstalling and installing again takes the secrets with it. This keeps them.
+func restartService(f flags) error {
+	cfg, err := loadConfig(f)
+	if err != nil {
+		return err
+	}
+	dir, err := cfg.EffectiveDataDir()
+	if err != nil {
+		return err
+	}
+
+	// The binaries are copied at install, so the copy is refreshed first: the
+	// service runs the copy, and a restart that ran the old one would look like a
+	// new build that changed nothing.
+	if _, err := installBinary(dir); err != nil {
+		return err
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		if _, err := exec.Command("launchctl", "print", launchDomain()+"/"+serviceLabel).Output(); err != nil {
+			return errors.New("hive: the service is not loaded; run `hive service install`")
+		}
+		if out, err := exec.Command("launchctl", "kickstart", "-k", launchDomain()+"/"+serviceLabel).CombinedOutput(); err != nil {
+			return fmt.Errorf("hive: launchctl kickstart: %s: %w", strings.TrimSpace(string(out)), err)
+		}
+	case "linux":
+		if out, err := exec.Command("systemctl", "--user", "restart", serviceLabel+".service").CombinedOutput(); err != nil {
+			return fmt.Errorf("hive: systemctl restart: %s: %w", strings.TrimSpace(string(out)), err)
+		}
+	default:
+		return fmt.Errorf("hive: %s is not supported for service restart", runtime.GOOS)
+	}
+
+	fmt.Println("hive: the service is restarting")
+	return serviceStatus()
 }
 
 // serviceStatus reports whether the service is running.

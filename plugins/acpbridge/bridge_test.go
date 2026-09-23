@@ -146,6 +146,9 @@ type fakeAgent struct {
 	wg       sync.WaitGroup
 }
 
+// droppedUpdates is how many notifications the client could not take.
+func (a *fakeAgent) droppedUpdates() int64 { return 0 }
+
 // authCount is how many times the agent was asked to authenticate.
 func (a *fakeAgent) authCount() int {
 	a.mu.Lock()
