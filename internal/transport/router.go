@@ -160,7 +160,7 @@ func (r *Router) handleCommand(ctx context.Context, env v1.Envelope, principal c
 		return r.prompt(ctx, principal, commandID, env.SourceID, sessionID, joinArgs(env.Command.Args))
 
 	case v1.MethodSessionCancel:
-		sessionID, err := r.sessionFor(ctx, env)
+		sessionID, err := r.requireSession(ctx, env)
 		if err != nil {
 			return failed(commandID, apierr.From(err))
 		}
@@ -175,7 +175,7 @@ func (r *Router) handleCommand(ctx context.Context, env v1.Envelope, principal c
 		return &Outcome{Method: method, CommandID: commandID, SessionID: sessionID, Result: map[string]any{"cancelled": true}}
 
 	case v1.MethodSessionHandoff:
-		sessionID, err := r.sessionFor(ctx, env)
+		sessionID, err := r.requireSession(ctx, env)
 		if err != nil {
 			return failed(commandID, apierr.From(err))
 		}
@@ -202,7 +202,7 @@ func (r *Router) handleCommand(ctx context.Context, env v1.Envelope, principal c
 		}
 
 	case v1.MethodSessionConfig:
-		sessionID, err := r.sessionFor(ctx, env)
+		sessionID, err := r.sessionForOrCreate(ctx, env, principal, commandID)
 		if err != nil {
 			return failed(commandID, apierr.From(err))
 		}
@@ -225,7 +225,7 @@ func (r *Router) handleCommand(ctx context.Context, env v1.Envelope, principal c
 		}
 
 	case v1.MethodSessionStatus:
-		sessionID, err := r.sessionFor(ctx, env)
+		sessionID, err := r.sessionForOrCreate(ctx, env, principal, commandID)
 		if err != nil {
 			return failed(commandID, apierr.From(err))
 		}
@@ -236,7 +236,7 @@ func (r *Router) handleCommand(ctx context.Context, env v1.Envelope, principal c
 		return &Outcome{Method: method, CommandID: commandID, SessionID: sessionID, Result: result}
 
 	case v1.MethodSessionEvents:
-		sessionID, err := r.sessionFor(ctx, env)
+		sessionID, err := r.sessionForOrCreate(ctx, env, principal, commandID)
 		if err != nil {
 			return failed(commandID, apierr.From(err))
 		}
@@ -332,20 +332,8 @@ func (r *Router) handleMessage(ctx context.Context, env v1.Envelope, principal c
 
 	commandID := r.commandID(env, v1.MethodSessionPrompt)
 
-	sessionID, err := r.sessionFor(ctx, env)
-	if errors.Is(err, storage.ErrNotFound) {
-		created, createErr := r.control.CreateSession(ctx, principal, v1.SessionCreateParams{
-			CommandID: commandID + ":session",
-			SourceID:  env.SourceID,
-		})
-		if createErr != nil {
-			return failed(commandID, apierr.From(createErr))
-		}
-		if err := r.bind(ctx, env, created.SessionID); err != nil {
-			r.log.Warn("conversation could not be bound", "conversation", env.ConversationID, "error", err)
-		}
-		sessionID = created.SessionID
-	} else if err != nil {
+	sessionID, err := r.sessionForOrCreate(ctx, env, principal, commandID)
+	if err != nil {
 		return failed(commandID, apierr.From(err))
 	}
 
@@ -477,6 +465,47 @@ func (r *Router) sessionFor(ctx context.Context, env v1.Envelope) (string, error
 		return "", err
 	}
 	return binding.SessionID, nil
+}
+
+// requireSession is the session of a conversation that must already exist.
+//
+// A command that would be meaningless on a conversation nobody has started says so
+// in words a user can act on, rather than reporting a missing row.
+func (r *Router) requireSession(ctx context.Context, env v1.Envelope) (string, error) {
+	sessionID, err := r.sessionFor(ctx, env)
+	if errors.Is(err, storage.ErrNotFound) {
+		return "", v1.NotFound("no conversation here yet; send a message to start one")
+	}
+	return sessionID, err
+}
+
+// sessionForOrCreate is the session of a conversation, starting one if this is the
+// first thing said in it.
+//
+// A message starts a conversation, and so does a command that acts on one: a user
+// who sets the mode before asking anything is setting up the conversation they are
+// about to have, and refusing them because they have not spoken yet is a rule with
+// no reason behind it.
+func (r *Router) sessionForOrCreate(ctx context.Context, env v1.Envelope, principal control.Principal, commandID string) (string, error) {
+	sessionID, err := r.sessionFor(ctx, env)
+	if err == nil {
+		return sessionID, nil
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return "", err
+	}
+
+	created, createErr := r.control.CreateSession(ctx, principal, v1.SessionCreateParams{
+		CommandID: commandID + ":session",
+		SourceID:  env.SourceID,
+	})
+	if createErr != nil {
+		return "", createErr
+	}
+	if err := r.bind(ctx, env, created.SessionID); err != nil {
+		r.log.Warn("conversation could not be bound", "conversation", env.ConversationID, "error", err)
+	}
+	return created.SessionID, nil
 }
 
 // bind records that a conversation belongs to a session.

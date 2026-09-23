@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -595,4 +596,65 @@ func startStackWithTransportFollowedBy(t *testing.T, first, second v1.TransportI
 	t.Setenv("HIVE_TEST_TRANSPORT_2", string(encoded))
 
 	return startStackWithTransport(t, first)
+}
+
+// A command that acts on a conversation starts it when it does not exist yet.
+//
+// Found by setting the mode in a new Slack thread: every command needed a binding
+// and none existed, so the answer was a storage error. A user who chooses how a
+// conversation runs before saying anything is setting up the conversation they are
+// about to have.
+func TestACommandStartsTheConversationItActsOn(t *testing.T) {
+	store, outcome, callErr := startStackWithTransport(t, v1.TransportInboundParams{
+		Transport:      "slack",
+		ConversationID: "C123:1700000000.000100",
+		Principal:      "slack:U123",
+		SourceID:       "event:C123:1700000000.000200",
+		Kind:           "command",
+		Command:        "mode",
+		Method:         v1.MethodSessionConfig,
+		Args:           []string{"ask"},
+	})
+
+	if callErr != nil {
+		t.Fatalf("transport delivery failed: %v", callErr)
+	}
+	if outcome.Error != nil {
+		t.Fatalf("the command failed: %s", outcome.Error.Message)
+	}
+	if outcome.SessionID == "" {
+		t.Fatal("the command should have started a conversation")
+	}
+
+	// The conversation is bound, so the next thing said in it is the same one.
+	binding, err := store.GetBinding(context.Background(), "slack", "C123:1700000000.000100")
+	if err != nil {
+		t.Fatalf("the conversation was not bound: %v", err)
+	}
+	if binding.SessionID != outcome.SessionID {
+		t.Fatalf("bound to %q, want %q", binding.SessionID, outcome.SessionID)
+	}
+}
+
+// A command that would be meaningless on an empty conversation says so.
+func TestACancelWithNoConversationSaysSo(t *testing.T) {
+	_, outcome, callErr := startStackWithTransport(t, v1.TransportInboundParams{
+		Transport:      "slack",
+		ConversationID: "C123:nothing",
+		Principal:      "slack:U123",
+		SourceID:       "event:C123:nothing",
+		Kind:           "command",
+		Command:        "cancel",
+		Method:         v1.MethodSessionCancel,
+	})
+
+	if callErr != nil {
+		t.Fatalf("transport delivery failed: %v", callErr)
+	}
+	if outcome.Error == nil {
+		t.Fatal("cancelling nothing should not succeed")
+	}
+	if !strings.Contains(outcome.Error.Message, "no conversation here yet") {
+		t.Fatalf("the error says %q, which a user cannot act on", outcome.Error.Message)
+	}
 }
