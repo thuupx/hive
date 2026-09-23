@@ -31,6 +31,7 @@ var methodCapability = map[string]string{
 	v1.MethodExecutionPrompt:   v1.CapabilityExecutionWrite,
 	v1.MethodExecutionCancel:   v1.CapabilityExecutionWrite,
 	v1.MethodExecutionReport:   v1.CapabilityExecutionWrite,
+	v1.MethodTransportInbound:  v1.CapabilityTransportInbound,
 }
 
 // grantable is what each plugin type may ever be granted.
@@ -40,12 +41,13 @@ var methodCapability = map[string]string{
 // grant.
 var grantable = map[v1.PluginType]map[string]bool{
 	v1.PluginTypeTransport: {
-		v1.CapabilitySessionRead:     true,
-		v1.CapabilitySessionWrite:    true,
-		v1.CapabilityAgentRead:       true,
-		v1.CapabilityEventRead:       true,
-		v1.CapabilityPermissionRead:  true,
-		v1.CapabilityPermissionWrite: true,
+		v1.CapabilitySessionRead:      true,
+		v1.CapabilitySessionWrite:     true,
+		v1.CapabilityAgentRead:        true,
+		v1.CapabilityEventRead:        true,
+		v1.CapabilityPermissionRead:   true,
+		v1.CapabilityPermissionWrite:  true,
+		v1.CapabilityTransportInbound: true,
 	},
 	v1.PluginTypeAgent: {
 		v1.CapabilityEventWrite:      true,

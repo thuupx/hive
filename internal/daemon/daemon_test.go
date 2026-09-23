@@ -29,11 +29,16 @@ const (
 // The test binary doubles as the agent plugin process, so the whole stack runs
 // without a build step or a fixture binary.
 func TestMain(m *testing.M) {
-	if os.Getenv("HIVE_TEST_AGENT") != "" {
+	switch {
+	case os.Getenv("HIVE_TEST_AGENT") != "":
 		runTestAgent()
 		return
+	case os.Getenv("HIVE_TEST_TRANSPORT") != "":
+		runTestTransport()
+		return
+	default:
+		os.Exit(m.Run())
 	}
-	os.Exit(m.Run())
 }
 
 func runTestAgent() {

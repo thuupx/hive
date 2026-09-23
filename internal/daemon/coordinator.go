@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/thupham/hive/internal/agent"
@@ -22,6 +23,7 @@ import (
 	"github.com/thupham/hive/internal/permission"
 	"github.com/thupham/hive/internal/plugin"
 	"github.com/thupham/hive/internal/storage"
+	"github.com/thupham/hive/internal/transport"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
@@ -47,6 +49,9 @@ type CoordinatorOptions struct {
 	// ControlSocket enables the local Control API when set. The socket is
 	// owner-only, so the caller is authenticated by the operating system.
 	ControlSocket string
+
+	// TransportPlugins are the transport plugins this coordinator runs.
+	TransportPlugins []plugin.Spec
 }
 
 // Coordinator is the control plane.
@@ -61,10 +66,16 @@ type Coordinator struct {
 	certificate tls.Certificate
 	listen      string
 
-	control         *control.Service
-	gateway         *control.Gateway
-	controlSocket   string
-	controlListener net.Listener
+	transportPlugins []plugin.Spec
+	control          *control.Service
+	gateway          *control.Gateway
+	controlSocket    string
+	controlListener  net.Listener
+
+	// routers are per-transport and created on first use, because a transport
+	// only exists once its plugin connects.
+	mu      sync.Mutex
+	routers map[string]*transport.Router
 
 	listener   net.Listener
 	httpServer *http.Server
@@ -90,13 +101,15 @@ func NewCoordinator(opts CoordinatorOptions) (*Coordinator, error) {
 	nodeServer.Store = executionStore{store: opts.Store}
 
 	c := &Coordinator{
-		log:        log,
-		store:      opts.Store,
-		bus:        bus,
-		publisher:  eventbus.NewPublisher(bus, opts.Store),
-		supervisor: supervisor,
-		events:     events,
-		nodeServer: nodeServer,
+		log:              log,
+		store:            opts.Store,
+		bus:              bus,
+		publisher:        eventbus.NewPublisher(bus, opts.Store),
+		supervisor:       supervisor,
+		events:           events,
+		nodeServer:       nodeServer,
+		routers:          make(map[string]*transport.Router),
+		transportPlugins: opts.TransportPlugins,
 	}
 
 	service, err := control.New(control.Options{
@@ -117,6 +130,28 @@ func NewCoordinator(opts CoordinatorOptions) (*Coordinator, error) {
 	nodeServer.Handle(v1.MethodEventPublish, c.handleEventPublish)
 	nodeServer.Handle(v1.MethodPermissionRequest, c.handlePermissionRequest)
 	nodeServer.Handle(v1.MethodExecutionReport, c.handleExecutionReport)
+
+	// A transport plugin invokes Control API operations through the plugin link.
+	// The acting principal comes from the connection: the plugin is trusted for
+	// its own transport, so it may assert a principal of that transport and
+	// nothing else.
+	for _, method := range []string{
+		v1.MethodSessionCreate,
+		v1.MethodSessionPrompt,
+		v1.MethodSessionCancel,
+		v1.MethodSessionStatus,
+		v1.MethodSessionList,
+		v1.MethodSessionEvents,
+		v1.MethodAgentList,
+		v1.MethodNodeList,
+		v1.MethodCommandGet,
+	} {
+		supervisor.Handle(method, c.pluginControlHandler)
+	}
+
+	// A transport hands normalized inbound input to Hive, which owns the
+	// operation semantics.
+	supervisor.Handle(v1.MethodTransportInbound, c.handleTransportInbound)
 
 	if opts.Certificate.Certificate == nil {
 		return nil, errors.New("daemon: coordinator requires a TLS certificate")
@@ -155,6 +190,16 @@ func (c *Coordinator) Start(ctx context.Context) error {
 			c.log.Error("coordinator node listener stopped", "error", err)
 		}
 	}()
+
+	for _, spec := range c.transportPlugins {
+		if _, err := c.supervisor.Start(ctx, spec); err != nil {
+			// A transport that cannot start must not stop the coordinator:
+			// unrelated sessions keep running.
+			c.log.Error("transport plugin could not start", "plugin", spec.ID, "error", err)
+			continue
+		}
+		c.log.Info("transport plugin ready", "plugin", spec.ID)
+	}
 
 	c.publisher.OnError = func(err error) {
 		c.log.Warn("event publication failed", "error", err)
@@ -221,6 +266,137 @@ func (c *Coordinator) Close() error {
 		return c.httpServer.Close()
 	}
 	return nil
+}
+
+// pluginControlHandler routes a transport plugin's call into the Control API.
+func (c *Coordinator) pluginControlHandler(ctx context.Context, call plugin.Call) (any, error) {
+	req := &v1.Message{
+		JSONRPC: v1.JSONRPCVersion,
+		Method:  call.Method,
+		Params:  call.Params,
+	}
+
+	// The plugin id is the transport name, so a plugin may assert a principal of
+	// its own transport and nothing else.
+	transport := call.Instance.PluginID
+	conn := control.Connection{
+		Principal: control.Principal(call.Instance.PluginID),
+		Transport: transport,
+	}
+
+	actor := ""
+	if call.Actor != "" {
+		actor = call.Actor
+	}
+	principal, err := conn.ActingPrincipal(actor)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.gateway.HandleAs(ctx, principal, req)
+}
+
+// handleTransportInbound routes a normalized inbound delivery.
+func (c *Coordinator) handleTransportInbound(ctx context.Context, call plugin.Call) (any, error) {
+	var params v1.TransportInboundParams
+	if err := json.Unmarshal(call.Params, &params); err != nil {
+		return nil, v1.InvalidParams("invalid transport.inbound request")
+	}
+
+	// A plugin speaks only for its own transport, so a transport cannot deliver
+	// input on behalf of another one.
+	if params.Transport != call.Instance.PluginID {
+		return nil, v1.Unauthorized("plugin %s may not speak for transport %s",
+			call.Instance.PluginID, params.Transport)
+	}
+
+	// The plugin is trusted for its own transport, so it may assert a principal
+	// for the user it authenticated — but only one of that transport.
+	assertion := control.TransportAssertion{
+		Transport: params.Transport,
+		Principal: control.Principal(params.Principal),
+	}
+	if err := assertion.Validate(); err != nil {
+		return nil, err
+	}
+
+	router, err := c.routerFor(params.Transport)
+	if err != nil {
+		return nil, apierr.From(err)
+	}
+
+	outcome := router.Handle(ctx, envelopeOf(params))
+	return wireOutcome(outcome)
+}
+
+// routerFor returns the router for a transport, creating it on first use.
+func (c *Coordinator) routerFor(name string) (*transport.Router, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if router, ok := c.routers[name]; ok {
+		return router, nil
+	}
+
+	router, err := transport.NewRouter(transport.RouterOptions{
+		Transport: name,
+		Control:   c.control,
+		Store:     c.store,
+		Nodes:     c.nodeServer,
+		Log:       c.log,
+	})
+	if err != nil {
+		return nil, err
+	}
+	c.routers[name] = router
+	return router, nil
+}
+
+func envelopeOf(params v1.TransportInboundParams) v1.Envelope {
+	env := v1.Envelope{
+		Transport:      params.Transport,
+		ConversationID: params.ConversationID,
+		Principal:      params.Principal,
+		SourceID:       params.SourceID,
+		Kind:           v1.EnvelopeKind(params.Kind),
+	}
+
+	switch env.Kind {
+	case v1.EnvelopeMessage:
+		env.Message = &v1.IncomingMessage{Text: params.Text}
+	case v1.EnvelopeCommand:
+		env.Command = &v1.IncomingCommand{
+			Name:   params.Command,
+			Method: params.Method,
+			Args:   params.Args,
+		}
+	case v1.EnvelopeInteraction:
+		env.Interaction = &v1.IncomingInteraction{
+			Action: params.Action,
+			Value:  params.Value,
+		}
+	}
+	return env
+}
+
+func wireOutcome(outcome *transport.Outcome) (v1.TransportOutcome, error) {
+	wire := v1.TransportOutcome{
+		Method:    outcome.Method,
+		CommandID: outcome.CommandID,
+		SessionID: outcome.SessionID,
+		RunID:     outcome.RunID,
+		Created:   outcome.Created,
+		Error:     outcome.Err,
+	}
+
+	if outcome.Result != nil {
+		encoded, err := json.Marshal(outcome.Result)
+		if err != nil {
+			return wire, v1.Internal("the outcome could not be encoded")
+		}
+		wire.Result = encoded
+	}
+	return wire, nil
 }
 
 // handleEventPublish makes a node-produced event durable.

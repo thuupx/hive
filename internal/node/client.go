@@ -27,6 +27,9 @@ type Executor interface {
 	Start(ctx context.Context, req v1.ExecutionStartParams) (runtimeSessionID string, err error)
 	Prompt(ctx context.Context, req v1.ExecutionPromptParams) error
 	Cancel(ctx context.Context, req v1.ExecutionCancelParams) error
+
+	// Respond relays a permission decision to the agent that asked for it.
+	Respond(ctx context.Context, req v1.PermissionRespondParams) error
 }
 
 // Options configures a node.
@@ -398,6 +401,22 @@ func (c *Client) handleRequest(ctx context.Context, peer *v1.Peer, req *v1.Messa
 			return
 		}
 		if err := c.opts.Executor.Cancel(ctx, params); err != nil {
+			_ = peer.RespondError(id, v1.AsError(err))
+			return
+		}
+		_ = peer.Respond(id, map[string]any{"ok": true})
+
+	case v1.MethodPermissionRespond:
+		var params v1.PermissionRespondParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			_ = peer.RespondError(id, v1.InvalidParams("invalid permission.respond request"))
+			return
+		}
+		if c.opts.Executor == nil {
+			_ = peer.RespondError(id, v1.Unavailable("node has no executor"))
+			return
+		}
+		if err := c.opts.Executor.Respond(ctx, params); err != nil {
 			_ = peer.RespondError(id, v1.AsError(err))
 			return
 		}

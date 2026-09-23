@@ -150,6 +150,15 @@ func (h *Host) Call(ctx context.Context, method string, params, result any) erro
 	return h.peer.Call(ctx, method, params, result)
 }
 
+// CallAs invokes a core method while asserting a principal.
+//
+// Only a trusted transport may assert a principal, and only one that belongs to
+// its own transport. The core validates the assertion, so naming a principal is
+// never enough on its own.
+func (h *Host) CallAs(ctx context.Context, actor, method string, params, result any) error {
+	return h.peer.CallWithMeta(ctx, &v1.Meta{Actor: actor}, method, params, result)
+}
+
 // Subscribe asks the core to deliver events.
 func (h *Host) Subscribe(ctx context.Context, req v1.SubscribeRequest) (v1.SubscribeResponse, error) {
 	var resp v1.SubscribeResponse

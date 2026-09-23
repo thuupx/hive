@@ -111,6 +111,13 @@ type AgentConfig struct {
 
 // TransportConfig holds per-transport presentation configuration.
 type TransportConfig struct {
+	// Enabled starts this transport as a plugin process.
+	Enabled bool `toml:"enabled"`
+
+	// Options are passed to the transport plugin as opaque key/value arguments,
+	// so Hive core holds no vendor-specific configuration fields.
+	Options map[string]string `toml:"options"`
+
 	Acknowledgement AcknowledgementConfig `toml:"acknowledgement"`
 }
 

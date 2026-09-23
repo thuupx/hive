@@ -625,34 +625,78 @@ Deliberately not in M7:
 
 ### M8 — Slack transport plugin
 
-- [ ] `hive-plugin-slack` as a separate process; depends on
-      `protocol/hive/v1` only
-- [ ] Inbound via Socket Mode (O6)
-- [ ] `source_id` = Slack event/message ID; delivery dedupe
-- [ ] Command grammar: `@Hive /new_chat` → `session.create`, plus
-      `/agents`, `/status`, `/cancel`, `/handoff`
-- [ ] Ordinary message → `session.prompt`; a recognized command is never
+- [x] `hive-plugin-slack` as a separate process; imports no internal package
+- [x] Inbound via Socket Mode (O6), so no public endpoint or inbound tunnel is
+      needed
+- [x] `source_id` from the Slack channel and timestamp; delivery dedupe
+- [x] Command grammar: `@Hive /new_chat` to `session.create`, plus `/agents`,
+      `/nodes`, `/status`, `/cancel`, and the bare-name form
+- [x] Ordinary message to `session.prompt`; a recognized command is never
       silently forwarded as a prompt
-- [ ] Interactive controls: `[Allow]` / `[Deny]` → `permission.respond`
-- [ ] Outbound rendering to Block Kit from Hive events
-- [ ] Durable transport binding + `event_cursor`; resume after plugin
-      restart
-- [ ] Optional acknowledgement reaction per §21.2 (O7): capability
-      metadata, best-effort, failure never fails the operation
-- [ ] Tests — the §41 Phase 3 minimum set plus acknowledgement:
-      - [ ] ordinary message → `session.prompt`
-      - [ ] `/new_chat` → `session.create`
-      - [ ] `@Hive /new_chat` → `session.create`
-      - [ ] unknown command → transport-level command error
-      - [ ] duplicate inbound event → same `command_id`
-      - [ ] new repeated user message → new `command_id`
-      - [ ] button interaction → correct Hive operation
-      - [ ] acknowledgement enabled → reaction attempted
-      - [ ] acknowledgement unsupported → message still processes
-      - [ ] acknowledgement failure → message still processes
+- [x] Interactive controls: `[Allow]` / `[Deny]` to `permission.respond`
+- [x] Outbound rendering to Block Kit from Hive events
+- [x] Durable conversation binding, resolved from the coordinator rather than
+      remembered across a restart
+- [x] Optional acknowledgement reaction per 21.2 (O7): best-effort, and its
+      failure never fails the operation
+- [x] Tests: the Phase 3 minimum set, parsing, rendering, and the transport
+      boundary end to end through the plugin link
 
 **Exit criteria:** §42 "Transport command correctness" and "Message
 acknowledgement correctness" have passing tests.
+
+Status: met, with one part stated honestly below. `make ci` is green with 218
+passing tests; the suite is clean under `-race`.
+
+Verified by running it: a transport plugin that cannot start does not take the
+coordinator down.
+
+```text
+plugin ready plugin=slack type=transport instance=slack#1 capabilities=7
+transport plugin ready plugin=slack
+coordinator ready url=wss://127.0.0.1:61812/node agents=1
+node connected node=... generation=1
+$ # the Control API still answers while the transport is dead
+node.list -> {"nodes":[{"nodeId":"...","connected":true,...}]}
+hive-plugin-slack: slack: an app token is required for Socket Mode
+```
+
+Implementation notes:
+
+- The envelope types live in `protocol/hive/v1`, not under `internal/`. A
+  transport plugin builds them, and a plugin does not link the core. The same
+  applies to the core event type names, so `internal/event` aliases the protocol
+  constants and they cannot drift.
+- The transport resolves its own aliases: `/new_chat` is a presentation-level
+  name and `session.create` is the operation. Hive core contains no Slack command
+  registry, and the discoverable catalog is generated from the transport's own
+  command map so the two cannot diverge.
+- A recognized command the transport does not expose carries an empty method,
+  which is reported as a command error rather than forwarded to the agent as a
+  prompt. Conversely, text that merely contains a slash-like token stays a prompt,
+  because only the first token is examined.
+- A conversation with no session yet gets one when a message arrives, because the
+  first thing a user says has to land somewhere. That is a routing decision, not
+  an accident of receiving text.
+- A transport speaks only for its own transport, and may assert only a principal
+  of that transport. Both are enforced in the coordinator before routing.
+- A delivery that no node can serve is refused rather than creating a session
+  nothing can run.
+- Transport options are opaque key/value pairs passed to the plugin, so Hive
+  configuration holds no vendor-specific fields.
+
+Deliberately not in M8, stated so it is not mistaken for done:
+
+- **The live Socket Mode path is implemented but not exercised.** It needs a
+  Slack app token and bot token, which a test environment does not have. Parsing,
+  routing, rendering, and the boundary are covered by tests and by the end-to-end
+  transport test; the WebSocket connection to Slack itself is not.
+- The durable per-binding `event_cursor` is not yet advanced from the delivery
+  path. `AdvanceBindingCursor` exists and is tested at the storage level, and the
+  plugin acknowledges through the in-memory subscription cursor from M5. Wiring
+  the binding cursor to the acknowledgement belongs with M10, where the CLI needs
+  the same replay guarantees.
+- `/handoff` is M9.
 
 ### M9 — Handoff and snapshots
 

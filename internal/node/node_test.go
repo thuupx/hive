@@ -15,10 +15,11 @@ import (
 )
 
 type fakeExecutor struct {
-	mu      sync.Mutex
-	started []v1.ExecutionStartParams
-	prompts []v1.ExecutionPromptParams
-	cancels []v1.ExecutionCancelParams
+	mu        sync.Mutex
+	started   []v1.ExecutionStartParams
+	prompts   []v1.ExecutionPromptParams
+	cancels   []v1.ExecutionCancelParams
+	responses []v1.PermissionRespondParams
 }
 
 func (f *fakeExecutor) Start(_ context.Context, req v1.ExecutionStartParams) (string, error) {
@@ -39,6 +40,13 @@ func (f *fakeExecutor) Cancel(_ context.Context, req v1.ExecutionCancelParams) e
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cancels = append(f.cancels, req)
+	return nil
+}
+
+func (f *fakeExecutor) Respond(_ context.Context, req v1.PermissionRespondParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.responses = append(f.responses, req)
 	return nil
 }
 

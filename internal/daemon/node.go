@@ -363,3 +363,11 @@ func (e *pluginExecutor) Cancel(ctx context.Context, req v1.ExecutionCancelParam
 	}
 	return inst.Call(ctx, v1.MethodExecutionCancel, req, nil)
 }
+
+func (e *pluginExecutor) Respond(ctx context.Context, req v1.PermissionRespondParams) error {
+	inst, err := e.instance()
+	if err != nil {
+		return err
+	}
+	return inst.Call(ctx, v1.MethodPermissionRespond, req, nil)
+}

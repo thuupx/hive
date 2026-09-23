@@ -100,6 +100,20 @@ is an example of the internal form.
   newer one. Use `Store.UpdateAgentRunWith` rather than loading, mutating, and
   calling `UpdateAgentRun`.
 
+### Transports
+
+- A transport owns presentation; Hive owns semantics. A transport resolves its
+  own aliases (`/new_chat`) to Hive methods (`session.create`) before handing a
+  normalized envelope over. Hive core must never contain a platform command
+  registry.
+- The transport envelope and the core event type names live in
+  `protocol/hive/v1`, because a transport plugin builds them and a plugin does
+  not link the core. `internal/event` aliases the protocol event constants.
+- A transport speaks only for its own transport and may assert only a principal
+  of that transport. Both are enforced in the coordinator before routing.
+- Transport options reach the plugin as opaque key/value pairs, so Hive
+  configuration holds no vendor-specific fields.
+
 ### Layering
 
 Domain packages own the entity types; storage is an adapter over them.

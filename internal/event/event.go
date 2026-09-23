@@ -8,6 +8,8 @@ package event
 import (
 	"encoding/json"
 	"time"
+
+	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
 // Core event families.
@@ -17,15 +19,15 @@ import (
 // notifications stay protocol-native and travel as TypeAgentRaw unless Hive
 // itself needs to act on them.
 const (
-	TypeMessage             = "message"
-	TypeStatus              = "status"
-	TypeRunStarted          = "run.started"
-	TypeRunFinished         = "run.finished"
-	TypePermissionRequested = "permission.requested"
-	TypePermissionResponded = "permission.responded"
-	TypeHandoffCreated      = "handoff.created"
-	TypeError               = "error"
-	TypeAgentRaw            = "agent.raw"
+	TypeMessage             = v1.EventMessage
+	TypeStatus              = v1.EventStatus
+	TypeRunStarted          = v1.EventRunStarted
+	TypeRunFinished         = v1.EventRunFinished
+	TypePermissionRequested = v1.EventPermissionRequested
+	TypePermissionResponded = v1.EventPermissionResponded
+	TypeHandoffCreated      = v1.EventHandoffCreated
+	TypeError               = v1.EventError
+	TypeAgentRaw            = v1.EventAgentRaw
 )
 
 // Event is a durable event on a session stream.

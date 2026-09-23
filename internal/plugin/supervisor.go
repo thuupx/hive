@@ -48,6 +48,12 @@ type Call struct {
 	Instance *Instance
 	Method   string
 	Params   json.RawMessage
+
+	// Actor is the principal the plugin asserted, when it asserted one.
+	//
+	// It is advisory. The connection decides what the plugin may assert, so the
+	// string alone never grants authority.
+	Actor string
 }
 
 // Instance is one live plugin process.
@@ -433,7 +439,12 @@ func (s *Supervisor) handleRequest(inst *Instance, req *v1.Message) {
 		return
 	}
 
-	result, err := h(context.Background(), Call{Instance: inst, Method: req.Method, Params: req.Params})
+	result, err := h(context.Background(), Call{
+		Instance: inst,
+		Method:   req.Method,
+		Params:   req.Params,
+		Actor:    actorOf(req),
+	})
 	if err != nil {
 		_ = inst.peer.RespondError(id, v1.AsError(err))
 		return
@@ -490,6 +501,13 @@ func (s *Supervisor) watch(m *managed, cmd *exec.Cmd, procDone chan struct{}) {
 			s.log.Error("plugin restart failed", "plugin", m.spec.ID, "error", err)
 		}
 	}()
+}
+
+func actorOf(req *v1.Message) string {
+	if req.Meta == nil {
+		return ""
+	}
+	return req.Meta.Actor
 }
 
 func validateSpec(spec Spec) error {

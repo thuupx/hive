@@ -93,6 +93,14 @@ func (p *Peer) Err() error {
 
 // Call sends a request and waits for its response.
 func (p *Peer) Call(ctx context.Context, method string, params, result any) error {
+	return p.CallWithMeta(ctx, nil, method, params, result)
+}
+
+// CallWithMeta sends a request carrying Hive context and waits for its response.
+//
+// Meta carries the claimed actor and other context. It is additive to the
+// envelope, and the receiver must not treat a claimed actor as proof of identity.
+func (p *Peer) CallWithMeta(ctx context.Context, meta *Meta, method string, params, result any) error {
 	id := p.allocID()
 	ch := make(chan *Message, 1)
 
@@ -113,6 +121,9 @@ func (p *Peer) Call(ctx context.Context, method string, params, result any) erro
 	req, err := NewRequest(NumberID(id), method, params)
 	if err != nil {
 		return err
+	}
+	if meta != nil {
+		req.WithMeta(meta)
 	}
 	if err := p.write(req); err != nil {
 		return err

@@ -70,7 +70,15 @@ func (g *Gateway) Handle(ctx context.Context, conn Connection, req *v1.Message) 
 	if err != nil {
 		return nil, err
 	}
+	return g.HandleAs(ctx, principal, req)
+}
 
+// HandleAs serves one request as an already-resolved principal.
+//
+// A caller that established the principal itself — a trusted transport that
+// validated its own assertion, for instance — uses this instead of Handle, which
+// resolves the principal from the connection.
+func (g *Gateway) HandleAs(ctx context.Context, principal Principal, req *v1.Message) (any, error) {
 	switch req.Method {
 	case v1.MethodSessionCreate:
 		var params v1.SessionCreateParams

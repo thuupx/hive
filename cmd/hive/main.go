@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -253,14 +254,15 @@ func serveCoordinator(ctx context.Context, cfgPath string, cfg config.Config, lo
 	}
 
 	coordinator, err := daemon.NewCoordinator(daemon.CoordinatorOptions{
-		Store:         store,
-		Log:           log,
-		Listen:        cfg.Cluster.Listen,
-		Certificate:   cert,
-		Agents:        agentNames,
-		DefaultAgent:  defaultAgent,
-		AllowedUsers:  cfg.Security.AllowedUsers,
-		ControlSocket: filepath.Join(dataDir, control.SocketFile),
+		Store:            store,
+		Log:              log,
+		Listen:           cfg.Cluster.Listen,
+		Certificate:      cert,
+		Agents:           agentNames,
+		DefaultAgent:     defaultAgent,
+		AllowedUsers:     cfg.Security.AllowedUsers,
+		ControlSocket:    filepath.Join(dataDir, control.SocketFile),
+		TransportPlugins: transportPluginSpecs(cfg),
 	})
 	if err != nil {
 		return err
@@ -424,6 +426,66 @@ func agentPluginSpecs(cfg config.Config) ([]plugin.Spec, error) {
 		})
 	}
 	return specs, nil
+}
+
+// transportPluginSpecs turns the enabled transports into plugin process specs.
+//
+// Options are passed through opaquely, so Hive core holds no vendor-specific
+// configuration fields: a transport plugin decides what its own options mean.
+func transportPluginSpecs(cfg config.Config) []plugin.Spec {
+	dir := pluginDir()
+
+	names := make([]string, 0, len(cfg.Transports))
+	for name, transport := range cfg.Transports {
+		if transport.Enabled {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	specs := make([]plugin.Spec, 0, len(names))
+	for _, name := range names {
+		transport := cfg.Transports[name]
+
+		options := make(map[string]string, len(transport.Options)+2)
+		for key, value := range transport.Options {
+			options[key] = value
+		}
+		if transport.Acknowledgement.Enabled {
+			options["acknowledgement"] = "true"
+			options["acknowledgement_reaction"] = transport.Acknowledgement.Reaction
+		}
+
+		command := []string{
+			filepath.Join(dir, "hive-plugin-"+name),
+			"-id", name,
+			"-version", Version,
+		}
+		for _, key := range sortedKeys(options) {
+			if value := options[key]; value != "" {
+				command = append(command, "-option", key+"="+value)
+			}
+		}
+
+		specs = append(specs, plugin.Spec{
+			ID:           name,
+			Type:         v1.PluginTypeTransport,
+			Version:      Version,
+			Command:      command,
+			MaxRestarts:  3,
+			RestartDelay: time.Second,
+		})
+	}
+	return specs
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // pluginDir resolves where the plugin binaries live.
