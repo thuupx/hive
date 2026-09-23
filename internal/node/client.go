@@ -237,7 +237,9 @@ func (c *Client) session(ctx context.Context, url string, tlsConfig *tls.Config)
 			if !ok {
 				return peer.Err()
 			}
-			c.handleRequest(sessionCtx, peer, req)
+			// A prompt runs for the whole turn, so handling requests one at a time
+			// would block a cancel or a permission response behind it.
+			go c.handleRequest(sessionCtx, peer, req)
 		case _, ok := <-peer.Notifications():
 			if !ok {
 				return peer.Err()

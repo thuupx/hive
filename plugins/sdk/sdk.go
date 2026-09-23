@@ -199,7 +199,11 @@ func (h *Host) Run(ctx context.Context) error {
 			if !ok {
 				return closedOr(h.peer.Err())
 			}
-			h.handleRequest(ctx, req)
+			// A handler may run for minutes: an agent turn does. Handling requests
+			// one at a time would block everything else until the turn ended, so a
+			// cancel or a permission response could never be processed — and a turn
+			// that asks for permission would wait for an answer that cannot arrive.
+			go h.handleRequest(ctx, req)
 		case note, ok := <-h.peer.Notifications():
 			if !ok {
 				return closedOr(h.peer.Err())
