@@ -425,12 +425,22 @@ func uninstallService(f flags) error {
 		return fmt.Errorf("hive: %s is not supported for service uninstall", runtime.GOOS)
 	}
 
-	// The secrets exist for the service, so they go with it.
-	if err := os.Remove(filepath.Join(dir, serviceEnvFile)); err != nil && !os.IsNotExist(err) {
+	// The secrets exist for the service, so they go with it. Saying so matters:
+	// installing again afterwards needs them, and a user who is not told will
+	// wonder why the daemon started without its tokens.
+	envPath := filepath.Join(dir, serviceEnvFile)
+	removedSecrets := false
+	if err := os.Remove(envPath); err == nil {
+		removedSecrets = true
+	} else if !os.IsNotExist(err) {
 		return err
 	}
 
 	fmt.Println("hive: the service is removed")
+	if removedSecrets {
+		fmt.Printf("hive: its secrets were removed too (%s)\n", envPath)
+		fmt.Println("hive: run `hive service install` from a shell that has them to put them back")
+	}
 	return nil
 }
 
