@@ -113,3 +113,67 @@ The coordinator serves the Control API on an owner-only unix socket at
 local CLI and TUI need no credential. A unix socket path is bounded by the
 platform's `sockaddr_un`, so a very long `data_dir` is rejected with a message
 that says so.
+
+
+## Running as a background service
+
+```sh
+hive service install     # start at login, restart if it stops
+hive service status      # is it running
+hive service uninstall   # stop and remove
+```
+
+`install` writes a launchd agent on macOS and a systemd user unit on Linux. It
+also does three things that a naive service definition gets wrong:
+
+**It copies the binaries next to the data directory.** On macOS a background
+agent cannot execute a binary under a protected directory such as `Documents`:
+the attempt is blocked without a visible prompt, which looks exactly like a
+daemon that starts and does nothing. A service also should not depend on a
+checkout that can move. The daemon and its plugins are copied to
+`~/.hive/data/bin/`.
+
+**It captures `PATH`.** A background service does not inherit a login shell's
+environment, and the agents live on your `PATH`. Without this the daemon starts,
+listens, and cannot run any agent.
+
+**It keeps secrets out of the service definition.** The variables the
+configuration references are written to `~/.hive/data/service.env`, readable by
+its owner only. On macOS the service definition can be printed with `launchctl
+print`, so a token stored there is visible to anything that can talk to the
+supervisor.
+
+Only what the configuration references is captured, so installing the service
+does not quietly copy every secret in your shell into a file.
+
+```sh
+hive service install
+# hive: the service will inherit PATH from this shell
+# hive: the daemon will start at login
+#   binary: /Users/you/.hive/data/bin/hive
+#   secrets: /Users/you/.hive/data/service.env (0600)
+```
+
+## Measuring what it costs
+
+```sh
+scripts/measure.sh.py        # set HIVE_PID to the daemon pid
+```
+
+It samples the process tree rooted at the daemon and counts only Hive's own
+processes: an agent runtime you installed is your cost, not Hive's, and counting
+it would drown the number that matters.
+
+Measured on a five-process tree (daemon, node child, Slack transport, two agent
+bridges) while running agent turns:
+
+| Process | Memory |
+|---|---|
+| `hive serve` | 27 MB |
+| `hive` (node child) | 24 MB |
+| `hive-plugin-slack` | 22 MB |
+| `hive-plugin-acp` (devin) | 11 MB |
+| `hive-plugin-acp` (hermes) | 8 MB |
+| **total** | **~92 MB** |
+
+CPU is about 0% when idle and peaks near 2% during a turn.

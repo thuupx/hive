@@ -110,6 +110,9 @@ type Bridge struct {
 	// toolTitles remembers a tool call title, because a later update may omit it.
 	toolTitles map[string]map[string]string
 
+	// runOrder is the order runs were started in, so the oldest can be evicted.
+	runOrder []string
+
 	// pending permission requests, keyed by the agent request id
 	perms map[string]pendingPermission
 }
@@ -235,6 +238,8 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 		preamble:      req.Context,
 		config:        options,
 	}
+	b.runOrder = append(b.runOrder, req.AgentRunID)
+	b.evictRunsLocked()
 	b.mu.Unlock()
 
 	// The agent declares its selectors, and the ones the user chose are applied
@@ -250,6 +255,38 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 		Resumed:          resumed,
 		ConfigOptions:    wireConfig(options),
 	}, nil
+}
+
+// maxLiveRuns bounds how many agent sessions are remembered.
+//
+// The entry is small, but a process that runs for months must not grow without
+// limit. An evicted run reports no live execution, which is the same answer a
+// restart gives, and a continued conversation restores its agent session from the
+// runtime session id the core already holds.
+const maxLiveRuns = 256
+
+// evictRunsLocked drops the oldest runs beyond the bound. The caller holds the lock.
+func (b *Bridge) evictRunsLocked() {
+	for len(b.runOrder) > maxLiveRuns {
+		oldest := b.runOrder[0]
+		b.runOrder = b.runOrder[1:]
+
+		delete(b.runs, oldest)
+		delete(b.tools, oldest)
+		delete(b.toolTitles, oldest)
+	}
+}
+
+// releaseTurn drops what belongs to a finished turn.
+//
+// Tool activity is per-turn. Keeping it would accumulate one entry per tool call
+// for the life of the process, which is a leak in anything that runs for weeks.
+func (b *Bridge) releaseTurn(agentRunID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	delete(b.tools, agentRunID)
+	delete(b.toolTitles, agentRunID)
 }
 
 // openSession restores the run's agent session when it can, and creates one when

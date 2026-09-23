@@ -2,6 +2,7 @@ package acpbridge
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -158,5 +159,60 @@ func TestDescribeImagesWithoutText(t *testing.T) {
 	}
 	if strings.HasPrefix(described, "\n") {
 		t.Errorf("the description starts with a blank line: %q", described)
+	}
+}
+
+// A finished turn drops its per-turn tool state.
+//
+// Keeping it would accumulate one entry per tool call for the life of the
+// process, which is a leak in anything that runs for weeks.
+func TestReleaseTurnDropsToolState(t *testing.T) {
+	b := &Bridge{
+		tools:      map[string]map[string]bool{"run_1": {"tc1": true}},
+		toolTitles: map[string]map[string]string{"run_1": {"tc1": "Listed ./"}},
+	}
+
+	b.releaseTurn("run_1")
+
+	if _, ok := b.tools["run_1"]; ok {
+		t.Error("the tool calls of a finished turn should be dropped")
+	}
+	if _, ok := b.toolTitles["run_1"]; ok {
+		t.Error("the tool titles of a finished turn should be dropped")
+	}
+}
+
+// A long-lived process must not remember every run it has ever started.
+func TestRunsAreBounded(t *testing.T) {
+	b := &Bridge{
+		runs:       map[string]*run{},
+		tools:      map[string]map[string]bool{},
+		toolTitles: map[string]map[string]string{},
+	}
+
+	for i := 0; i < maxLiveRuns+10; i++ {
+		id := fmt.Sprintf("run_%d", i)
+		b.runs[id] = &run{agentRunID: id}
+		b.tools[id] = map[string]bool{"tc": true}
+		b.toolTitles[id] = map[string]string{"tc": "t"}
+		b.runOrder = append(b.runOrder, id)
+	}
+
+	b.mu.Lock()
+	b.evictRunsLocked()
+	b.mu.Unlock()
+
+	if len(b.runs) != maxLiveRuns {
+		t.Fatalf("runs = %d, want %d", len(b.runs), maxLiveRuns)
+	}
+	if len(b.tools) != maxLiveRuns || len(b.toolTitles) != maxLiveRuns {
+		t.Fatalf("tool state = %d/%d, want %d", len(b.tools), len(b.toolTitles), maxLiveRuns)
+	}
+	// The oldest go first.
+	if _, ok := b.runs["run_0"]; ok {
+		t.Error("the oldest run should have been evicted")
+	}
+	if _, ok := b.runs[fmt.Sprintf("run_%d", maxLiveRuns+9)]; !ok {
+		t.Error("the newest run should still be there")
 	}
 }

@@ -54,6 +54,7 @@ Commands:
   version                    print build and protocol version
   config                     validate the configuration and print effective values
   serve                      run the Hive daemon
+  service <install|uninstall|status>  run the daemon in the background at login
   tui [-interval 2s]         show the management plane
   session create             create a session
   session list               list sessions
@@ -117,6 +118,8 @@ func run(args []string) error {
 			return err
 		}
 		return runServe(merged)
+	case "service":
+		return runService(f, rest[1:])
 	case "session":
 		return sessionCommand(f, rest[1:])
 	case "agent":

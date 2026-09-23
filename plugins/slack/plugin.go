@@ -71,7 +71,14 @@ type Plugin struct {
 
 	// toolMessages maps a tool call to the message that represents it, so the
 	// call is one message instead of one per update.
+	//
+	// It is bounded: a long-lived transport must not remember every tool call it
+	// has ever shown.
 	toolMessages map[string]string
+
+	// toolOrder is the order tool messages were created in, so the oldest can be
+	// forgotten.
+	toolOrder []string
 
 	// handled remembers recent deliveries, because one platform message can
 	// arrive as more than one event.
@@ -442,6 +449,12 @@ func (p *Plugin) renderTool(ctx context.Context, conversation string, rendered R
 
 		p.mu.Lock()
 		p.toolMessages[rendered.ToolCallID] = ts
+		p.toolOrder = append(p.toolOrder, rendered.ToolCallID)
+		for len(p.toolOrder) > maxToolMessages {
+			oldest := p.toolOrder[0]
+			p.toolOrder = p.toolOrder[1:]
+			delete(p.toolMessages, oldest)
+		}
 		p.mu.Unlock()
 		return
 	}
@@ -595,6 +608,13 @@ func (p *Plugin) replay(ctx context.Context, sessionID string, after int64) (int
 
 // catchUpLimit bounds how much history a restart replays.
 const catchUpLimit = 200
+
+// maxToolMessages bounds how many tool cards a transport remembers.
+//
+// A tool call keeps one message, so this is one entry per tool call the transport
+// has shown. Forgetting the oldest means a very old tool card is reposted rather
+// than updated, which is a smaller problem than growing forever.
+const maxToolMessages = 1024
 
 // reloadBindings rebuilds the conversation-to-session map.
 //
