@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/thupham/hive/internal/config"
 )
@@ -310,22 +311,38 @@ func installLaunchAgent(binary, dir string) error {
 	}
 
 	// Reload so the change takes effect without a logout.
+	//
+	// Installing over a service that is already loaded is the normal case: it is
+	// how a new build is picked up. bootout is asynchronous, so bootstrapping
+	// immediately after it can fail for no reason other than timing, which is why
+	// this retries rather than reporting the race to the user.
 	domain := launchDomain()
 	_ = exec.Command("launchctl", "bootout", domain+"/"+serviceLabel).Run()
 
-	if out, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
-		// Installing over a service that is already loaded is a normal thing to do:
-		// it is how a new build is picked up. bootstrap refuses that, so the loaded
-		// service is restarted instead, which is what the user meant.
-		if _, loaded := exec.Command("launchctl", "print", domain+"/"+serviceLabel).Output(); loaded == nil {
-			if out, err := exec.Command("launchctl", "kickstart", "-k", domain+"/"+serviceLabel).CombinedOutput(); err != nil {
-				return fmt.Errorf("hive: launchctl kickstart: %s: %w", strings.TrimSpace(string(out)), err)
-			}
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
+
+		if out, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err == nil {
 			return nil
+		} else {
+			lastErr = fmt.Errorf("launchctl bootstrap: %s: %w", strings.TrimSpace(string(out)), err)
 		}
-		return fmt.Errorf("hive: launchctl bootstrap: %s: %w", strings.TrimSpace(string(out)), err)
+
+		// A loaded label is restarted instead, which is what the user meant by
+		// installing again.
+		if _, err := exec.Command("launchctl", "print", domain+"/"+serviceLabel).Output(); err == nil {
+			if out, err := exec.Command("launchctl", "kickstart", "-k", domain+"/"+serviceLabel).CombinedOutput(); err == nil {
+				return nil
+			} else {
+				lastErr = fmt.Errorf("launchctl kickstart: %s: %w", strings.TrimSpace(string(out)), err)
+			}
+		}
+
+		_ = exec.Command("launchctl", "bootout", domain+"/"+serviceLabel).Run()
 	}
-	return nil
+
+	return fmt.Errorf("hive: the service could not be loaded: %w", lastErr)
 }
 
 // launchDomain is the user's launchd domain.
