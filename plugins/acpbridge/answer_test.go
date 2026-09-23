@@ -250,6 +250,31 @@ func TestMessagesAreSeparatedByWhatComesBetweenThem(t *testing.T) {
 	}
 }
 
+// A thought between two chunks does not separate them.
+//
+// Found in a live conversation: a two-word answer came out as "FIRST\n\n_TURN"
+// because a thought chunk had arrived between the two halves of one message.
+func TestAThoughtDoesNotSeparateAMessage(t *testing.T) {
+	b := &Bridge{
+		tools:      map[string]map[string]bool{},
+		toolTitles: map[string]map[string]string{},
+	}
+	r := &run{agentRunID: "run_1"}
+
+	thought(t, b, r)
+	message(t, b, r, "FIRST")
+	thought(t, b, r)
+	message(t, b, r, "_TURN")
+
+	b.mu.Lock()
+	answer := r.answer.String()
+	b.mu.Unlock()
+
+	if answer != "FIRST_TURN" {
+		t.Fatalf("answer = %q, want the two halves joined", answer)
+	}
+}
+
 // message feeds one assistant text chunk through the bridge.
 func message(t *testing.T, b *Bridge, r *run, text string) {
 	t.Helper()
@@ -263,11 +288,18 @@ func message(t *testing.T, b *Bridge, r *run, text string) {
 	b.collectAnswer(r, payload)
 }
 
-// other feeds an update that is not assistant text.
+// other feeds a tool call, which is what ends a narration.
 func other(t *testing.T, b *Bridge, r *run) {
 	t.Helper()
 	b.collectAnswer(r, json.RawMessage(
 		`{"sessionUpdate":"tool_call","toolCallId":"tc1","title":"Ran pwd","kind":"execute"}`))
+}
+
+// thought feeds a thought, which arrives between chunks of one message.
+func thought(t *testing.T, b *Bridge, r *run) {
+	t.Helper()
+	b.collectAnswer(r, json.RawMessage(
+		`{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}`))
 }
 
 // An update goes to the run whose turn is in flight, not to a random run.

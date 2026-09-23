@@ -842,12 +842,18 @@ func (b *Bridge) publish(update acp.Update) {
 // garbled answer.
 func (b *Bridge) collectAnswer(r *run, payload json.RawMessage) {
 	text, ok := agentMessageText(payload)
+	tool := isToolUpdate(payload)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if !ok {
-		r.betweenMessages = true
+		// Only a tool call ends a narration. A thought, a config change, or a mode
+		// change arrives between two chunks of one message and does not separate
+		// them: splitting on those would break a sentence in half.
+		if tool {
+			r.betweenMessages = true
+		}
 		return
 	}
 	if r.betweenMessages && r.answer.Len() > 0 {
@@ -855,6 +861,21 @@ func (b *Bridge) collectAnswer(r *run, payload json.RawMessage) {
 	}
 	r.answer.WriteString(text)
 	r.betweenMessages = false
+}
+
+// isToolUpdate reports whether an update is a tool call or one of its updates.
+func isToolUpdate(payload json.RawMessage) bool {
+	var update struct {
+		SessionUpdate string `json:"sessionUpdate"`
+	}
+	if err := json.Unmarshal(payload, &update); err != nil {
+		return false
+	}
+	switch update.SessionUpdate {
+	case "tool_call", "tool_call_update":
+		return true
+	}
+	return false
 }
 
 // publishUpdate collects what a run needs from one agent update.
