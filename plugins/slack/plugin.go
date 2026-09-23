@@ -131,6 +131,14 @@ type Plugin struct {
 	// threadOrder is the order runs were threaded in, so the oldest can be
 	// forgotten.
 	threadOrder []string
+
+	// turnThreads is the thread of the turn a conversation is currently having.
+	//
+	// An agent can emit a tool call before the delivery that caused it has
+	// returned, so the run is not known yet and the event would land in the
+	// channel instead of the thread the rest of the turn is in. The conversation
+	// is known throughout, so the turn is recorded against it.
+	turnThreads map[string]string
 }
 
 // New returns a Slack plugin over a connected host.
@@ -151,6 +159,7 @@ func New(host *sdk.Host, client Client, opts Options) *Plugin {
 		handled:      make(map[string]time.Time),
 		cursors:      make(map[string]int64),
 		runThreads:   make(map[string]string),
+		turnThreads:  make(map[string]string),
 	}
 }
 
@@ -293,11 +302,25 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	// it must not fail the operation.
 	p.acknowledge(ctx, d)
 
+	// The turn's thread is recorded before the call, because the agent may start
+	// working — and emitting tool calls — before the call returns.
+	p.beginTurn(d.conversationID, d.thread)
+	defer p.endTurn(d.conversationID)
+
+	// A prompt is acknowledged before the work starts, for the same reason. The
+	// acknowledgement means "Hive received this", which is true now, and the
+	// first tool call would otherwise arrive before the acknowledgement that
+	// precedes it in the conversation.
+	acknowledged := d.envelope.Kind == v1.EnvelopeMessage
+	if acknowledged {
+		p.post(ctx, d.conversationID, d.thread, textMessage("Working on it."))
+	}
+
 	var outcome v1.TransportOutcome
 	err := p.host.Call(ctx, v1.MethodTransportInbound, wireParams(d.envelope), &outcome)
 	if err != nil {
 		p.log.Warn("inbound delivery failed", "error", err)
-		p.post(ctx, d.conversationID, "", textMessage(fmt.Sprintf(":warning: %s", err.Error())))
+		p.post(ctx, d.conversationID, d.thread, textMessage(fmt.Sprintf(":warning: %s", err.Error())))
 		return
 	}
 
@@ -321,6 +344,12 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 			"method", outcome.Method,
 			"session", outcome.SessionID,
 		)
+	}
+
+	// The acknowledgement already went out, and the turn runs in the background.
+	// A failure is still reported: the acknowledgement is not a promise.
+	if acknowledged && outcome.Method == v1.MethodSessionPrompt && outcome.Error == nil {
+		return
 	}
 
 	p.post(ctx, d.conversationID, d.thread, RenderOutcome(outcome))
@@ -484,7 +513,12 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 
 			// The answer belongs under the message that asked for it, so a channel
 			// stays readable and a turn's output stays together.
-			thread := p.threadFor(delivered.Event.RunID)
+			thread := ""
+			for _, conversation := range conversations {
+				if thread = p.threadFor(delivered.Event.RunID, conversation); thread != "" {
+					break
+				}
+			}
 
 			renderer := Renderer{SessionID: delivered.Event.SessionID}
 			rendered, ok := renderer.RenderEvent(delivered.Event)
@@ -583,15 +617,35 @@ func (p *Plugin) rememberThread(runID, thread string) {
 	}
 }
 
-// threadFor is where a run's output belongs, or empty for the conversation.
-func (p *Plugin) threadFor(runID string) string {
-	if runID == "" {
-		return ""
-	}
-
+// beginTurn records the thread of the turn a conversation is starting.
+func (p *Plugin) beginTurn(conversationID, thread string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.runThreads[runID]
+	p.turnThreads[conversationID] = thread
+}
+
+// endTurn forgets the turn a conversation just had.
+func (p *Plugin) endTurn(conversationID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.turnThreads, conversationID)
+}
+
+// threadFor is where a run's output belongs, or empty for the conversation.
+//
+// A run is the precise answer. Before it is known — an agent can emit a tool call
+// while the delivery that caused it is still in flight — the conversation's
+// current turn is the answer, and it is the same thread.
+func (p *Plugin) threadFor(runID, conversationID string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if runID != "" {
+		if thread, ok := p.runThreads[runID]; ok {
+			return thread
+		}
+	}
+	return p.turnThreads[conversationID]
 }
 
 // maxRunThreads bounds how many runs are remembered.
@@ -719,8 +773,14 @@ func (p *Plugin) replay(ctx context.Context, sessionID string, after int64) (int
 		if !ok {
 			continue
 		}
-		thread := p.threadFor(ev.RunID)
-		for _, conversation := range p.conversationsFor(sessionID) {
+		conversations := p.conversationsFor(sessionID)
+		thread := ""
+		for _, conversation := range conversations {
+			if thread = p.threadFor(ev.RunID, conversation); thread != "" {
+				break
+			}
+		}
+		for _, conversation := range conversations {
 			if message.ToolCallID != "" {
 				p.renderTool(ctx, conversation, thread, message)
 				continue

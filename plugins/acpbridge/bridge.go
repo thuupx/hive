@@ -335,16 +335,25 @@ func (b *Bridge) openSession(ctx context.Context, client *acp.Client, req v1.Exe
 			Cwd:       req.WorkspacePath,
 		})
 		if err == nil {
+			b.log.Info("restored the agent session",
+				"run", req.AgentRunID, "session", req.Resume)
 			return req.Resume, true, b.caps.ConfigOptions, nil
 		}
 
 		// The agent had the session but would not restore it. Say so, then start
 		// fresh: the run must not fail because a restore did not work.
-		b.warn("could not restore the agent session", "session", req.Resume, "error", err)
+		// This is the one message that explains an agent answering as if it had
+		// never spoken to the user before, so it says what is lost and why.
+		b.warn("could not restore the agent session; starting a new one, and the agent will not remember the conversation",
+			"run", req.AgentRunID, "session", req.Resume, "error", err)
 	}
 
 	created, err := client.NewSession(ctx, acp.NewSessionRequest{Cwd: req.WorkspacePath})
 	if err == nil {
+		if req.Resume != "" {
+			b.log.Info("created a new agent session after a restore did not work",
+				"run", req.AgentRunID, "session", created.SessionID)
+		}
 		return created.SessionID, false, created.ConfigOptions, nil
 	}
 

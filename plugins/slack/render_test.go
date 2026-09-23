@@ -384,3 +384,18 @@ func TestAVeryLongAnswerRenders(t *testing.T) {
 		}
 	}
 }
+
+// Cancelling when nothing is running is not a failure.
+func TestRenderCancelWithNothingRunningIsNotAWarning(t *testing.T) {
+	message := RenderOutcome(v1.TransportOutcome{
+		Method: v1.MethodSessionCancel,
+		Error:  v1.NewErrorf(v1.CodeConflict, "session sess_1 has no run to cancel"),
+	})
+
+	if strings.Contains(message.Text, ":warning:") {
+		t.Fatalf("a no-op cancel rendered as a warning: %q", message.Text)
+	}
+	if !strings.Contains(message.Text, "nothing is running") {
+		t.Fatalf("text = %q", message.Text)
+	}
+}

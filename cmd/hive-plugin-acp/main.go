@@ -8,6 +8,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -64,12 +65,16 @@ func run() error {
 		apiKey = os.Getenv(*apiKeyEnv)
 	}
 
+	// The logger is what makes a restore that did not work visible. Without it the
+	// bridge discarded its own warnings, including the one that explains why an
+	// agent answered as if it had never spoken to the user before.
 	bridge := acpbridge.New(host, acpbridge.CommandLauncher{
 		Command:       strings.Fields(*agentCommand),
 		ClientVersion: *version,
 	}, acpbridge.Options{
 		AuthMethod: *authMethod,
 		APIKey:     apiKey,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 	bridge.Register()
 

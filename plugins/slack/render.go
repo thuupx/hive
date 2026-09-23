@@ -86,6 +86,10 @@ func (r Renderer) RenderEvent(ev v1.Event) (Rendered, bool) {
 func RenderOutcome(outcome v1.TransportOutcome) Message {
 	switch {
 	case outcome.Error == nil:
+	case outcome.Error.Code == v1.CodeConflict && outcome.Method == v1.MethodSessionCancel:
+		// Nothing was running. That is not a failure, and a warning would read like
+		// one for an operation that had nothing to do.
+		return textMessage(":information_source: nothing is running")
 	case outcome.Error.Code == v1.CodeConflict && outcome.Method == v1.MethodSessionConfig:
 		// The agent session lives in the agent process, so it does not survive a
 		// restart. This is advice, not a failure.

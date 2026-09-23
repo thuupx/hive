@@ -66,20 +66,20 @@ func TestRememberThread(t *testing.T) {
 	p := New(nil, nil, Options{})
 
 	p.rememberThread("run_1", "1.0")
-	if got := p.threadFor("run_1"); got != "1.0" {
+	if got := p.threadFor("run_1", "C1"); got != "1.0" {
 		t.Fatalf("thread = %q, want 1.0", got)
 	}
 	// An unknown run is not threaded, and neither is an empty id.
-	if got := p.threadFor("run_unknown"); got != "" {
+	if got := p.threadFor("run_unknown", "C1"); got != "" {
 		t.Fatalf("thread = %q, want empty", got)
 	}
-	if got := p.threadFor(""); got != "" {
+	if got := p.threadFor("", "C1"); got != "" {
 		t.Fatalf("thread = %q, want empty", got)
 	}
 
 	// A run in a direct message is remembered as flat.
 	p.rememberThread("run_2", "")
-	if got := p.threadFor("run_2"); got != "" {
+	if got := p.threadFor("run_2", "C1"); got != "" {
 		t.Fatalf("thread = %q, want empty", got)
 	}
 }
@@ -147,4 +147,41 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatalf("marshal: %v", err)
 	}
 	return encoded
+}
+
+// A tool call that arrives before the delivery returns still belongs to the turn.
+//
+// Found in a live conversation: one tool card landed in the channel while the
+// rest of the turn landed in the thread, because the agent emitted its first call
+// before the delivery that caused it had returned and the run was not known yet.
+func TestAnEventBeforeTheRunIsKnownStillThreads(t *testing.T) {
+	p := New(nil, nil, Options{})
+
+	// The turn is under way: the conversation's thread is known, the run is not.
+	p.beginTurn("C1", "1.0")
+
+	if got := p.threadFor("", "C1"); got != "1.0" {
+		t.Fatalf("an event with no run yet threaded to %q, want the turn thread", got)
+	}
+
+	// Once the run is known it is the precise answer, even if it differs.
+	p.rememberThread("run_1", "2.0")
+	if got := p.threadFor("run_1", "C1"); got != "2.0" {
+		t.Fatalf("a known run threaded to %q, want its own thread", got)
+	}
+
+	// The turn ends, and the conversation is no longer mid-turn.
+	p.endTurn("C1")
+	if got := p.threadFor("", "C1"); got != "" {
+		t.Fatalf("after the turn, an unknown run threaded to %q, want empty", got)
+	}
+}
+
+// A conversation with no turn under way does not thread.
+func TestNoTurnMeansNoThread(t *testing.T) {
+	p := New(nil, nil, Options{})
+
+	if got := p.threadFor("run_unknown", "C1"); got != "" {
+		t.Fatalf("thread = %q, want empty", got)
+	}
 }
