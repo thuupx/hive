@@ -105,6 +105,18 @@ type SessionPromptParams struct {
 	// Context is a preamble the agent receives before this prompt, such as the
 	// surrounding conversation in a channel.
 	Context string `json:"context,omitempty"`
+
+	// Images are pictures sent with the prompt.
+	Images []PromptImage `json:"images,omitempty"`
+}
+
+// PromptImage is an image sent with a prompt.
+type PromptImage struct {
+	MimeType string `json:"mimeType"`
+	Data     []byte `json:"data"`
+
+	// Name is the original file name, used when the agent cannot accept images.
+	Name string `json:"name,omitempty"`
 }
 
 // SessionPromptResult is the outcome of session.prompt.

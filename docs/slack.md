@@ -33,6 +33,7 @@ treated as a command.
    | `groups:history` | read messages in private channels |
    | `im:history` | read direct messages |
    | `users:read` | resolve user ids |
+   | `files:read` | read a file the user attached |
 
 4. Open **Event Subscriptions** and subscribe to bot events:
 
@@ -205,6 +206,48 @@ Anything else is **not** a command:
 @your-bot /cancel
   → Cancelled.
 ```
+
+### Images and files
+
+Send a picture with your message and the agent receives it as a picture, not as a
+file name. The transport fetches the bytes, because reading the platform is its
+job, and the core carries only the bytes.
+
+```text
+@your-bot what is wrong with this chart?
+  [ screenshot.png attached ]
+
+  → the agent sees the image and the text together
+```
+
+How it works, and where it stops:
+
+- A message with a file arrives with the `file_share` subtype. It is still a
+  message, so it is handled like any other.
+- Slack file URLs need the bot token, so the transport downloads with
+  `files:read` rather than fetching a public link.
+- The size is bounded. A file larger than `max_attachment_mb` is skipped with a
+  warning instead of being read into memory.
+
+```toml
+[transport.slack.options]
+max_attachment_mb = "8"     # default
+```
+
+- An agent that cannot accept images is **told** about them instead of being sent
+  them, so the text of the message is not lost:
+
+  ```text
+  what is wrong with this chart?
+
+  [1 image(s) attached, which this agent cannot accept: screenshot.png]
+  ```
+
+  Whether an agent accepts images is part of what it declares at startup, so Hive
+  asks rather than guesses.
+
+A file that is not an image is not sent to the agent; it is named in the message
+so the agent knows something was attached.
 
 ### Channel awareness
 

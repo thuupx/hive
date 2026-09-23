@@ -300,7 +300,7 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 	// and holding the request open would tie the operation to a connection that
 	// may go away. The caller follows the operation through command.get, which is
 	// what the durable command record is for.
-	go s.runTurn(stored.ID, runID, params.Text, params.Context)
+	go s.runTurn(stored.ID, runID, params)
 
 	return result, nil
 }
@@ -312,11 +312,11 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 const TurnTimeout = 30 * time.Minute
 
 // runTurn dispatches a prompt and records the outcome.
-func (s *Service) runTurn(commandID, runID, text, preamble string) {
+func (s *Service) runTurn(commandID, runID string, params v1.SessionPromptParams) {
 	ctx, cancel := context.WithTimeout(context.Background(), TurnTimeout)
 	defer cancel()
 
-	if err := s.dispatchPrompt(ctx, runID, text, preamble); err != nil {
+	if err := s.dispatchPrompt(ctx, runID, params); err != nil {
 		s.log.Warn("turn could not be dispatched", "run", runID, "error", err)
 		_ = s.failCommand(ctx, commandID, err)
 		return
@@ -642,7 +642,7 @@ func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePa
 	return err
 }
 
-func (s *Service) dispatchPrompt(ctx context.Context, runID, text, preamble string) error {
+func (s *Service) dispatchPrompt(ctx context.Context, runID string, params v1.SessionPromptParams) error {
 	run, err := s.store.GetAgentRun(ctx, runID)
 	if err != nil {
 		return storageError(err)
@@ -660,8 +660,9 @@ func (s *Service) dispatchPrompt(ctx context.Context, runID, text, preamble stri
 		AgentRunID: run.ID,
 		AgentID:    run.AgentID,
 		Generation: run.ExecutionGeneration,
-		Text:       text,
-		Context:    preamble,
+		Text:       params.Text,
+		Context:    params.Context,
+		Images:     params.Images,
 	}, nil)
 	if err != nil {
 		return domainError(err)

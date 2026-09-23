@@ -122,3 +122,41 @@ func TestToolCallRemembersItsTitle(t *testing.T) {
 		t.Errorf("status = %q", update.Status)
 	}
 }
+
+// An agent that cannot accept images is told about them instead.
+//
+// Refusing the whole turn because a picture was attached would lose the text too.
+func TestDescribeImagesNamesThePictures(t *testing.T) {
+	images := []v1.PromptImage{
+		{Name: "screenshot.png", MimeType: "image/png", Data: []byte{1}},
+		{MimeType: "image/jpeg", Data: []byte{2}},
+	}
+
+	described := describeImages("what is this?", images)
+
+	if !strings.Contains(described, "what is this?") {
+		t.Errorf("the text was lost: %q", described)
+	}
+	if !strings.Contains(described, "2 image(s)") {
+		t.Errorf("the count is missing: %q", described)
+	}
+	if !strings.Contains(described, "screenshot.png") {
+		t.Errorf("the name is missing: %q", described)
+	}
+	// A file with no name is described by its type rather than left blank.
+	if !strings.Contains(described, "image/jpeg") {
+		t.Errorf("an unnamed image should be described by its type: %q", described)
+	}
+}
+
+// A picture with no text still produces something to send.
+func TestDescribeImagesWithoutText(t *testing.T) {
+	described := describeImages("", []v1.PromptImage{{Name: "a.png", Data: []byte{1}}})
+
+	if strings.TrimSpace(described) == "" {
+		t.Fatal("an image with no text produced an empty prompt")
+	}
+	if strings.HasPrefix(described, "\n") {
+		t.Errorf("the description starts with a blank line: %q", described)
+	}
+}

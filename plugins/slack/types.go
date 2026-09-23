@@ -1,6 +1,9 @@
 package slack
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // MessageEvent is a Slack message event.
 type MessageEvent struct {
@@ -12,6 +15,36 @@ type MessageEvent struct {
 	Timestamp string `json:"ts"`
 	ThreadTS  string `json:"thread_ts,omitempty"`
 	BotID     string `json:"bot_id,omitempty"`
+
+	// Files are what the user attached. A message with files arrives with the
+	// file_share subtype, which is otherwise not a message a user typed.
+	Files []File `json:"files,omitempty"`
+}
+
+// File is a file attached to a message.
+type File struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	MimeType string `json:"mimetype"`
+	Size     int    `json:"size"`
+
+	// URLPrivateDownload is where the bytes are. Slack requires the bot token to
+	// read it, so it is not a public link.
+	URLPrivateDownload string `json:"url_private_download"`
+	URLPrivate         string `json:"url_private"`
+}
+
+// DownloadURL is where to fetch the file from.
+func (f File) DownloadURL() string {
+	if f.URLPrivateDownload != "" {
+		return f.URLPrivateDownload
+	}
+	return f.URLPrivate
+}
+
+// IsImage reports whether the file is a picture.
+func (f File) IsImage() bool {
+	return strings.HasPrefix(f.MimeType, "image/")
 }
 
 // ActionPayload is a Slack block action.

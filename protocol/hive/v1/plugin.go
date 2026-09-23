@@ -220,6 +220,10 @@ type ExecutionPromptParams struct {
 	// Context is a preamble for this prompt only, such as the surrounding
 	// conversation in a channel.
 	Context string `json:"context,omitempty"`
+
+	// Images are pictures sent with the prompt. An agent that does not accept
+	// images is told they were attached instead of being sent them.
+	Images []PromptImage `json:"images,omitempty"`
 }
 
 // ExecutionCancelParams asks an agent plugin to cancel an execution.

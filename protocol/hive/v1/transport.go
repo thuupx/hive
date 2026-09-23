@@ -2,6 +2,7 @@ package v1
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -57,9 +58,34 @@ type Envelope struct {
 	ChannelContext []ChannelMessage
 }
 
-// IncomingMessage is ordinary user text.
+// IncomingMessage is ordinary user text, optionally with files.
 type IncomingMessage struct {
 	Text string
+
+	// Attachments are files the user sent. The transport fetches them, because
+	// reading the platform is its job; the core only carries the bytes.
+	Attachments []Attachment
+}
+
+// Attachment is a file the user sent with a message.
+type Attachment struct {
+	// Name is the original file name.
+	Name string `json:"name,omitempty"`
+
+	// MimeType is the media type, for example image/png.
+	MimeType string `json:"mimeType,omitempty"`
+
+	// URL is where the transport fetched it from. It is the transport's own
+	// bookkeeping and is not sent to the core.
+	URL string `json:"-"`
+
+	// Data is the file itself, base64 encoded on the wire.
+	Data []byte `json:"data,omitempty"`
+}
+
+// IsImage reports whether the attachment is an image.
+func (a Attachment) IsImage() bool {
+	return strings.HasPrefix(a.MimeType, "image/")
 }
 
 // IncomingCommand is a platform command.
@@ -101,7 +127,8 @@ type TransportInboundParams struct {
 	Kind string `json:"kind"`
 
 	// Message fields.
-	Text string `json:"text,omitempty"`
+	Text        string       `json:"text,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"`
 
 	// Command fields.
 	Command  string   `json:"command,omitempty"`

@@ -259,3 +259,56 @@ func TestAlreadyHandledDeduplicatesADelivery(t *testing.T) {
 		t.Fatal("a delivery with no source id cannot be deduplicated")
 	}
 }
+
+// A message with a file is still a message: it arrives with the file_share
+// subtype, which is not a reason to drop it.
+func TestParseImageMessage(t *testing.T) {
+	event := messageEvent("<@U0BOT> what is in this picture?")
+	event.SubType = "file_share"
+	event.Files = []File{{
+		ID:                 "F1",
+		Name:               "screenshot.png",
+		MimeType:           "image/png",
+		Size:               1234,
+		URLPrivateDownload: "https://files.slack.com/files-pri/T1-F1/download",
+	}}
+
+	env := parser().ParseMessage(event)
+
+	if env.Kind != v1.EnvelopeMessage {
+		t.Fatalf("kind = %q, want message", env.Kind)
+	}
+	if env.Message.Text != "what is in this picture?" {
+		t.Errorf("text = %q", env.Message.Text)
+	}
+	if len(env.Message.Attachments) != 1 {
+		t.Fatalf("attachments = %+v", env.Message.Attachments)
+	}
+
+	attachment := env.Message.Attachments[0]
+	if attachment.Name != "screenshot.png" || attachment.MimeType != "image/png" {
+		t.Errorf("attachment = %+v", attachment)
+	}
+	if !attachment.IsImage() {
+		t.Error("a png should be an image")
+	}
+	// The bytes are fetched by the transport, so the envelope carries where from.
+	if attachment.URL == "" {
+		t.Error("the attachment should carry where to fetch it from")
+	}
+	if len(attachment.Data) != 0 {
+		t.Error("the parser does not fetch, so no data yet")
+	}
+}
+
+// A file with no download URL is skipped rather than failing the message.
+func TestParseSkipsAFileWithNoURL(t *testing.T) {
+	event := messageEvent("<@U0BOT> here")
+	event.SubType = "file_share"
+	event.Files = []File{{ID: "F1", Name: "broken.png", MimeType: "image/png"}}
+
+	env := parser().ParseMessage(event)
+	if len(env.Message.Attachments) != 0 {
+		t.Fatalf("attachments = %+v", env.Message.Attachments)
+	}
+}

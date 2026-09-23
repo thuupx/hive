@@ -206,6 +206,28 @@ type LoadSessionRequest struct {
 type contentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
+
+	// Data is base64 on the wire, which encoding/json does for a []byte.
+	Data     []byte `json:"data,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+}
+
+// Content is one block of a prompt.
+//
+// The agent declares whether it accepts images; a client that sends one anyway
+// gets a protocol error, so the decision belongs where the capability is known.
+type Content struct {
+	Text     string
+	Data     []byte
+	MimeType string
+}
+
+// TextContent is a block of text.
+func TextContent(text string) Content { return Content{Text: text} }
+
+// ImageContent is a picture.
+func ImageContent(mimeType string, data []byte) Content {
+	return Content{Data: data, MimeType: mimeType}
 }
 
 type promptRequest struct {

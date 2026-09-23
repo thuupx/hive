@@ -77,3 +77,30 @@ func TestRenderRoomWithoutMessages(t *testing.T) {
 		t.Fatalf("renderRoom(empty) = %q, want empty", got)
 	}
 }
+
+// Only pictures are sent as pictures. Anything else is named in the text.
+func TestPromptImagesSelectsOnlyImages(t *testing.T) {
+	attachments := []v1.Attachment{
+		{Name: "shot.png", MimeType: "image/png", Data: []byte{1, 2, 3}},
+		{Name: "notes.txt", MimeType: "text/plain", Data: []byte("hello")},
+		{Name: "empty.png", MimeType: "image/png"},
+	}
+
+	images := promptImages(attachments)
+
+	if len(images) != 1 {
+		t.Fatalf("images = %+v, want only the png with data", images)
+	}
+	if images[0].Name != "shot.png" || images[0].MimeType != "image/png" {
+		t.Errorf("image = %+v", images[0])
+	}
+	if len(images[0].Data) != 3 {
+		t.Errorf("data = %v", images[0].Data)
+	}
+}
+
+func TestPromptImagesWithoutAttachments(t *testing.T) {
+	if images := promptImages(nil); len(images) != 0 {
+		t.Fatalf("images = %+v, want none", images)
+	}
+}

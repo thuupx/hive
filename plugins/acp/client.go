@@ -223,14 +223,29 @@ func (c *Client) LoadSession(ctx context.Context, req LoadSessionRequest) error 
 
 // Prompt sends a text prompt and waits for the turn to finish, returning the
 // agent's stop reason.
-func (c *Client) Prompt(ctx context.Context, sessionID, text string) (string, error) {
+func (c *Client) Prompt(ctx context.Context, sessionID string, content []Content) (string, error) {
 	if sessionID == "" {
 		return "", errors.New("acp: session id is required")
 	}
-	req := promptRequest{
-		SessionID: sessionID,
-		Prompt:    []contentBlock{{Type: "text", Text: text}},
+
+	blocks := make([]contentBlock, 0, len(content))
+	for _, block := range content {
+		switch {
+		case len(block.Data) > 0:
+			blocks = append(blocks, contentBlock{
+				Type:     "image",
+				Data:     block.Data,
+				MimeType: block.MimeType,
+			})
+		case block.Text != "":
+			blocks = append(blocks, contentBlock{Type: "text", Text: block.Text})
+		}
 	}
+	if len(blocks) == 0 {
+		return "", errors.New("acp: a prompt needs at least one content block")
+	}
+
+	req := promptRequest{SessionID: sessionID, Prompt: blocks}
 
 	var resp promptResponse
 	if err := c.call(ctx, methodSessionPrompt, req, &resp); err != nil {

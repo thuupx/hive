@@ -261,7 +261,7 @@ func TestPromptReturnsStopReason(t *testing.T) {
 		}
 	})
 
-	reason, err := client.Prompt(context.Background(), "s1", "fix the bug")
+	reason, err := client.Prompt(context.Background(), "s1", []Content{TextContent("fix the bug")})
 	if err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
@@ -547,3 +547,48 @@ func TestAgentExitSurfacesError(t *testing.T) {
 }
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
+
+// An image travels as an image content block, base64 encoded on the wire.
+func TestPromptSendsImages(t *testing.T) {
+	client, agent := newPair(t, Options{})
+	agent.setHandler(func(msg rpcMessage) {
+		if msg.Method == methodSessionPrompt {
+			agent.reply(msg.ID, promptResponse{StopReason: "end_turn"})
+		}
+	})
+
+	image := []byte{0x89, 0x50, 0x4e, 0x47}
+	_, err := client.Prompt(context.Background(), "s1", []Content{
+		TextContent("what is this?"),
+		ImageContent("image/png", image),
+	})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+
+	var sent promptRequest
+	if err := json.Unmarshal(agent.next().Params, &sent); err != nil {
+		t.Fatalf("decode params: %v", err)
+	}
+	if len(sent.Prompt) != 2 {
+		t.Fatalf("blocks = %+v", sent.Prompt)
+	}
+	if sent.Prompt[0].Type != "text" || sent.Prompt[0].Text != "what is this?" {
+		t.Errorf("first block = %+v", sent.Prompt[0])
+	}
+	if sent.Prompt[1].Type != "image" || sent.Prompt[1].MimeType != "image/png" {
+		t.Errorf("second block = %+v", sent.Prompt[1])
+	}
+	if len(sent.Prompt[1].Data) != len(image) {
+		t.Errorf("image data = %v, want %v", sent.Prompt[1].Data, image)
+	}
+}
+
+// A prompt with nothing in it is a caller mistake, not something to send.
+func TestPromptRejectsEmptyContent(t *testing.T) {
+	client, _ := newPair(t, Options{})
+
+	if _, err := client.Prompt(context.Background(), "s1", nil); err == nil {
+		t.Fatal("an empty prompt should be refused")
+	}
+}

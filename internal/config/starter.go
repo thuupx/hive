@@ -136,6 +136,7 @@ func renderTransports(b *strings.Builder, cfg Config) {
 	b.WriteString("# bot_user_id = \"U0XXXXXXX\"   # the bot's own user id, for mention resolution\n")
 	b.WriteString("# require_mention = \"true\"    # ignore messages that do not address the bot\n")
 	b.WriteString("# channel_context = \"20\"      # recent messages handed to the agent as room context\n")
+	b.WriteString("# max_attachment_mb = \"8\"     # largest file the transport will read\n")
 	b.WriteString("#\n")
 	b.WriteString("# The Slack transport needs two environment variables:\n")
 	b.WriteString("#   SLACK_APP_TOKEN=xapp-...   Socket Mode connection\n")

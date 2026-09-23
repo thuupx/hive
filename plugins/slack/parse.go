@@ -137,8 +137,31 @@ func (p Parser) ParseMessage(ev MessageEvent) v1.Envelope {
 	}
 
 	env.Kind = v1.EnvelopeMessage
-	env.Message = &v1.IncomingMessage{Text: strings.TrimSpace(text)}
+	env.Message = &v1.IncomingMessage{
+		Text:        strings.TrimSpace(text),
+		Attachments: attachmentsOf(ev.Files),
+	}
 	return env
+}
+
+// attachmentsOf carries the files a user sent.
+//
+// Only the transport knows how to fetch them, so the bytes are filled in later.
+// A file this transport cannot read is skipped rather than failing the message.
+func attachmentsOf(files []File) []v1.Attachment {
+	out := make([]v1.Attachment, 0, len(files))
+	for _, file := range files {
+		url := file.DownloadURL()
+		if url == "" {
+			continue
+		}
+		out = append(out, v1.Attachment{
+			Name:     file.Name,
+			MimeType: file.MimeType,
+			URL:      url,
+		})
+	}
+	return out
 }
 
 // ParseInteraction turns a Slack block action into an interaction envelope.

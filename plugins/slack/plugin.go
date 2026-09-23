@@ -30,6 +30,10 @@ type Options struct {
 	// agent, so a prompt means what it means in the room. Zero disables it.
 	ChannelContext int
 
+	// MaxAttachmentBytes bounds how large a file the transport will read. Zero
+	// uses the default.
+	MaxAttachmentBytes int64
+
 	Log *slog.Logger
 }
 
@@ -199,6 +203,8 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 		return
 	}
 
+	p.fetchAttachments(ctx, &d.envelope)
+
 	// Acknowledge as early as the transport can safely confirm acceptance, and
 	// before waiting for the agent. The reaction is best-effort: failing to add
 	// it must not fail the operation.
@@ -216,6 +222,32 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 		p.rememberBinding(d.conversationID, outcome.SessionID)
 	}
 	p.post(ctx, d.conversationID, "", RenderOutcome(outcome))
+}
+
+// fetchAttachments reads the files a user sent.
+//
+// Reading the platform is the transport's job, so the bytes are fetched here and
+// only the bytes travel onward. A file that cannot be read is dropped with a note
+// rather than failing the message: the text is still worth handling.
+func (p *Plugin) fetchAttachments(ctx context.Context, env *v1.Envelope) {
+	if env.Message == nil || len(env.Message.Attachments) == 0 {
+		return
+	}
+
+	kept := make([]v1.Attachment, 0, len(env.Message.Attachments))
+	for _, attachment := range env.Message.Attachments {
+		data, err := p.client.DownloadFile(ctx, attachment.URL, p.opts.MaxAttachmentBytes)
+		if err != nil {
+			p.log.Warn("could not read an attachment",
+				"name", attachment.Name, "error", err)
+			continue
+		}
+
+		attachment.Data = data
+		attachment.URL = ""
+		kept = append(kept, attachment)
+	}
+	env.Message.Attachments = kept
 }
 
 // readRoom reads what else is being said in the conversation.
@@ -273,8 +305,12 @@ func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
 			return delivery{}, false
 		}
 
-		// A bot's own message, an edit, or a join is not user intent.
-		if event.BotID != "" || event.SubType != "" || event.User == "" {
+		// A bot's own message, an edit, or a join is not user intent. A file share
+		// is: it is a message the user typed, with something attached.
+		if event.BotID != "" || event.User == "" {
+			return delivery{}, false
+		}
+		if event.SubType != "" && event.SubType != "file_share" {
 			return delivery{}, false
 		}
 

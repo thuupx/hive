@@ -317,7 +317,8 @@ func (r *Router) handleMessage(ctx context.Context, env v1.Envelope, principal c
 		return failed(commandID, apierr.From(err))
 	}
 
-	return r.promptWithContext(ctx, principal, commandID, env.SourceID, sessionID, env.Message.Text, env.ChannelContext)
+	return r.promptWithContext(ctx, principal, commandID, env.SourceID, sessionID,
+		env.Message.Text, env.ChannelContext, env.Message.Attachments)
 }
 
 // renderRoom describes the surrounding conversation.
@@ -355,20 +356,40 @@ func renderRoom(room []v1.ChannelMessage) string {
 }
 
 func (r *Router) prompt(ctx context.Context, principal control.Principal, commandID, sourceID, sessionID, text string) *Outcome {
-	return r.promptWithContext(ctx, principal, commandID, sourceID, sessionID, text, nil)
+	return r.promptWithContext(ctx, principal, commandID, sourceID, sessionID, text, nil, nil)
+}
+
+// promptImages selects the pictures to send with a prompt.
+//
+// A file that is not an image is named in the text instead, so the agent knows
+// something was attached even though it cannot be handed the bytes.
+func promptImages(attachments []v1.Attachment) []v1.PromptImage {
+	var out []v1.PromptImage
+	for _, attachment := range attachments {
+		if !attachment.IsImage() || len(attachment.Data) == 0 {
+			continue
+		}
+		out = append(out, v1.PromptImage{
+			MimeType: attachment.MimeType,
+			Data:     attachment.Data,
+			Name:     attachment.Name,
+		})
+	}
+	return out
 }
 
 // promptWithContext sends a prompt together with what else is being said.
 //
 // The core renders the preamble, so a transport does not decide how Hive
 // describes a room to an agent.
-func (r *Router) promptWithContext(ctx context.Context, principal control.Principal, commandID, sourceID, sessionID, text string, room []v1.ChannelMessage) *Outcome {
+func (r *Router) promptWithContext(ctx context.Context, principal control.Principal, commandID, sourceID, sessionID, text string, room []v1.ChannelMessage, attachments []v1.Attachment) *Outcome {
 	result, err := r.control.Prompt(ctx, principal, v1.SessionPromptParams{
 		CommandID: commandID,
 		SessionID: sessionID,
 		Text:      text,
 		SourceID:  sourceID,
 		Context:   renderRoom(room),
+		Images:    promptImages(attachments),
 	})
 	if err != nil {
 		return failed(commandID, apierr.From(err))

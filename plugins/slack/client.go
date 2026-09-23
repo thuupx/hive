@@ -48,6 +48,10 @@ type Client interface {
 	// ChannelHistory reads the recent messages of a conversation, newest first.
 	ChannelHistory(ctx context.Context, channel string, limit int) ([]HistoryMessage, error)
 
+	// DownloadFile fetches a file. Slack requires the bot token to read it, so it
+	// is not a plain HTTP fetch.
+	DownloadFile(ctx context.Context, url string, maxBytes int64) ([]byte, error)
+
 	// Close releases the connection.
 	Close() error
 }
@@ -301,6 +305,44 @@ func (c *SocketClient) ChannelHistory(ctx context.Context, channel string, limit
 	}
 	return out, nil
 }
+
+// DownloadFile fetches a file through the Web API.
+//
+// The size is bounded: a transport must not read an unbounded amount of a user's
+// data into memory because they attached something large.
+func (c *SocketClient) DownloadFile(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxAttachmentBytes
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.config.BotToken)
+
+	response, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("slack: download: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("slack: download returned %d", response.StatusCode)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("slack: download: %w", err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("slack: file is larger than %d bytes", maxBytes)
+	}
+	return data, nil
+}
+
+// DefaultMaxAttachmentBytes bounds how large an attachment may be.
+const DefaultMaxAttachmentBytes = 8 << 20
 
 // UpdateMessage edits a message through the Web API.
 func (c *SocketClient) UpdateMessage(ctx context.Context, req UpdateMessageRequest) error {

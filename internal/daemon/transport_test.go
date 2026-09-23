@@ -412,3 +412,75 @@ func TestTransportAcknowledgementAdvancesTheBindingCursor(t *testing.T) {
 		t.Errorf("binding session = %q, want %q", binding.SessionID, outcome.SessionID)
 	}
 }
+
+// A picture sent to the transport reaches the agent as a picture.
+//
+// The transport fetches it, because reading the platform is its job, and the core
+// carries only the bytes.
+func TestTransportImageReachesTheAgent(t *testing.T) {
+	store, outcome, callErr := startStackWithTransport(t, v1.TransportInboundParams{
+		Transport:      "slack",
+		ConversationID: "C123",
+		Principal:      "slack:U123",
+		SourceID:       "event:C123:1700000000.000400",
+		Kind:           "message",
+		Text:           "what is in this picture?",
+		Attachments: []v1.Attachment{{
+			Name:     "shot.png",
+			MimeType: "image/png",
+			Data:     []byte{0x89, 0x50, 0x4e, 0x47},
+		}},
+	})
+	if callErr != nil {
+		t.Fatalf("transport delivery failed: %v", callErr)
+	}
+	if outcome.SessionID == "" {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+
+	// The agent reports what it received, so the assertion is about the agent and
+	// not about the transport.
+	waitFor(t, "the agent to report the prompt it received", func() bool {
+		_, ok := receivedPrompt(t, store, outcome.SessionID)
+		return ok
+	})
+
+	received, ok := receivedPrompt(t, store, outcome.SessionID)
+	if !ok {
+		t.Fatal("the agent never reported the prompt")
+	}
+	if received["prompt"] != "what is in this picture?" {
+		t.Errorf("prompt = %v", received["prompt"])
+	}
+	if received["images"] != float64(1) {
+		t.Errorf("images = %v, want 1", received["images"])
+	}
+	if received["mime"] != "image/png" {
+		t.Errorf("mime = %v", received["mime"])
+	}
+}
+
+// receivedPrompt decodes what the test agent reported receiving.
+func receivedPrompt(t *testing.T, store *storage.Store, sessionID string) (map[string]any, bool) {
+	t.Helper()
+	ctx := context.Background()
+
+	events, err := store.ReadEvents(ctx, sessionID, 0, 100)
+	if err != nil {
+		return nil, false
+	}
+	for _, ev := range events {
+		if ev.Type != "agent.raw" {
+			continue
+		}
+
+		var payload map[string]any
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			continue
+		}
+		if _, ok := payload["images"]; ok {
+			return payload, true
+		}
+	}
+	return nil, false
+}

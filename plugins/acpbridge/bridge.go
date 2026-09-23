@@ -282,7 +282,7 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 		return nil, err
 	}
 
-	stopReason, err := client.Prompt(ctx, r.sessionID, b.promptText(r, req.Text, req.Context))
+	stopReason, err := client.Prompt(ctx, r.sessionID, b.promptContent(r, req))
 	if err != nil {
 		return nil, v1.Unavailable("agent prompt failed: %s", err.Error())
 	}
@@ -296,6 +296,56 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 		_ = b.report(ctx, req.AgentRunID, req.Generation, "terminal", r.sessionID, stopReason)
 	}
 	return map[string]any{"stopReason": stopReason}, nil
+}
+
+// promptContent assembles what the agent actually receives.
+//
+// An image the agent cannot accept is described instead of sent: refusing the
+// whole turn because a picture was attached would lose the text as well.
+func (b *Bridge) promptContent(r *run, req v1.ExecutionPromptParams) []acp.Content {
+	text := b.promptText(r, req.Text, req.Context)
+
+	b.mu.Lock()
+	acceptsImages := b.caps != nil && b.caps.PromptImages
+	b.mu.Unlock()
+
+	content := make([]acp.Content, 0, len(req.Images)+1)
+	if len(req.Images) > 0 && !acceptsImages {
+		text = describeImages(text, req.Images)
+	}
+	if strings.TrimSpace(text) != "" {
+		content = append(content, acp.TextContent(text))
+	}
+
+	if acceptsImages {
+		for _, image := range req.Images {
+			if len(image.Data) == 0 {
+				continue
+			}
+			content = append(content, acp.ImageContent(image.MimeType, image.Data))
+		}
+	}
+	return content
+}
+
+// describeImages names the pictures the agent cannot be sent.
+func describeImages(text string, images []v1.PromptImage) string {
+	names := make([]string, 0, len(images))
+	for _, image := range images {
+		name := image.Name
+		if name == "" {
+			name = image.MimeType
+		}
+		names = append(names, name)
+	}
+
+	note := fmt.Sprintf("[%d image(s) attached, which this agent cannot accept: %s]",
+		len(images), strings.Join(names, ", "))
+
+	if strings.TrimSpace(text) == "" {
+		return note
+	}
+	return text + "\n\n" + note
 }
 
 // promptText assembles what the agent actually receives.

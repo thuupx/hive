@@ -41,6 +41,14 @@ func TestMain(m *testing.M) {
 	}
 }
 
+// firstImageMime is the media type of the first image, for a test to assert.
+func firstImageMime(images []v1.PromptImage) string {
+	if len(images) == 0 {
+		return ""
+	}
+	return images[0].MimeType
+}
+
 func runTestAgent() {
 	ctx := context.Background()
 
@@ -101,13 +109,25 @@ func runTestAgent() {
 		sessionID := sessions[req.AgentRunID]
 		mu.Unlock()
 
+		// Report what was actually received. The plugin runs in its own process, so
+		// this is how a test observes the prompt that reached the agent.
+		received, err := json.Marshal(map[string]any{
+			"text":   "working",
+			"prompt": req.Text,
+			"images": len(req.Images),
+			"mime":   firstImageMime(req.Images),
+		})
+		if err != nil {
+			return nil, v1.Internal("the received prompt could not be encoded")
+		}
+
 		_ = host.Call(ctx, v1.MethodEventPublish, v1.PublishEventParams{
 			AgentRunID: req.AgentRunID,
 			SessionID:  sessionID,
 			Type:       "agent.raw",
 			Protocol:   "test",
 			Method:     "session/update",
-			Payload:    json.RawMessage(`{"text":"working"}`),
+			Payload:    received,
 		}, nil)
 
 		_ = host.Call(ctx, v1.MethodExecutionReport, v1.ExecutionReportParams{

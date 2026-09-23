@@ -91,6 +91,10 @@ func run() error {
 		// A channel is not a private pipe, so a bounded amount of the room is
 		// handed to the agent. Zero turns it off.
 		ChannelContext: options.int("channel_context", 20),
+
+		// A transport must not read an unbounded amount of a user's data because
+		// they attached something large.
+		MaxAttachmentBytes: int64(options.int("max_attachment_mb", 8)) << 20,
 		Acknowledgement: slack.Acknowledgement{
 			Enabled:  options.bool("acknowledgement", true),
 			Mode:     options.get("acknowledgement_mode"),
