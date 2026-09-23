@@ -170,6 +170,7 @@ Put the command first, right after the mention.
 | `mode` | `[name]` | Show the agent's session modes, or switch to one. |
 | `sessions` | | List the conversations you can continue. |
 | `help` | | Show this list. |
+| `logs` | `[from] [limit]` | Show recent activity for this conversation. |
 
 Anything else is **not** a command:
 
@@ -304,6 +305,36 @@ The choice is stored on the **session**, so a new AgentRun continues with it
 instead of silently reverting. A value the agent refuses is reported rather than
 silently dropped: a user who picked a model should not be left wondering which
 one ran.
+
+### Tracing what happened
+
+When a conversation shows nothing, `logs` is what says why. It shows the durable
+event stream for the conversation: the tool calls, the answers, the errors, and
+the agent's raw stream as a count rather than a wall of text.
+
+```text
+@your-bot /logs
+  → *Recent activity*
+    ```
+    280  message      BANANA-42
+    281  tool         completed [execute] Listed ./
+    282  agent.raw    (agent stream)
+    289  message      ok
+    ```
+
+Pass a sequence to start from, and a limit:
+
+```text
+@your-bot /logs 280 50
+```
+
+If the history has been pruned, the trace says so and where it starts, rather
+than showing a partial conversation as if it were complete.
+
+The daemon log is the other half: it reports every event as it becomes durable
+(`agent tool`, `agent answered`, `execution reported`) and every rendering
+decision the transport makes. Set `level = "debug"` in the configuration to see
+each delivered event, including the ones that produced no message.
 
 ### Continuing after a restart
 

@@ -367,9 +367,32 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 			// is at-least-once, so an unacknowledged event arrives again.
 			conversations := p.conversationsFor(delivered.Event.SessionID)
 
+			// A conversation that shows nothing has to be traceable: this is the
+			// line that says whether an event arrived, whether it rendered, and
+			// where it went.
+			p.log.Debug("event delivered",
+				"session", delivered.Event.SessionID,
+				"sequence", delivered.Event.Sequence,
+				"type", delivered.Event.Type,
+				"conversations", len(conversations),
+			)
+			if len(conversations) == 0 {
+				p.log.Warn("an event has no conversation to render into",
+					"session", delivered.Event.SessionID,
+					"sequence", delivered.Event.Sequence,
+					"type", delivered.Event.Type,
+				)
+			}
+
 			renderer := Renderer{SessionID: delivered.Event.SessionID}
 			rendered, ok := renderer.RenderEvent(delivered.Event)
 			if ok {
+				p.log.Info("rendering an event",
+					"session", delivered.Event.SessionID,
+					"sequence", delivered.Event.Sequence,
+					"type", delivered.Event.Type,
+					"conversations", len(conversations),
+				)
 				for _, conversation := range conversations {
 					if rendered.ToolCallID != "" {
 						p.renderTool(ctx, conversation, rendered)

@@ -136,6 +136,13 @@ func RenderOutcome(outcome v1.TransportOutcome) Message {
 		}
 		return textMessage("Status unavailable.")
 
+	case v1.MethodSessionEvents:
+		var replay v1.EventReplayResult
+		if err := json.Unmarshal(outcome.Result, &replay); err == nil {
+			return traceMessage(&replay)
+		}
+		return textMessage("No activity.")
+
 	case v1.MethodSessionList:
 		var list v1.SessionListResult
 		if err := json.Unmarshal(outcome.Result, &list); err == nil {
@@ -318,6 +325,76 @@ func statusMessage(status *v1.SessionStatusResult) Message {
 		text += fmt.Sprintf("\n• `%s` %s on `%s` — %s", run.RunID, run.AgentID, run.NodeID, run.State)
 	}
 	return textMessage(text)
+}
+
+// traceMessage renders recent activity so a user can see what happened.
+//
+// A conversation that shows only the final answer is a black box: this is what
+// makes the steps visible, including the ones that produced nothing.
+func traceMessage(replay *v1.EventReplayResult) Message {
+	if replay.Gap != nil {
+		return textMessage(fmt.Sprintf(
+			"The history was pruned; the trace starts at %d.", replay.Gap.NextSequence))
+	}
+	if len(replay.Events) == 0 {
+		return textMessage("No activity yet.")
+	}
+
+	lines := make([]string, 0, len(replay.Events))
+	for _, ev := range replay.Events {
+		line := fmt.Sprintf("%d  %s", ev.Sequence, ev.Type)
+		if summary := traceSummary(ev); summary != "" {
+			line += "  " + summary
+		}
+		lines = append(lines, line)
+	}
+
+	return textMessage("*Recent activity*\n```\n" + strings.Join(lines, "\n") + "\n```")
+}
+
+// traceSummary is the readable part of an event.
+func traceSummary(ev v1.Event) string {
+	switch ev.Type {
+	case v1.EventTool:
+		var call v1.ToolCall
+		if err := json.Unmarshal(ev.Payload, &call); err != nil {
+			return ""
+		}
+		return fmt.Sprintf("%s [%s] %s", call.Status, call.Kind, call.Title)
+
+	case v1.EventMessage:
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			return ""
+		}
+		text := strings.Join(strings.Fields(payload.Text), " ")
+		if len(text) > 80 {
+			text = text[:80] + "…"
+		}
+		return text
+
+	case v1.EventError:
+		var payload struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			return ""
+		}
+		return payload.Message
+
+	case v1.EventPermissionRequested, v1.EventPermissionResponded:
+		return ""
+
+	default:
+		// The raw stream is noise in a conversation, so it is counted rather than
+		// shown.
+		if ev.Type == v1.EventAgentRaw {
+			return "(agent stream)"
+		}
+		return ""
+	}
 }
 
 // sessionListMessage lists the conversations a user can continue.

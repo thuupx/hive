@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/thupham/hive/internal/apierr"
@@ -234,6 +235,27 @@ func (r *Router) handleCommand(ctx context.Context, env v1.Envelope, principal c
 		}
 		return &Outcome{Method: method, CommandID: commandID, SessionID: sessionID, Result: result}
 
+	case v1.MethodSessionEvents:
+		sessionID, err := r.sessionFor(ctx, env)
+		if err != nil {
+			return failed(commandID, apierr.From(err))
+		}
+
+		result, err := r.control.Replay(ctx, principal, v1.EventReplayParams{
+			SessionID:    sessionID,
+			FromSequence: logFrom(env.Command.Args),
+			Limit:        logLimit(env.Command.Args),
+		})
+		if err != nil {
+			return failed(commandID, apierr.From(err))
+		}
+		return &Outcome{
+			Method:    method,
+			CommandID: commandID,
+			SessionID: sessionID,
+			Result:    result,
+		}
+
 	case v1.MethodSessionList:
 		result, err := r.control.ListSessions(ctx, principal, 0)
 		if err != nil {
@@ -327,6 +349,31 @@ func (r *Router) handleMessage(ctx context.Context, env v1.Envelope, principal c
 	return r.promptWithContext(ctx, principal, commandID, env.SourceID, sessionID,
 		env.Message.Text, env.ChannelContext, env.Message.Attachments)
 }
+
+// logFrom reads an optional starting sequence from a command argument.
+func logFrom(args []string) int64 {
+	if len(args) == 0 {
+		return 0
+	}
+	value, err := strconv.ParseInt(strings.TrimSpace(args[0]), 10, 64)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
+// logLimit is how much activity to show.
+func logLimit(args []string) int {
+	if len(args) > 1 {
+		if value, err := strconv.Atoi(strings.TrimSpace(args[1])); err == nil && value > 0 {
+			return value
+		}
+	}
+	return defaultLogLimit
+}
+
+// defaultLogLimit bounds how much a trace shows.
+const defaultLogLimit = 60
 
 // renderRoom describes the surrounding conversation.
 //

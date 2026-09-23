@@ -212,3 +212,48 @@ func TestRenderSessionListWhenEmpty(t *testing.T) {
 		t.Fatalf("text = %q", message.Text)
 	}
 }
+
+// A trace shows what happened, including the steps that produced nothing.
+func TestRenderTrace(t *testing.T) {
+	result, err := json.Marshal(v1.EventReplayResult{Events: []v1.Event{
+		{Sequence: 1, Type: v1.EventTool, Payload: json.RawMessage(
+			`{"toolCallId":"tc1","title":"Listed ./","kind":"execute","status":"completed"}`)},
+		{Sequence: 2, Type: v1.EventMessage, Payload: json.RawMessage(`{"text":"the answer"}`)},
+		{Sequence: 3, Type: v1.EventAgentRaw, Payload: json.RawMessage(`{"sessionUpdate":"x"}`)},
+	}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	message := RenderOutcome(v1.TransportOutcome{Method: v1.MethodSessionEvents, Result: result})
+	for _, want := range []string{"1", "tool", "Listed ./", "the answer", "(agent stream)"} {
+		if !strings.Contains(message.Text, want) {
+			t.Errorf("the trace does not show %q:\n%s", want, message.Text)
+		}
+	}
+}
+
+func TestRenderTraceWhenEmpty(t *testing.T) {
+	result, err := json.Marshal(v1.EventReplayResult{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	message := RenderOutcome(v1.TransportOutcome{Method: v1.MethodSessionEvents, Result: result})
+	if !strings.Contains(message.Text, "No activity") {
+		t.Fatalf("text = %q", message.Text)
+	}
+}
+
+// A pruned cursor is reported rather than shown as a complete conversation.
+func TestRenderTraceReportsAGap(t *testing.T) {
+	result, err := json.Marshal(v1.EventReplayResult{Gap: &v1.CursorGap{NextSequence: 400}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	message := RenderOutcome(v1.TransportOutcome{Method: v1.MethodSessionEvents, Result: result})
+	if !strings.Contains(message.Text, "pruned") || !strings.Contains(message.Text, "400") {
+		t.Fatalf("text = %q", message.Text)
+	}
+}

@@ -54,7 +54,41 @@ func (s *Service) SessionConfig(ctx context.Context, principal Principal, params
 		}
 	}
 
+	result, err := s.liveConfig(ctx, run, params)
+	if err == nil || v1.AsError(err).Code != v1.CodeNotFound {
+		return result, err
+	}
+
+	// The agent session lives in the agent process, so a restart leaves the run
+	// with no execution. Bringing it up is more useful than telling the user to
+	// send a message first: asking to see the models is a request to have the
+	// agent there.
+	if startErr := s.ensureExecution(ctx, run); startErr != nil {
+		return nil, v1.Unavailable(
+			"session %s has no live agent session and it could not be started: %s",
+			params.SessionID, startErr.Error())
+	}
 	return s.liveConfig(ctx, run, params)
+}
+
+// ensureExecution starts a run that has no execution, restoring its agent session
+// where the agent can.
+func (s *Service) ensureExecution(ctx context.Context, run *agent.AgentRun) error {
+	executionNode, ok := s.nodes.Node(run.NodeID)
+	if !ok || !executionNode.Connected() {
+		return v1.Unavailable("node %s is not connected", run.NodeID)
+	}
+
+	sess, err := s.store.GetSession(ctx, run.SessionID)
+	if err != nil {
+		return err
+	}
+
+	path, err := s.workspacePath(ctx, sess.WorkspaceID, run.NodeID)
+	if err != nil {
+		return err
+	}
+	return s.startRun(ctx, run, path, "", sess.AgentConfig)
 }
 
 // configRun resolves which run carries the live agent session.

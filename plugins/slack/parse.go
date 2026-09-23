@@ -42,6 +42,7 @@ var Commands = CommandMap{
 	"models":   v1.MethodSessionConfig,
 	"mode":     v1.MethodSessionConfig,
 	"sessions": v1.MethodSessionList,
+	"logs":     v1.MethodSessionEvents,
 
 	// help has no Hive method: the catalog is the transport's own, so the
 	// transport answers it without asking the core.
@@ -81,6 +82,7 @@ var Descriptions = map[string]string{
 	"models":   "Show the agent models",
 	"mode":     "Show or switch the agent session mode",
 	"sessions": "List your sessions",
+	"logs":     "Show recent activity for this conversation",
 	"help":     "Show this list",
 }
 
