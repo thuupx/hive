@@ -171,9 +171,9 @@ func (c *Client) Authenticate(ctx context.Context, methodID string, meta json.Ra
 }
 
 // NewSession creates an agent session and returns its runtime session id.
-func (c *Client) NewSession(ctx context.Context, req NewSessionRequest) (string, error) {
+func (c *Client) NewSession(ctx context.Context, req NewSessionRequest) (*NewSessionResult, error) {
 	if req.Cwd == "" {
-		return "", errors.New("acp: session cwd is required")
+		return nil, errors.New("acp: session cwd is required")
 	}
 	if req.McpServers == nil {
 		req.McpServers = []json.RawMessage{}
@@ -181,12 +181,27 @@ func (c *Client) NewSession(ctx context.Context, req NewSessionRequest) (string,
 
 	var resp newSessionResponse
 	if err := c.call(ctx, methodSessionNew, req, &resp); err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.SessionID == "" {
-		return "", errors.New("acp: agent returned an empty session id")
+		return nil, errors.New("acp: agent returned an empty session id")
 	}
-	return resp.SessionID, nil
+	return &NewSessionResult{SessionID: resp.SessionID, ConfigOptions: resp.ConfigOptions}, nil
+}
+
+// SetConfigOption changes one session-level setting.
+//
+// The agent declares what it offers and what the values are, so this is how a
+// client selects a model without knowing anything about models.
+func (c *Client) SetConfigOption(ctx context.Context, sessionID, configID string, value any) error {
+	if configID == "" {
+		return errors.New("acp: a config id is required")
+	}
+	return c.call(ctx, methodSetConfigOption, setConfigOptionRequest{
+		SessionID: sessionID,
+		ConfigID:  configID,
+		Value:     value,
+	}, nil)
 }
 
 // LoadSession restores a session the agent created earlier.

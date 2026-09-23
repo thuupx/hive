@@ -67,6 +67,9 @@ const (
 	MethodExecutionPrompt = "execution.prompt"
 	MethodExecutionCancel = "execution.cancel"
 	MethodExecutionReport = "execution.report"
+
+	// MethodExecutionConfig reads or changes a session-level agent selector.
+	MethodExecutionConfig = "execution.config"
 )
 
 // NotificationEvent delivers an event to a subscribed plugin.
@@ -167,7 +170,45 @@ type ExecutionStartParams struct {
 	// when a handoff carried context into this run. It is rendered by the core so
 	// the agent adapter stays protocol-agnostic.
 	Context string `json:"context,omitempty"`
+
+	// Config are the session options the user chose, keyed by the agent's own
+	// config id. Hive does not know what they mean: the agent declares its
+	// selectors and the user picks a value.
+	Config map[string]string `json:"config,omitempty"`
 }
+
+// SessionConfigOption is one selector an agent offers for a session.
+//
+// It is the agent's own declaration, passed through so a client can render it. A
+// model is just a selector whose category is "model".
+type SessionConfigOption struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Category    string `json:"category,omitempty"`
+	Type        string `json:"type,omitempty"`
+
+	// CurrentValue is the value in force. It is a string for a select and a bool
+	// for a toggle, so it stays untyped on the wire.
+	CurrentValue json.RawMessage `json:"currentValue,omitempty"`
+
+	Options []SessionConfigOptionValue `json:"options,omitempty"`
+}
+
+// SessionConfigOptionValue is one choice in a selector.
+type SessionConfigOptionValue struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// Config option categories. They are UX hints: a client renders a model selector
+// for the model category without knowing anything about models.
+const (
+	ConfigCategoryMode    = "mode"
+	ConfigCategoryModel   = "model"
+	ConfigCategoryThought = "thought_level"
+)
 
 // ExecutionPromptParams asks an agent plugin to prompt an execution.
 type ExecutionPromptParams struct {
@@ -259,4 +300,20 @@ type Event struct {
 	Protocol   string          `json:"protocol,omitempty"`
 	Method     string          `json:"method,omitempty"`
 	Payload    json.RawMessage `json:"payload"`
+}
+
+// ExecutionConfigParams reads or changes an agent's session selectors.
+//
+// An empty ConfigID reads the current options. A value is a string on the wire
+// because a selector value is a string or a bool, and the agent decides which.
+type ExecutionConfigParams struct {
+	AgentRunID string `json:"agentRunId"`
+	AgentID    string `json:"agentId"`
+	ConfigID   string `json:"configId,omitempty"`
+	Value      string `json:"value,omitempty"`
+}
+
+// ExecutionConfigResult is the agent's selectors after the change.
+type ExecutionConfigResult struct {
+	Options []SessionConfigOption `json:"options"`
 }

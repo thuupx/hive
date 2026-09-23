@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 
@@ -127,6 +128,10 @@ type run struct {
 	preamble string
 	seeded   bool
 
+	// config are the selectors the agent offers for this session, as it declared
+	// them. Hive renders them without knowing what they mean.
+	config []acp.ConfigOption
+
 	// answer accumulates the assistant text of the current turn, so the answer to
 	// a prompt can be surfaced as one readable message.
 	answer strings.Builder
@@ -169,6 +174,7 @@ func (b *Bridge) Register() {
 	b.host.Handle(v1.MethodExecutionPrompt, b.prompt)
 	b.host.Handle(v1.MethodExecutionCancel, b.cancel)
 	b.host.Handle(v1.MethodPermissionRespond, b.respond)
+	b.host.Handle(v1.MethodExecutionConfig, b.config)
 }
 
 // Run serves until ctx is cancelled or the connection ends.
@@ -202,13 +208,14 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 		return nil, err
 	}
 
-	sessionID, err := client.NewSession(ctx, acp.NewSessionRequest{Cwd: req.WorkspacePath})
+	created, err := client.NewSession(ctx, acp.NewSessionRequest{Cwd: req.WorkspacePath})
 	if err != nil {
 		// The start side effect did not happen. Reporting absent lets the core
 		// reconcile without starting a second execution.
 		_ = b.report(ctx, req.AgentRunID, req.Generation, "absent", "", err.Error())
 		return nil, v1.Unavailable("agent session could not be created: %s", err.Error())
 	}
+	sessionID := created.SessionID
 
 	b.mu.Lock()
 	b.runs[req.AgentRunID] = &run{
@@ -216,12 +223,44 @@ func (b *Bridge) start(ctx context.Context, params json.RawMessage) (any, error)
 		sessionID:     sessionID,
 		hiveSessionID: req.SessionID,
 		preamble:      req.Context,
+		config:        created.ConfigOptions,
 	}
 	b.mu.Unlock()
 
+	// The agent declares its selectors, and the ones the user chose are applied
+	// before the first prompt so the turn runs with the right model.
+	if err := b.applyConfig(ctx, client, sessionID, req.Config); err != nil {
+		return nil, err
+	}
+
 	_ = b.report(ctx, req.AgentRunID, req.Generation, "starting", sessionID, "")
 
-	return map[string]any{"runtimeSessionId": sessionID}, nil
+	return map[string]any{
+		"runtimeSessionId": sessionID,
+		"configOptions":    created.ConfigOptions,
+	}, nil
+}
+
+// applyConfig sets the session options the user chose.
+//
+// A selection that the agent does not offer is refused rather than silently
+// dropped: a user who picked a model should not be left wondering which one ran.
+func (b *Bridge) applyConfig(ctx context.Context, client *acp.Client, sessionID string, wanted map[string]string) error {
+	for _, configID := range sortedKeys(wanted) {
+		if err := client.SetConfigOption(ctx, sessionID, configID, wanted[configID]); err != nil {
+			return v1.InvalidParams("agent refused %s=%s: %s", configID, wanted[configID], err.Error())
+		}
+	}
+	return nil
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error) {
@@ -272,6 +311,87 @@ func (b *Bridge) promptText(r *run, text string) string {
 	}
 	r.seeded = true
 	return r.preamble + "\n\n" + text
+}
+
+// config reads or changes the agent's session selectors.
+//
+// Hive never interprets a selector. It passes the agent's own declaration through
+// and forwards the user's choice, so a new selector needs no Hive change.
+func (b *Bridge) config(ctx context.Context, params json.RawMessage) (any, error) {
+	var req v1.ExecutionConfigParams
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, v1.InvalidParams("invalid execution.config request")
+	}
+
+	b.mu.Lock()
+	r := b.runs[req.AgentRunID]
+	client := b.client
+	b.mu.Unlock()
+
+	if r == nil || client == nil {
+		return nil, v1.NotFound("agent run %s has no live execution", req.AgentRunID)
+	}
+
+	if req.ConfigID != "" {
+		if err := client.SetConfigOption(ctx, r.sessionID, req.ConfigID, req.Value); err != nil {
+			return nil, v1.InvalidParams("agent refused %s=%s: %s", req.ConfigID, req.Value, err.Error())
+		}
+
+		b.mu.Lock()
+		r.config = withCurrentValue(r.config, req.ConfigID, req.Value)
+		options := append([]acp.ConfigOption(nil), r.config...)
+		b.mu.Unlock()
+
+		return v1.ExecutionConfigResult{Options: wireConfig(options)}, nil
+	}
+
+	b.mu.Lock()
+	options := append([]acp.ConfigOption(nil), r.config...)
+	b.mu.Unlock()
+
+	return v1.ExecutionConfigResult{Options: wireConfig(options)}, nil
+}
+
+// withCurrentValue records a chosen value in the cached declaration.
+func withCurrentValue(options []acp.ConfigOption, configID, value string) []acp.ConfigOption {
+	out := append([]acp.ConfigOption(nil), options...)
+	for i := range out {
+		if out[i].ID == configID {
+			out[i].CurrentValue = value
+		}
+	}
+	return out
+}
+
+// wireConfig passes the agent's declaration through to the core.
+func wireConfig(options []acp.ConfigOption) []v1.SessionConfigOption {
+	out := make([]v1.SessionConfigOption, 0, len(options))
+	for _, option := range options {
+		current, err := json.Marshal(option.CurrentValue)
+		if err != nil {
+			current = nil
+		}
+
+		values := make([]v1.SessionConfigOptionValue, 0, len(option.Options))
+		for _, value := range option.Options {
+			values = append(values, v1.SessionConfigOptionValue{
+				Value:       value.Value,
+				Name:        value.Name,
+				Description: value.Description,
+			})
+		}
+
+		out = append(out, v1.SessionConfigOption{
+			ID:           option.ID,
+			Name:         option.Name,
+			Description:  option.Description,
+			Category:     option.Category,
+			Type:         option.Type,
+			CurrentValue: current,
+			Options:      values,
+		})
+	}
+	return out
 }
 
 func (b *Bridge) cancel(_ context.Context, params json.RawMessage) (any, error) {
@@ -434,6 +554,14 @@ func (b *Bridge) publish(update acp.Update) {
 		b.mu.Unlock()
 	}
 
+	// A config update means the agent changed a selector itself, so the cached
+	// declaration has to follow.
+	if options, ok := configOptionsFrom(update.Payload); ok {
+		b.mu.Lock()
+		r.config = options
+		b.mu.Unlock()
+	}
+
 	// Tool activity is the one thing normalized out of the stream, because it is
 	// what makes an agent observable.
 	if call, ok := b.toolCall(r, update.Payload); ok {
@@ -459,6 +587,21 @@ func (b *Bridge) publish(update acp.Update) {
 		Method:     update.Method,
 		Payload:    update.Payload,
 	}, nil)
+}
+
+// configOptionsFrom reads a config_option_update.
+func configOptionsFrom(payload json.RawMessage) ([]acp.ConfigOption, bool) {
+	var update struct {
+		SessionUpdate string             `json:"sessionUpdate"`
+		ConfigOptions []acp.ConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal(payload, &update); err != nil {
+		return nil, false
+	}
+	if update.SessionUpdate != "config_option_update" || len(update.ConfigOptions) == 0 {
+		return nil, false
+	}
+	return update.ConfigOptions, true
 }
 
 // toolCall normalizes a tool call or one of its updates.

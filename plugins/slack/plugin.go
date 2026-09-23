@@ -371,6 +371,7 @@ func wireParams(env v1.Envelope) v1.TransportInboundParams {
 			params.Command = env.Command.Name
 			params.Method = env.Command.Method
 			params.Args = env.Command.Args
+			params.ConfigID = env.Command.ConfigID
 		}
 	case v1.EnvelopeInteraction:
 		if env.Interaction != nil {

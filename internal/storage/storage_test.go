@@ -80,8 +80,8 @@ func TestOpenAppliesMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationVersion: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("migration version = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("migration version = %d, want 3", version)
 	}
 
 	tables, err := s.Tables(ctx)
@@ -121,8 +121,8 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationVersion: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("migration version after reopen = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("migration version after reopen = %d, want 3", version)
 	}
 	tablesAfter, err := second.Tables(context.Background())
 	if err != nil {

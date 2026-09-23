@@ -3,6 +3,7 @@ package slack
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
@@ -110,6 +111,13 @@ func RenderOutcome(outcome v1.TransportOutcome) Message {
 				handed.SessionID, handed.AgentID, handed.TargetRunID))
 		}
 		return textMessage("Handed off.")
+
+	case v1.MethodSessionConfig:
+		var config v1.SessionConfigResult
+		if err := json.Unmarshal(outcome.Result, &config); err == nil {
+			return configMessage(config)
+		}
+		return textMessage("No agent settings are available.")
 
 	case v1.MethodSessionStatus:
 		var status v1.SessionStatusResult
@@ -252,6 +260,39 @@ func textMessage(text string) Message {
 		Text:   text,
 		Blocks: []Block{{Type: "section", Text: &TextObject{Type: "mrkdwn", Text: text}}},
 	}
+}
+
+// configMessage renders the selectors an agent declared.
+//
+// The agent decides what it offers, so this renders whatever it sent rather than
+// knowing what a model is.
+func configMessage(config v1.SessionConfigResult) Message {
+	if len(config.Options) == 0 {
+		return textMessage("This agent offers no settings.")
+	}
+
+	text := fmt.Sprintf("*%s settings*", config.AgentID)
+	for _, option := range config.Options {
+		current := strings.Trim(string(option.CurrentValue), `"`)
+
+		text += fmt.Sprintf("\n\n*%s*", option.Name)
+		if current != "" {
+			text += fmt.Sprintf(" — now `%s`", current)
+		}
+
+		for _, value := range option.Options {
+			mark := "•"
+			if value.Value == current {
+				mark = "•  :white_check_mark:"
+			}
+			text += fmt.Sprintf("\n%s `%s` — %s", mark, value.Value, value.Name)
+		}
+
+		if len(option.Options) > 0 {
+			text += fmt.Sprintf("\nSwitch with: `@Hive %s <name>`", option.ID)
+		}
+	}
+	return textMessage(text)
 }
 
 func statusMessage(status *v1.SessionStatusResult) Message {

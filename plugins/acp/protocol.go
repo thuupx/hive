@@ -13,6 +13,7 @@ const ProtocolVersion = 1
 const (
 	methodInitialize        = "initialize"
 	methodAuthenticate      = "authenticate"
+	methodSetConfigOption   = "session/set_config_option"
 	methodSessionNew        = "session/new"
 	methodSessionLoad       = "session/load"
 	methodSessionPrompt     = "session/prompt"
@@ -64,6 +65,10 @@ type Capabilities struct {
 	// list means the agent refuses to create a session until the client
 	// authenticates.
 	AuthMethods []AuthMethod
+
+	// ConfigOptions are the selectors the agent offers for a session. Hive renders
+	// them without knowing what they mean.
+	ConfigOptions []ConfigOption
 }
 
 type initializeRequest struct {
@@ -92,6 +97,43 @@ type initializeResponse struct {
 	AgentCapabilities agentCapabilities `json:"agentCapabilities"`
 	AgentInfo         *Implementation   `json:"agentInfo,omitempty"`
 	AuthMethods       []AuthMethod      `json:"authMethods,omitempty"`
+}
+
+// ConfigOption is one session-level setting the agent offers.
+//
+// The agent declares these, and a client renders a selector for each. Hive does
+// not know what a model is: it knows the agent offers a selector with the model
+// category, which is the whole point of the protocol.
+type ConfigOption struct {
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description,omitempty"`
+	Category     string              `json:"category,omitempty"`
+	Type         string              `json:"type,omitempty"`
+	CurrentValue any                 `json:"currentValue,omitempty"`
+	Options      []ConfigOptionValue `json:"options,omitempty"`
+}
+
+// ConfigOptionValue is one choice in a selector.
+type ConfigOptionValue struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// Config option categories. They are UX hints, not semantics: a client renders a
+// model selector for CategoryModel without knowing anything about models.
+const (
+	CategoryMode        = "mode"
+	CategoryModel       = "model"
+	CategoryModelConfig = "model_config"
+	CategoryThought     = "thought_level"
+)
+
+type setConfigOptionRequest struct {
+	SessionID string `json:"sessionId"`
+	ConfigID  string `json:"configId"`
+	Value     any    `json:"value"`
 }
 
 // AuthMethod is one way an agent can authenticate.
@@ -124,6 +166,12 @@ type promptCapabilities struct {
 	EmbeddedContext bool `json:"embeddedContext"`
 }
 
+// NewSessionResult is the outcome of creating a session.
+type NewSessionResult struct {
+	SessionID     string
+	ConfigOptions []ConfigOption
+}
+
 // NewSessionRequest asks the agent to create a session.
 type NewSessionRequest struct {
 	// Cwd is the workspace path the session runs in.
@@ -139,6 +187,10 @@ type NewSessionRequest struct {
 
 type newSessionResponse struct {
 	SessionID string `json:"sessionId"`
+
+	// ConfigOptions are the selectors this agent offers for the session, such as
+	// the model or the session mode.
+	ConfigOptions []ConfigOption `json:"configOptions,omitempty"`
 }
 
 // LoadSessionRequest asks the agent to restore a session it created earlier.

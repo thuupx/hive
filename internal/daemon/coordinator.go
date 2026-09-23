@@ -368,9 +368,10 @@ func envelopeOf(params v1.TransportInboundParams) v1.Envelope {
 		env.Message = &v1.IncomingMessage{Text: params.Text}
 	case v1.EnvelopeCommand:
 		env.Command = &v1.IncomingCommand{
-			Name:   params.Command,
-			Method: params.Method,
-			Args:   params.Args,
+			Name:     params.Command,
+			Method:   params.Method,
+			Args:     params.Args,
+			ConfigID: params.ConfigID,
 		}
 	case v1.EnvelopeInteraction:
 		env.Interaction = &v1.IncomingInteraction{

@@ -124,6 +124,29 @@ func runTestAgent() {
 		return map[string]any{"cancelled": true}, nil
 	})
 
+	host.Handle(v1.MethodExecutionConfig, func(_ context.Context, params json.RawMessage) (any, error) {
+		var req v1.ExecutionConfigParams
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, v1.InvalidParams("invalid execution.config request")
+		}
+
+		current := "m1"
+		if req.Value != "" {
+			current = req.Value
+		}
+		return v1.ExecutionConfigResult{Options: []v1.SessionConfigOption{{
+			ID:           "model",
+			Name:         "Model",
+			Category:     v1.ConfigCategoryModel,
+			Type:         "select",
+			CurrentValue: json.RawMessage(`"` + current + `"`),
+			Options: []v1.SessionConfigOptionValue{
+				{Value: "m1", Name: "Model 1"},
+				{Value: "m2", Name: "Model 2"},
+			},
+		}}}, nil
+	})
+
 	host.Handle(v1.MethodPermissionRespond, func(_ context.Context, params json.RawMessage) (any, error) {
 		var req v1.PermissionRespondParams
 		if err := json.Unmarshal(params, &req); err != nil {

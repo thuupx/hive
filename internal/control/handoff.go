@@ -154,7 +154,7 @@ func (s *Service) runHandoff(ctx context.Context, sess *session.Session, record 
 	//
 	// The context travels with the start, so the target sees what happened before
 	// its first prompt rather than starting blind.
-	if err := s.startRun(ctx, targetRun, params.Workspace, preamble); err != nil {
+	if err := s.startRun(ctx, targetRun, params.Workspace, preamble, sess.AgentConfig); err != nil {
 		return err
 	}
 

@@ -410,3 +410,16 @@ func (e *pluginExecutor) Respond(ctx context.Context, req v1.PermissionRespondPa
 	}
 	return inst.Call(ctx, v1.MethodPermissionRespond, req, nil)
 }
+
+func (e *pluginExecutor) Config(ctx context.Context, req v1.ExecutionConfigParams) (*v1.ExecutionConfigResult, error) {
+	inst, err := e.instanceFor(req.AgentID)
+	if err != nil {
+		return nil, err
+	}
+
+	var out v1.ExecutionConfigResult
+	if err := inst.Call(ctx, v1.MethodExecutionConfig, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

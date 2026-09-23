@@ -36,7 +36,31 @@ const (
 
 	// MethodWorkspaceList lists workspaces and shared-location warnings.
 	MethodWorkspaceList = "workspace.list"
+
+	// MethodSessionConfig reads or changes a session's agent selectors, such as
+	// the model or the session mode.
+	MethodSessionConfig = "session.config"
 )
+
+// SessionConfigParams reads or changes a session's agent selectors.
+//
+// An empty ConfigID reads them. A change is durable on the session, so a new
+// AgentRun continues with the same selection.
+type SessionConfigParams struct {
+	CommandID string `json:"commandId,omitempty"`
+	SessionID string `json:"sessionId"`
+	RunID     string `json:"runId,omitempty"`
+	ConfigID  string `json:"configId,omitempty"`
+	Value     string `json:"value,omitempty"`
+	SourceID  string `json:"sourceId,omitempty"`
+}
+
+// SessionConfigResult is a session's agent selectors after the change.
+type SessionConfigResult struct {
+	SessionID string                `json:"sessionId"`
+	AgentID   string                `json:"agentId"`
+	Options   []SessionConfigOption `json:"options"`
+}
 
 // SessionCreateParams creates a session and its first AgentRun.
 type SessionCreateParams struct {

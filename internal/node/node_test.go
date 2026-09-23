@@ -3,6 +3,7 @@ package node_test
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ type fakeExecutor struct {
 	prompts   []v1.ExecutionPromptParams
 	cancels   []v1.ExecutionCancelParams
 	responses []v1.PermissionRespondParams
+	configs   []v1.ExecutionConfigParams
 }
 
 func (f *fakeExecutor) Start(_ context.Context, req v1.ExecutionStartParams) (string, error) {
@@ -48,6 +50,21 @@ func (f *fakeExecutor) Respond(_ context.Context, req v1.PermissionRespondParams
 	defer f.mu.Unlock()
 	f.responses = append(f.responses, req)
 	return nil
+}
+
+func (f *fakeExecutor) Config(_ context.Context, req v1.ExecutionConfigParams) (*v1.ExecutionConfigResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.configs = append(f.configs, req)
+
+	return &v1.ExecutionConfigResult{Options: []v1.SessionConfigOption{{
+		ID:           "model",
+		Name:         "Model",
+		Category:     "model",
+		Type:         "select",
+		CurrentValue: json.RawMessage(`"m1"`),
+		Options:      []v1.SessionConfigOptionValue{{Value: "m1", Name: "Model 1"}},
+	}}}, nil
 }
 
 func (f *fakeExecutor) startedCount() int {

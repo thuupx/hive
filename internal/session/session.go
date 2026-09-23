@@ -58,20 +58,39 @@ type Session struct {
 	State                   State
 	WorkspaceID             string
 	DefaultInteractiveRunID string
-	Metadata                json.RawMessage
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
+
+	// AgentConfig are the agent selectors the user chose for this session, keyed
+	// by the agent's own config id.
+	//
+	// It lives on the session rather than on a run, because a new AgentRun
+	// continues the same conversation: a user who picked a model should not have
+	// it silently revert when the next run starts.
+	AgentConfig map[string]string
+
+	Metadata  json.RawMessage
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// SetAgentConfig records a chosen selector value.
+func (s *Session) SetAgentConfig(configID, value string) {
+	if s.AgentConfig == nil {
+		s.AgentConfig = map[string]string{}
+	}
+	s.AgentConfig[configID] = value
+	s.UpdatedAt = time.Now().UTC()
 }
 
 // New creates an active session.
 func New(id string) *Session {
 	now := time.Now().UTC()
 	return &Session{
-		ID:        id,
-		State:     StateActive,
-		Metadata:  json.RawMessage("{}"),
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          id,
+		State:       StateActive,
+		AgentConfig: map[string]string{},
+		Metadata:    json.RawMessage("{}"),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 }
 

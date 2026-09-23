@@ -137,6 +137,15 @@ func (c *Client) ListWorkspaces(ctx context.Context) (*v1.WorkspaceListResult, e
 	return &result, nil
 }
 
+// SessionConfig reads or changes a session's agent selectors.
+func (c *Client) SessionConfig(ctx context.Context, params v1.SessionConfigParams) (*v1.SessionConfigResult, error) {
+	var result v1.SessionConfigResult
+	if err := c.peer.Call(ctx, v1.MethodSessionConfig, params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // ListPermissions returns pending permission requests.
 func (c *Client) ListPermissions(ctx context.Context, params v1.PermissionListParams) (*v1.PermissionListResult, error) {
 	var result v1.PermissionListResult

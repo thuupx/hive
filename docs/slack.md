@@ -164,6 +164,9 @@ Put the command first, right after the mention.
 | `status` | | Show the current session: state, runs, agent, node. |
 | `cancel` | | Cancel the run that is currently working. |
 | `handoff` | `<agent>` | Hand the session to another agent, carrying the context. |
+| `model` | `[name]` | Show the agent's models, or switch to one. |
+| `models` | | Alias for `model` with no argument. |
+| `mode` | `[name]` | Show the agent's session modes, or switch to one. |
 
 Anything else is **not** a command:
 
@@ -202,6 +205,33 @@ Anything else is **not** a command:
 @your-bot /cancel
   → Cancelled.
 ```
+
+### Agent settings
+
+An agent declares what it lets you configure. Hive renders whatever it sent: it
+does not know what a model is, only that the agent offers a selector.
+
+```text
+@your-bot /model
+  → *devin settings*
+    *Model* — now `swe-2-high`
+    •  :white_check_mark: `swe-2-high` — SWE-2 High
+    • `swe-2-fast` — SWE-2 Fast
+    Switch with: `@Hive model <name>`
+
+@your-bot /model swe-2-fast
+  → the selector is applied to the live session
+
+@your-bot /mode
+  → *Session Mode* — now `accept-edits`
+    • `accept-edits` — Code
+    • `plan` — Plan
+```
+
+The choice is stored on the **session**, so a new AgentRun continues with it
+instead of silently reverting. A value the agent refuses is reported rather than
+silently dropped: a user who picked a model should not be left wondering which
+one ran.
 
 ### Conversations and sessions
 

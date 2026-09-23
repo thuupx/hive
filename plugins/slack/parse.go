@@ -38,6 +38,19 @@ var Commands = CommandMap{
 	"status":   v1.MethodSessionStatus,
 	"cancel":   v1.MethodSessionCancel,
 	"handoff":  v1.MethodSessionHandoff,
+	"model":    v1.MethodSessionConfig,
+	"models":   v1.MethodSessionConfig,
+	"mode":     v1.MethodSessionConfig,
+}
+
+// ConfigIDs maps a transport command to the agent selector it targets.
+//
+// The transport owns this mapping: it decides that "/model" is about the selector
+// called model. Hive never learns the name.
+var ConfigIDs = map[string]string{
+	"model":  v1.ConfigCategoryModel,
+	"models": v1.ConfigCategoryModel,
+	"mode":   v1.ConfigCategoryMode,
 }
 
 // Catalog is the discoverable command list this transport exposes.
@@ -59,6 +72,9 @@ var Descriptions = map[string]string{
 	"status":   "Show the current session status",
 	"cancel":   "Cancel the current run",
 	"handoff":  "Hand off the session to another agent",
+	"model":    "Show or switch the agent model",
+	"models":   "Show the agent models",
+	"mode":     "Show or switch the agent session mode",
 }
 
 // Catalog returns the commands this transport exposes, in a stable order.
@@ -111,7 +127,12 @@ func (p Parser) ParseMessage(ev MessageEvent) v1.Envelope {
 
 	if name, method, args, ok := parseCommand(text); ok {
 		env.Kind = v1.EnvelopeCommand
-		env.Command = &v1.IncomingCommand{Name: name, Method: method, Args: args}
+		env.Command = &v1.IncomingCommand{
+			Name:     name,
+			Method:   method,
+			Args:     args,
+			ConfigID: ConfigIDs[name],
+		}
 		return env
 	}
 

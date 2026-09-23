@@ -212,7 +212,7 @@ func TestNewSessionReturnsRuntimeSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	if id != "agent-sess-1" {
+	if id.SessionID != "agent-sess-1" {
 		t.Fatalf("session id = %q", id)
 	}
 

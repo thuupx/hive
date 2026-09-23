@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 
 	"github.com/thupham/hive/internal/apierr"
 	"github.com/thupham/hive/internal/control"
@@ -196,6 +197,29 @@ func (r *Router) handleCommand(ctx context.Context, env v1.Envelope, principal c
 			SessionID: sessionID,
 			RunID:     result.TargetRunID,
 			Created:   true,
+			Result:    result,
+		}
+
+	case v1.MethodSessionConfig:
+		sessionID, err := r.sessionFor(ctx, env)
+		if err != nil {
+			return failed(commandID, apierr.From(err))
+		}
+
+		result, err := r.control.SessionConfig(ctx, principal, v1.SessionConfigParams{
+			CommandID: commandID,
+			SessionID: sessionID,
+			ConfigID:  env.Command.ConfigID,
+			Value:     strings.Join(env.Command.Args, " "),
+			SourceID:  env.SourceID,
+		})
+		if err != nil {
+			return failed(commandID, apierr.From(err))
+		}
+		return &Outcome{
+			Method:    method,
+			CommandID: commandID,
+			SessionID: sessionID,
 			Result:    result,
 		}
 

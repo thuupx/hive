@@ -173,7 +173,7 @@ func (s *Service) CreateSession(ctx context.Context, principal Principal, params
 	if err != nil {
 		return nil, domainError(err)
 	}
-	if err := s.startRun(ctx, run, runPath, ""); err != nil {
+	if err := s.startRun(ctx, run, runPath, "", sess.AgentConfig); err != nil {
 		s.log.Warn("execution could not be started", "run", run.ID, "node", run.NodeID, "error", err)
 	}
 
@@ -277,7 +277,7 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 			return nil, domainError(err)
 		}
 
-		if err := s.startRun(ctx, newRun, path, ""); err != nil {
+		if err := s.startRun(ctx, newRun, path, "", sess.AgentConfig); err != nil {
 			_ = s.failCommand(ctx, stored.ID, err)
 			return nil, domainError(err)
 		}
@@ -596,7 +596,7 @@ func (s *Service) nodeForAgent(agentID string) (*node.Node, error) {
 	return nil, v1.Unavailable("no connected node runs agent %q", agentID)
 }
 
-func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePath, preamble string) error {
+func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePath, preamble string, config map[string]string) error {
 	n, ok := s.nodes.Node(run.NodeID)
 	if !ok || !n.Connected() {
 		return v1.Unavailable("node %s is not connected", run.NodeID)
@@ -612,6 +612,7 @@ func (s *Service) startRun(ctx context.Context, run *agent.AgentRun, workspacePa
 		Generation:    run.ExecutionGeneration,
 		WorkspacePath: workspacePath,
 		Context:       preamble,
+		Config:        config,
 	}, &out)
 	if err != nil {
 		return err

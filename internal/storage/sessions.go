@@ -89,7 +89,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (*session.Session, er
 
 func (s *Store) getSession(ctx context.Context, q Execer, id string) (*session.Session, error) {
 	row := q.QueryRowContext(ctx, `
-		SELECT id, state, workspace_id, default_interactive_run_id, metadata, created_at, updated_at
+		SELECT id, state, workspace_id, default_interactive_run_id, agent_config, metadata, created_at, updated_at
 		FROM sessions WHERE id = ?`, id)
 
 	var (
@@ -97,11 +97,12 @@ func (s *Store) getSession(ctx context.Context, q Execer, id string) (*session.S
 		state     string
 		workspace sql.NullString
 		defRun    sql.NullString
+		agentCfg  string
 		meta      string
 		created   int64
 		updated   int64
 	)
-	err := row.Scan(&sess.ID, &state, &workspace, &defRun, &meta, &created, &updated)
+	err := row.Scan(&sess.ID, &state, &workspace, &defRun, &agentCfg, &meta, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("storage: session %s: %w", id, ErrNotFound)
 	}
@@ -112,10 +113,26 @@ func (s *Store) getSession(ctx context.Context, q Execer, id string) (*session.S
 	sess.State = session.State(state)
 	sess.WorkspaceID = workspace.String
 	sess.DefaultInteractiveRunID = defRun.String
+	sess.AgentConfig = decodeAgentConfig(agentCfg)
 	sess.Metadata = json.RawMessage(meta)
 	sess.CreatedAt = fromUnixNano(created)
 	sess.UpdatedAt = fromUnixNano(updated)
 	return &sess, nil
+}
+
+// decodeAgentConfig reads a stored selection map.
+//
+// An unreadable value is treated as empty rather than failing a read: a session
+// must stay usable even if a selection was written by a newer build.
+func decodeAgentConfig(raw string) map[string]string {
+	config := map[string]string{}
+	if raw == "" {
+		return config
+	}
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		return map[string]string{}
+	}
+	return config
 }
 
 func (s *Store) updateSession(ctx context.Context, tx Execer, sess *session.Session) error {
@@ -128,12 +145,17 @@ func (s *Store) updateSession(ctx context.Context, tx Execer, sess *session.Sess
 	}
 	updated := now()
 
+	agentConfig, err := json.Marshal(sess.AgentConfig)
+	if err != nil {
+		return fmt.Errorf("storage: session %s: encode agent config: %w", sess.ID, err)
+	}
+
 	res, err := tx.ExecContext(ctx, `
 		UPDATE sessions
-		SET state = ?, workspace_id = ?, default_interactive_run_id = ?, metadata = ?, updated_at = ?
+		SET state = ?, workspace_id = ?, default_interactive_run_id = ?, agent_config = ?, metadata = ?, updated_at = ?
 		WHERE id = ?`,
 		string(sess.State), sess.WorkspaceID, sess.DefaultInteractiveRunID,
-		string(meta), unixNano(updated), sess.ID)
+		string(agentConfig), string(meta), unixNano(updated), sess.ID)
 	if err != nil {
 		return fmt.Errorf("storage: update session %s: %w", sess.ID, err)
 	}
@@ -155,7 +177,7 @@ func (s *Store) updateSession(ctx context.Context, tx Execer, sess *session.Sess
 // A limit of zero or less returns every session.
 func (s *Store) ListSessions(ctx context.Context, limit int) ([]*session.Session, error) {
 	query := `
-		SELECT id, state, workspace_id, default_interactive_run_id, metadata, created_at, updated_at
+		SELECT id, state, workspace_id, default_interactive_run_id, agent_config, metadata, created_at, updated_at
 		FROM sessions
 		ORDER BY updated_at DESC`
 	args := []any{}
@@ -177,16 +199,18 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]*session.Session
 			state     string
 			workspace sql.NullString
 			defRun    sql.NullString
+			agentCfg  string
 			meta      string
 			created   int64
 			updated   int64
 		)
-		if err := rows.Scan(&sess.ID, &state, &workspace, &defRun, &meta, &created, &updated); err != nil {
+		if err := rows.Scan(&sess.ID, &state, &workspace, &defRun, &agentCfg, &meta, &created, &updated); err != nil {
 			return nil, fmt.Errorf("storage: scan session: %w", err)
 		}
 		sess.State = session.State(state)
 		sess.WorkspaceID = workspace.String
 		sess.DefaultInteractiveRunID = defRun.String
+		sess.AgentConfig = decodeAgentConfig(agentCfg)
 		sess.Metadata = json.RawMessage(meta)
 		sess.CreatedAt = fromUnixNano(created)
 		sess.UpdatedAt = fromUnixNano(updated)

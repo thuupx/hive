@@ -69,6 +69,13 @@ type IncomingCommand struct {
 	Name   string
 	Method string
 	Args   []string
+
+	// ConfigID names the agent selector the command targets, when it targets one.
+	//
+	// The transport knows that "/model" means the selector called model; Hive does
+	// not have to. That is what lets an agent offer a new selector without a Hive
+	// change.
+	ConfigID string
 }
 
 // IncomingInteraction is a platform control.
@@ -91,9 +98,10 @@ type TransportInboundParams struct {
 	Text string `json:"text,omitempty"`
 
 	// Command fields.
-	Command string   `json:"command,omitempty"`
-	Method  string   `json:"method,omitempty"`
-	Args    []string `json:"args,omitempty"`
+	Command  string   `json:"command,omitempty"`
+	Method   string   `json:"method,omitempty"`
+	Args     []string `json:"args,omitempty"`
+	ConfigID string   `json:"configId,omitempty"`
 
 	// Interaction fields.
 	Action string `json:"action,omitempty"`

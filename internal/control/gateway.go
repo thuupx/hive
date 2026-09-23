@@ -142,6 +142,13 @@ func (g *Gateway) HandleAs(ctx context.Context, principal Principal, req *v1.Mes
 	case v1.MethodWorkspaceList:
 		return g.service.ListWorkspaces(ctx, principal)
 
+	case v1.MethodSessionConfig:
+		var params v1.SessionConfigParams
+		if err := decode(req, &params); err != nil {
+			return nil, err
+		}
+		return g.service.SessionConfig(ctx, principal, params)
+
 	case v1.MethodPermissionRespond:
 		var params v1.PermissionRespondParams
 		if err := decode(req, &params); err != nil {

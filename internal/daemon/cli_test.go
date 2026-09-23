@@ -290,3 +290,58 @@ func TestPromptAfterTerminalRunStartsANewRun(t *testing.T) {
 		t.Errorf("agent = %q, want %q", next.AgentID, testAgent)
 	}
 }
+
+// An agent declares its own selectors, and a choice is stored on the session so a
+// new run continues with it.
+//
+// Hive never interprets a selector: it passes the agent's declaration through and
+// records the user's choice.
+func TestSessionConfigReadsAndRecordsASelector(t *testing.T) {
+	ctx := context.Background()
+	_, store, _, socketPath := startStack(t)
+
+	c, err := client.Dial(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer c.Close()
+
+	created, err := c.CreateSession(ctx, v1.SessionCreateParams{CommandID: "cmd_1"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	waitFor(t, "the run to start", func() bool {
+		run, err := store.GetAgentRun(ctx, created.RunID)
+		return err == nil && run.State != agent.StateCreated
+	})
+
+	// Reading returns whatever the agent declared, without Hive understanding it.
+	read, err := c.SessionConfig(ctx, v1.SessionConfigParams{SessionID: created.SessionID})
+	if err != nil {
+		t.Fatalf("SessionConfig read: %v", err)
+	}
+	if len(read.Options) == 0 {
+		t.Fatal("the agent declared no selectors")
+	}
+	if read.Options[0].ID != "model" || read.Options[0].Category != "model" {
+		t.Fatalf("options = %+v", read.Options)
+	}
+
+	// Setting a value records it on the session.
+	if _, err := c.SessionConfig(ctx, v1.SessionConfigParams{
+		SessionID: created.SessionID,
+		ConfigID:  "model",
+		Value:     "m2",
+	}); err != nil {
+		t.Fatalf("SessionConfig set: %v", err)
+	}
+
+	sess, err := store.GetSession(ctx, created.SessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got := sess.AgentConfig["model"]; got != "m2" {
+		t.Fatalf("recorded model = %q, want m2", got)
+	}
+}
