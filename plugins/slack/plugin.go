@@ -391,7 +391,12 @@ func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
 			// Not addressed to Hive.
 			return delivery{}, false
 		}
-		return delivery{envelope: env, conversationID: event.Channel, timestamp: event.Timestamp}, true
+		return delivery{
+			envelope:       env,
+			conversationID: event.Channel,
+			timestamp:      event.Timestamp,
+			thread:         replyThread(event.Channel, event.Timestamp, event.ThreadTS, p.opts.FlatReplies),
+		}, true
 	}
 }
 

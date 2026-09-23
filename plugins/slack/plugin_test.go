@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 )
@@ -100,4 +101,50 @@ func TestRunThreadsAreBounded(t *testing.T) {
 	if _, ok := p.runThreads["run_0"]; ok {
 		t.Error("the oldest run thread should have been forgotten")
 	}
+}
+
+// A delivery carries the thread its turn belongs to.
+//
+// This is the wiring, not the rule: the rule was tested and correct while the
+// delivery never called it, so every channel reply stayed flat.
+func TestChannelDeliveryCarriesItsThread(t *testing.T) {
+	p := New(nil, nil, Options{})
+
+	d, ok := p.parse(Inbound{Type: "event", Payload: mustJSON(t, MessageEvent{
+		Type:      "message",
+		Channel:   "C123",
+		User:      "U1",
+		Text:      "<@U0BOT> hello",
+		Timestamp: "1.0",
+	})})
+	if !ok {
+		t.Fatal("the message should be for Hive")
+	}
+	if d.thread != "1.0" {
+		t.Fatalf("thread = %q, want the message timestamp", d.thread)
+	}
+
+	// A direct message stays flat.
+	dm, ok := p.parse(Inbound{Type: "event", Payload: mustJSON(t, MessageEvent{
+		Type:      "message",
+		Channel:   "D123",
+		User:      "U1",
+		Text:      "hello",
+		Timestamp: "1.0",
+	})})
+	if !ok {
+		t.Fatal("the direct message should be for Hive")
+	}
+	if dm.thread != "" {
+		t.Fatalf("a direct message thread = %q, want empty", dm.thread)
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return encoded
 }
