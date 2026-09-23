@@ -119,6 +119,24 @@ func (c *Client) GetCommand(ctx context.Context, commandID string) (*v1.CommandR
 	return &result, nil
 }
 
+// CreateWorkspace registers a workspace.
+func (c *Client) CreateWorkspace(ctx context.Context, params v1.WorkspaceCreateParams) (*v1.WorkspaceSummary, error) {
+	var result v1.WorkspaceSummary
+	if err := c.peer.Call(ctx, v1.MethodWorkspaceCreate, params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListWorkspaces returns the workspaces and the shared-location warnings.
+func (c *Client) ListWorkspaces(ctx context.Context) (*v1.WorkspaceListResult, error) {
+	var result v1.WorkspaceListResult
+	if err := c.peer.Call(ctx, v1.MethodWorkspaceList, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // ListPermissions returns pending permission requests.
 func (c *Client) ListPermissions(ctx context.Context, params v1.PermissionListParams) (*v1.PermissionListResult, error) {
 	var result v1.PermissionListResult

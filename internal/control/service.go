@@ -103,7 +103,15 @@ func (s *Service) CreateSession(ctx context.Context, principal Principal, params
 		return nil, err
 	}
 
+	// A named workspace is resolved, and registered on first use: naming it is
+	// enough, the caller does not have to create it first.
+	workspaceID, err := s.resolveWorkspace(ctx, params.Workspace, executionNode.NodeID, "")
+	if err != nil {
+		return nil, domainError(err)
+	}
+
 	sess := session.New(ids.New("sess"))
+	sess.WorkspaceID = workspaceID
 	if len(params.Metadata) > 0 {
 		sess.Metadata = params.Metadata
 	}
@@ -146,7 +154,12 @@ func (s *Service) CreateSession(ctx context.Context, principal Principal, params
 		RunState:  string(run.State),
 	}
 
-	if err := s.startRun(ctx, run, params.Workspace, ""); err != nil {
+	// The run works at the location registered for the node it runs on.
+	runPath, err := s.workspacePath(ctx, workspaceID, executionNode.NodeID)
+	if err != nil {
+		return nil, domainError(err)
+	}
+	if err := s.startRun(ctx, run, runPath, ""); err != nil {
 		s.log.Warn("execution could not be started", "run", run.ID, "node", run.NodeID, "error", err)
 	}
 
@@ -760,3 +773,24 @@ func storageError(err error) error { return apierr.From(err) }
 
 // domainError maps an operation error onto a protocol error.
 func domainError(err error) error { return apierr.From(err) }
+
+// workspacePath returns the location a workspace has on a node.
+//
+// A workspace may live at different paths on different machines, so the path is a
+// property of the location rather than of the workspace.
+func (s *Service) workspacePath(ctx context.Context, workspaceID, nodeID string) (string, error) {
+	if workspaceID == "" {
+		return "", nil
+	}
+
+	locations, err := s.store.ListWorkspaceLocations(ctx, workspaceID)
+	if err != nil {
+		return "", err
+	}
+	for _, loc := range locations {
+		if loc.NodeID == nodeID {
+			return loc.Path, nil
+		}
+	}
+	return "", nil
+}

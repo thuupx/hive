@@ -30,6 +30,12 @@ const (
 
 	// MethodSessionEvents replays a session event stream from a cursor.
 	MethodSessionEvents = "session.events"
+
+	// MethodWorkspaceCreate registers a workspace.
+	MethodWorkspaceCreate = "workspace.create"
+
+	// MethodWorkspaceList lists workspaces and shared-location warnings.
+	MethodWorkspaceList = "workspace.list"
 )
 
 // SessionCreateParams creates a session and its first AgentRun.
@@ -193,6 +199,41 @@ type NodeSummary struct {
 	Connected            bool      `json:"connected"`
 	Executions           int       `json:"executions"`
 	LastSeen             time.Time `json:"lastSeen"`
+}
+
+// WorkspaceCreateParams registers a workspace.
+type WorkspaceCreateParams struct {
+	CommandID string `json:"commandId"`
+	Name      string `json:"name"`
+
+	// Locations map a node to the path the workspace lives at there. The same
+	// workspace may live at different paths on different machines.
+	Locations map[string]string `json:"locations,omitempty"`
+}
+
+// WorkspaceSummary is a compact view of a workspace.
+type WorkspaceSummary struct {
+	WorkspaceID string            `json:"workspaceId"`
+	Name        string            `json:"name"`
+	Locations   map[string]string `json:"locations,omitempty"`
+	ActiveRuns  int               `json:"activeRuns"`
+}
+
+// WorkspaceListResult lists workspaces.
+type WorkspaceListResult struct {
+	Workspaces []WorkspaceSummary `json:"workspaces"`
+
+	// Warnings report locations several active runs reference. They are warnings,
+	// never locks: concurrent runs on one location are a real workflow.
+	Warnings []WorkspaceWarning `json:"warnings,omitempty"`
+}
+
+// WorkspaceWarning describes a workspace location several active runs share.
+type WorkspaceWarning struct {
+	WorkspaceID string   `json:"workspaceId"`
+	NodeID      string   `json:"nodeId"`
+	Path        string   `json:"path"`
+	RunIDs      []string `json:"runIds"`
 }
 
 // PermissionListParams lists pending permission requests.

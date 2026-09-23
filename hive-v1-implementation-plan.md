@@ -849,13 +849,36 @@ Deliberately not in M10:
 
 ### M11 — Workspace
 
-- [ ] `Workspace` + `WorkspaceLocation` (`node_id`, `path`)
-- [ ] Shared-location warning when multiple active AgentRuns reference the
-      same location; never a lock (§23, §24)
-- [ ] Tests: warning is emitted, no lock or serialization is introduced
+- [x] `Workspace` identity plus `WorkspaceLocation` (`node_id`, `path`)
+- [x] A workspace is not a Git abstraction: Hive owns no checkout, branch,
+      worktree, merge, or rebase
+- [x] Naming a workspace on a session resolves it, and registers it on first use
+- [x] The run works at the location registered for the node it runs on
+- [x] Shared-location warning when several active runs reference one location
+- [x] The warning is never a lock, and a finished run does not overlap with
+      anything
+- [x] `workspace.create` and `workspace.list` over the Control API and the CLI
+- [x] Tests: the same name resolves to the same workspace, a shared location
+      warns without locking, a terminal run produces no warning
 
-**Exit criteria:** §42 "Agent isolation" is unaffected by concurrent runs
-sharing a workspace.
+**Exit criteria:** §42 "Agent isolation" is unaffected by concurrent runs sharing
+a workspace.
+
+Status: met. `make ci` is green with 245 passing tests; the suite is clean under
+`-race`.
+
+Implementation notes:
+
+- A workspace is identity; a location is where it lives on one node. The same
+  workspace may live at different paths on different machines, so the path belongs
+  to the pair rather than to the workspace.
+- The warning is computed from active runs only. The terminal predicate comes from
+  the domain rather than being restated in SQL, so a run cannot be "active" in one
+  place and terminal in another.
+- Warnings are sorted, so the management plane does not flicker between refreshes.
+- The shared-location test asserts both directions: the warning appears, and the
+  runs and sessions are untouched. A warning that quietly became a lock would fail
+  it.
 
 ### M12 — Release and open-source quality bar
 

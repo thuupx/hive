@@ -496,3 +496,102 @@ func eventSummary(ev v1.Event) string {
 	}
 	return string(ev.Payload)
 }
+
+// workspaceCommand handles `hive workspace <action>`.
+func workspaceCommand(f flags, args []string) error {
+	if len(args) == 0 {
+		return errors.New("workspace requires an action: create, list")
+	}
+
+	action, rest := args[0], args[1:]
+	switch action {
+	case "create":
+		return workspaceCreate(f, rest)
+	case "list":
+		return workspaceList(f, rest)
+	default:
+		return fmt.Errorf("unknown workspace action %q", action)
+	}
+}
+
+func workspaceCreate(f flags, args []string) error {
+	fs := flag.NewFlagSet("workspace create", flag.ContinueOnError)
+	nodeID := fs.String("node", "", "node the location is on")
+	path := fs.String("path", "", "path the workspace lives at on that node")
+	commandID := fs.String("command-id", "", "idempotency key (default: a fresh one)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("workspace create requires a name")
+	}
+
+	locations := map[string]string{}
+	if *nodeID != "" && *path != "" {
+		locations[*nodeID] = *path
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	c, err := connect(ctx, f)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	summary, err := c.CreateWorkspace(ctx, v1.WorkspaceCreateParams{
+		CommandID: commandIDOr(*commandID),
+		Name:      fs.Arg(0),
+		Locations: locations,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("workspace: %s\n", summary.WorkspaceID)
+	fmt.Printf("name:      %s\n", summary.Name)
+	for node, path := range summary.Locations {
+		fmt.Printf("location:  %s -> %s\n", node, path)
+	}
+	return nil
+}
+
+func workspaceList(f flags, args []string) error {
+	fs := flag.NewFlagSet("workspace list", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	c, err := connect(ctx, f)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	result, err := c.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	if len(result.Workspaces) == 0 {
+		fmt.Println("no workspaces")
+	} else {
+		for _, workspace := range result.Workspaces {
+			fmt.Printf("%-20s %s  %d active runs\n", workspace.Name, workspace.WorkspaceID, workspace.ActiveRuns)
+			for node, path := range workspace.Locations {
+				fmt.Printf("    %s -> %s\n", node, path)
+			}
+		}
+	}
+
+	// A shared location is a warning, never a lock: concurrent runs on one
+	// location are a real workflow.
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %d active runs share %s on %s: %v\n",
+			len(warning.RunIDs), warning.Path, warning.NodeID, warning.RunIDs)
+	}
+	return nil
+}

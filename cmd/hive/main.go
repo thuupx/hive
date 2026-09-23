@@ -56,6 +56,8 @@ Commands:
   session cancel <id>        cancel the current run
   session handoff <id> <agent>  hand the session to another agent
   session events <id>        replay a session event stream
+  workspace create <name>    register a workspace
+  workspace list             list workspaces and shared-location warnings
   agent list                 list configured agents
   node list                  list nodes
   command get <id>           show a command status resource
@@ -113,6 +115,8 @@ func run(args []string) error {
 		return nodeCommand(f, rest[1:])
 	case "command":
 		return commandCommand(f, rest[1:])
+	case "workspace":
+		return workspaceCommand(f, rest[1:])
 	case "tui":
 		return tuiCommand(f, rest[1:])
 	default:
