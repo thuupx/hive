@@ -28,22 +28,27 @@ non-interactive shell.
 
 ## Conventions
 
-### Tests live in `tests/`
+### Tests
 
-All tests live in `tests/` as a single external test package
-(`package tests`), not next to the code they exercise. Files are named
-`<area>_test.go`, with the protocol package prefixed `protocol_v1_`.
+Follow standard Go layout: `*_test.go` files live in the same directory as
+the code they test.
 
-Consequences to respect when writing tests:
+- `package foo` for internal (white-box) tests that need unexported
+  identifiers.
+- `package foo_test` for external (black-box) tests that use only the
+  exported API.
 
-- Only exported identifiers are reachable. Do not plan on white-box
-  testing of unexported state.
-- Struct literals of another package's types must use keyed fields, or
-  `go vet` fails.
-- A test that inspects package source rather than importing it (for
-  example the protocol dependency-boundary test) must address the
-  directory by relative path.
-- `go test ./internal/...` runs no tests. Use `go test ./tests`.
+Both may coexist in one directory, and that is the normal way to mix API
+tests with tests of internal helpers. `internal/storage/sqlsplit_test.go`
+is an example of the internal form.
+
+- Test helpers are unexported functions inside the test files.
+- Use `t.Helper()`, `t.Cleanup()`, and table-driven subtests via `t.Run`.
+- `testdata/` holds fixtures and is ignored by the go tool.
+- Do not create a top-level `tests/` directory for unit tests: it makes
+  unexported code untestable and breaks per-package test runs. Reserve a
+  separate directory for integration tests, and give those files a
+  `//go:build integration` tag so `go test ./...` stays fast.
 
 ### Storage
 

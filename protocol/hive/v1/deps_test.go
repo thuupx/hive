@@ -1,16 +1,12 @@
-package tests
+package v1_test
 
 import (
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"strings"
 	"testing"
 )
-
-// protocolDir is the public protocol package under test. The tests below
-// read its source rather than importing it, so they live outside the
-// package directory and address it by relative path.
-const protocolDir = "../protocol/hive/v1"
 
 // TestNoInternalDependency enforces the plugin boundary: the public
 // protocol package must not import any internal Hive package, so plugins
@@ -34,13 +30,19 @@ func TestStdlibOnly(t *testing.T) {
 	}
 }
 
+// packageImports returns the imports of the shipped package files. Test
+// files are excluded: the rules above apply to the package, not to its
+// tests.
 func packageImports(t *testing.T) []string {
 	t.Helper()
+	skipTests := func(fi fs.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }
+
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, protocolDir, nil, parser.ImportsOnly)
+	pkgs, err := parser.ParseDir(fset, ".", skipTests, parser.ImportsOnly)
 	if err != nil {
-		t.Fatalf("parse %s: %v", protocolDir, err)
+		t.Fatalf("parse package: %v", err)
 	}
+
 	var out []string
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Files {
@@ -50,7 +52,7 @@ func packageImports(t *testing.T) []string {
 		}
 	}
 	if len(out) == 0 {
-		t.Fatalf("no imports found in %s; package parsing did not work", protocolDir)
+		t.Fatal("no imports found; package parsing did not work")
 	}
 	return out
 }

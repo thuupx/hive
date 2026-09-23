@@ -250,11 +250,8 @@ Implementation notes:
 - `journal_mode=WAL` is applied once per database, not per connection: it
   is a persistent database property and changing it takes a lock.
 - The driver executes one statement per call, so migrations are split
-  explicitly in `internal/storage/sqlsplit.go`.
-- `sqlsplit.go` cannot be unit-tested directly under the `tests/`
-  convention because it is unexported. It is covered indirectly: every
-  storage test runs migrations, which exercise comments and
-  multi-statement splitting.
+  explicitly in `internal/storage/sqlsplit.go`, which has direct
+  white-box tests in `internal/storage/sqlsplit_test.go`.
 - The CI matrix includes `ubuntu-24.04-arm`, which requires GitHub arm64
   hosted runners (free for public repositories). Drop it if the repository
   cannot use them.
