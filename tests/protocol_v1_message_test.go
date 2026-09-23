@@ -1,16 +1,18 @@
-package v1
+package tests
 
 import (
 	"encoding/json"
 	"testing"
+
+	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
 func TestNewRequestShape(t *testing.T) {
-	m, err := NewRequest(NumberID(1), "session.create", map[string]string{"agent": "devin"})
+	m, err := v1.NewRequest(v1.NumberID(1), "session.create", map[string]string{"agent": "devin"})
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	if got := m.Kind(); got != KindRequest {
+	if got := m.Kind(); got != v1.KindRequest {
 		t.Fatalf("Kind() = %v, want request", got)
 	}
 	b, err := json.Marshal(m)
@@ -36,7 +38,7 @@ func TestNewRequestShape(t *testing.T) {
 }
 
 func TestNewRequestOmitsNilParams(t *testing.T) {
-	m, err := NewRequest(NumberID(1), "session.list", nil)
+	m, err := v1.NewRequest(v1.NumberID(1), "session.list", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -49,11 +51,11 @@ func TestNewRequestOmitsNilParams(t *testing.T) {
 }
 
 func TestNotificationOmitsID(t *testing.T) {
-	m, err := NewNotification("session.update", map[string]string{"state": "running"})
+	m, err := v1.NewNotification("session.update", map[string]string{"state": "running"})
 	if err != nil {
 		t.Fatalf("NewNotification: %v", err)
 	}
-	if got := m.Kind(); got != KindNotification {
+	if got := m.Kind(); got != v1.KindNotification {
 		t.Fatalf("Kind() = %v, want notification", got)
 	}
 	b, _ := json.Marshal(m)
@@ -65,11 +67,11 @@ func TestNotificationOmitsID(t *testing.T) {
 }
 
 func TestNewResultPreservesNull(t *testing.T) {
-	m, err := NewResult(StringID("a"), nil)
+	m, err := v1.NewResult(v1.StringID("a"), nil)
 	if err != nil {
 		t.Fatalf("NewResult: %v", err)
 	}
-	if got := m.Kind(); got != KindResponse {
+	if got := m.Kind(); got != v1.KindResponse {
 		t.Fatalf("Kind() = %v, want response", got)
 	}
 	b, _ := json.Marshal(m)
@@ -81,17 +83,17 @@ func TestNewResultPreservesNull(t *testing.T) {
 }
 
 func TestValidateRejectsMalformed(t *testing.T) {
-	id := NumberID(1)
+	id := v1.NumberID(1)
 	cases := []struct {
 		name string
-		msg  *Message
+		msg  *v1.Message
 	}{
 		{"nil", nil},
-		{"bad jsonrpc", &Message{JSONRPC: "1.0", ID: &id, Method: "x"}},
-		{"empty", &Message{JSONRPC: JSONRPCVersion}},
-		{"request with result", &Message{JSONRPC: JSONRPCVersion, ID: &id, Method: "x", Result: json.RawMessage("1")}},
-		{"response with both", &Message{JSONRPC: JSONRPCVersion, ID: &id, Result: json.RawMessage("1"), Error: Internal("x")}},
-		{"response with neither", &Message{JSONRPC: JSONRPCVersion, ID: &id}},
+		{"bad jsonrpc", &v1.Message{JSONRPC: "1.0", ID: &id, Method: "x"}},
+		{"empty", &v1.Message{JSONRPC: v1.JSONRPCVersion}},
+		{"request with result", &v1.Message{JSONRPC: v1.JSONRPCVersion, ID: &id, Method: "x", Result: json.RawMessage("1")}},
+		{"response with both", &v1.Message{JSONRPC: v1.JSONRPCVersion, ID: &id, Result: json.RawMessage("1"), Error: v1.Internal("x")}},
+		{"response with neither", &v1.Message{JSONRPC: v1.JSONRPCVersion, ID: &id}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -103,11 +105,11 @@ func TestValidateRejectsMalformed(t *testing.T) {
 }
 
 func TestValidateAcceptsWellFormed(t *testing.T) {
-	req, _ := NewRequest(NumberID(1), "session.list", nil)
-	note, _ := NewNotification("session.update", nil)
-	res, _ := NewResult(NumberID(1), map[string]string{"ok": "true"})
-	errRes := NewErrorResponse(NumberID(1), Unauthorized("no"))
-	for _, m := range []*Message{req, note, res, errRes} {
+	req, _ := v1.NewRequest(v1.NumberID(1), "session.list", nil)
+	note, _ := v1.NewNotification("session.update", nil)
+	res, _ := v1.NewResult(v1.NumberID(1), map[string]string{"ok": "true"})
+	errRes := v1.NewErrorResponse(v1.NumberID(1), v1.Unauthorized("no"))
+	for _, m := range []*v1.Message{req, note, res, errRes} {
 		if err := m.Validate(); err != nil {
 			t.Errorf("Validate(%v): %v", m.Kind(), err)
 		}
@@ -115,19 +117,19 @@ func TestValidateAcceptsWellFormed(t *testing.T) {
 }
 
 func TestParseMessageRoundTrip(t *testing.T) {
-	orig, err := NewRequest(StringID("r1"), "agent.list", map[string]int{"limit": 10})
+	orig, err := v1.NewRequest(v1.StringID("r1"), "agent.list", map[string]int{"limit": 10})
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
 	b, _ := json.Marshal(orig)
-	got, err := ParseMessage(b)
+	got, err := v1.ParseMessage(b)
 	if err != nil {
 		t.Fatalf("ParseMessage: %v", err)
 	}
 	if got.Method != "agent.list" {
 		t.Errorf("method = %q", got.Method)
 	}
-	if got.RequestID() != StringID("r1") {
+	if got.RequestID() != v1.StringID("r1") {
 		t.Errorf("id = %+v", got.RequestID())
 	}
 	if string(got.Params) != string(orig.Params) {
@@ -136,29 +138,29 @@ func TestParseMessageRoundTrip(t *testing.T) {
 }
 
 func TestParseMessageRejectsGarbage(t *testing.T) {
-	_, err := ParseMessage([]byte("not json"))
+	_, err := v1.ParseMessage([]byte("not json"))
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
-	if e := AsError(err); e.Code != CodeParseError {
-		t.Fatalf("code = %d, want %d", e.Code, CodeParseError)
+	if e := v1.AsError(err); e.Code != v1.CodeParseError {
+		t.Fatalf("code = %d, want %d", e.Code, v1.CodeParseError)
 	}
 }
 
 func TestMetaRoundTrip(t *testing.T) {
-	v := Current()
-	m, err := NewRequest(NumberID(1), "session.prompt", nil)
+	v := v1.Current()
+	m, err := v1.NewRequest(v1.NumberID(1), "session.prompt", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	m.WithMeta(&Meta{
+	m.WithMeta(&v1.Meta{
 		ProtocolVersion: &v,
 		Actor:           "slack:U123",
 		Capabilities:    []string{"message_acknowledgement"},
 		SessionID:       "sess_1",
 	})
 	b, _ := json.Marshal(m)
-	got, err := ParseMessage(b)
+	got, err := v1.ParseMessage(b)
 	if err != nil {
 		t.Fatalf("ParseMessage: %v", err)
 	}

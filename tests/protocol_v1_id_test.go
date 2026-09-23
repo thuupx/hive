@@ -1,21 +1,23 @@
-package v1
+package tests
 
 import (
 	"encoding/json"
 	"testing"
+
+	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
 func TestIDMarshal(t *testing.T) {
 	cases := []struct {
 		name string
-		id   ID
+		id   v1.ID
 		want string
 	}{
-		{"number", NumberID(7), "7"},
-		{"zero number", NumberID(0), "0"},
-		{"string", StringID("abc"), `"abc"`},
-		{"empty string", StringID(""), `""`},
-		{"unset", ID{}, "null"},
+		{"number", v1.NumberID(7), "7"},
+		{"zero number", v1.NumberID(0), "0"},
+		{"string", v1.StringID("abc"), `"abc"`},
+		{"empty string", v1.StringID(""), `""`},
+		{"unset", v1.ID{}, "null"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -31,7 +33,7 @@ func TestIDMarshal(t *testing.T) {
 }
 
 func TestIDUnmarshal(t *testing.T) {
-	var num ID
+	var num v1.ID
 	if err := json.Unmarshal([]byte("42"), &num); err != nil {
 		t.Fatalf("unmarshal number: %v", err)
 	}
@@ -42,7 +44,7 @@ func TestIDUnmarshal(t *testing.T) {
 		t.Fatal("numeric id reported as string")
 	}
 
-	var str ID
+	var str v1.ID
 	if err := json.Unmarshal([]byte(`"req-1"`), &str); err != nil {
 		t.Fatalf("unmarshal string: %v", err)
 	}
@@ -53,7 +55,7 @@ func TestIDUnmarshal(t *testing.T) {
 		t.Fatal("string id reported a numeric value")
 	}
 
-	var nul ID
+	var nul v1.ID
 	if err := json.Unmarshal([]byte("null"), &nul); err != nil {
 		t.Fatalf("unmarshal null: %v", err)
 	}
@@ -64,7 +66,7 @@ func TestIDUnmarshal(t *testing.T) {
 
 func TestIDUnmarshalRejectsInvalid(t *testing.T) {
 	for _, in := range []string{`1.5`, `-3`, `{}`, `true`} {
-		var id ID
+		var id v1.ID
 		if err := json.Unmarshal([]byte(in), &id); err == nil {
 			t.Errorf("unmarshal %s: expected error", in)
 		}
@@ -72,12 +74,12 @@ func TestIDUnmarshalRejectsInvalid(t *testing.T) {
 }
 
 func TestIDRoundTripPreservesType(t *testing.T) {
-	for _, id := range []ID{NumberID(12), StringID("12")} {
+	for _, id := range []v1.ID{v1.NumberID(12), v1.StringID("12")} {
 		b, err := json.Marshal(id)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
-		var got ID
+		var got v1.ID
 		if err := json.Unmarshal(b, &got); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
@@ -88,10 +90,10 @@ func TestIDRoundTripPreservesType(t *testing.T) {
 }
 
 func TestIDComparable(t *testing.T) {
-	if NumberID(1) == StringID("1") {
+	if v1.NumberID(1) == v1.StringID("1") {
 		t.Fatal("numeric and string ids with the same text must not compare equal")
 	}
-	if NumberID(1) != NumberID(1) {
+	if v1.NumberID(1) != v1.NumberID(1) {
 		t.Fatal("identical ids must compare equal")
 	}
 }

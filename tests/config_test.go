@@ -1,24 +1,26 @@
-package config
+package tests
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thupham/hive/internal/config"
 )
 
 func TestDefaultIsValid(t *testing.T) {
-	if err := Default().Validate(); err != nil {
+	if err := config.Default().Validate(); err != nil {
 		t.Fatalf("default config is invalid: %v", err)
 	}
 }
 
 func TestLoadMissingFileUsesDefaults(t *testing.T) {
-	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Cluster.Role != RoleAuto {
+	if cfg.Cluster.Role != config.RoleAuto {
 		t.Errorf("role = %q, want auto", cfg.Cluster.Role)
 	}
 	if cfg.EventStore.RetentionDays != 30 {
@@ -57,14 +59,14 @@ enabled = true
 mode = "reaction"
 reaction = "eyes"
 `)
-	cfg, err := Load(path)
+	cfg, err := config.Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if cfg.Cluster.Role != RoleCoordinator {
+	if cfg.Cluster.Role != config.RoleCoordinator {
 		t.Errorf("role = %q", cfg.Cluster.Role)
 	}
 	if got := cfg.Agents["claude"].Command; len(got) != 2 || got[0] != "claude" {
@@ -83,7 +85,7 @@ reaction = "eyes"
 
 func TestLoadRejectsUnknownKey(t *testing.T) {
 	path := writeConfig(t, "[cluster]\nrole = \"auto\"\nprioirty = 10\n")
-	_, err := Load(path)
+	_, err := config.Load(path)
 	if err == nil {
 		t.Fatal("expected an error for an unknown key")
 	}
@@ -111,7 +113,7 @@ func TestValidateRejectsBadValues(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := Load(writeConfig(t, tc.body))
+			cfg, err := config.Load(writeConfig(t, tc.body))
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -127,7 +129,7 @@ func TestValidateRejectsBadValues(t *testing.T) {
 }
 
 func TestAcknowledgementDisabledSkipsModeCheck(t *testing.T) {
-	cfg, err := Load(writeConfig(t, "[transport.slack.acknowledgement]\nmode = \"whatever\"\n"))
+	cfg, err := config.Load(writeConfig(t, "[transport.slack.acknowledgement]\nmode = \"whatever\"\n"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -140,12 +142,12 @@ func TestEffectiveDataDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	cfg := Default()
+	cfg := config.Default()
 	got, err := cfg.EffectiveDataDir()
 	if err != nil {
 		t.Fatalf("EffectiveDataDir: %v", err)
 	}
-	if want := filepath.Join(home, DefaultDirName, "data"); got != want {
+	if want := filepath.Join(home, config.DefaultDirName, "data"); got != want {
 		t.Errorf("data dir = %q, want %q", got, want)
 	}
 
@@ -167,11 +169,11 @@ func TestEffectiveDataDir(t *testing.T) {
 func TestDefaultPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	got, err := DefaultPath()
+	got, err := config.DefaultPath()
 	if err != nil {
 		t.Fatalf("DefaultPath: %v", err)
 	}
-	if want := filepath.Join(home, DefaultDirName, "config.toml"); got != want {
+	if want := filepath.Join(home, config.DefaultDirName, "config.toml"); got != want {
 		t.Errorf("default path = %q, want %q", got, want)
 	}
 }

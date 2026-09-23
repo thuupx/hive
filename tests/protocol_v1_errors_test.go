@@ -1,35 +1,37 @@
-package v1
+package tests
 
 import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
 func TestErrorImplementsError(t *testing.T) {
-	var err error = Unauthorized("denied")
+	var err error = v1.Unauthorized("denied")
 	if err.Error() == "" {
 		t.Fatal("Error() must not be empty")
 	}
 }
 
 func TestAsError(t *testing.T) {
-	if AsError(nil) != nil {
+	if v1.AsError(nil) != nil {
 		t.Fatal("AsError(nil) must be nil")
 	}
-	orig := CursorExpired("gone")
-	if got := AsError(orig); got != orig {
+	orig := v1.CursorExpired("gone")
+	if got := v1.AsError(orig); got != orig {
 		t.Fatal("AsError must return the original protocol error")
 	}
 	wrapped := errors.New("boom")
-	got := AsError(wrapped)
-	if got.Code != CodeInternalError {
-		t.Fatalf("code = %d, want %d", got.Code, CodeInternalError)
+	got := v1.AsError(wrapped)
+	if got.Code != v1.CodeInternalError {
+		t.Fatalf("code = %d, want %d", got.Code, v1.CodeInternalError)
 	}
 }
 
 func TestWithData(t *testing.T) {
-	e := CursorExpired("gone").WithData(map[string]any{
+	e := v1.CursorExpired("gone").WithData(map[string]any{
 		"next_sequence": 103,
 		"snapshot_id":   "snap_1",
 		"snapshot_seq":  102,
@@ -45,19 +47,19 @@ func TestWithData(t *testing.T) {
 
 func TestErrorCodesAreDistinct(t *testing.T) {
 	codes := map[string]int{
-		"parse":       CodeParseError,
-		"invalid_req": CodeInvalidRequest,
-		"no_method":   CodeMethodNotFound,
-		"bad_params":  CodeInvalidParams,
-		"internal":    CodeInternalError,
-		"unauth":      CodeUnauthorized,
-		"not_found":   CodeNotFound,
-		"conflict":    CodeConflict,
-		"cursor":      CodeCursorExpired,
-		"ambiguous":   CodeAmbiguous,
-		"unavailable": CodeUnavailable,
-		"retryable":   CodeRetryable,
-		"unsupported": CodeUnsupported,
+		"parse":       v1.CodeParseError,
+		"invalid_req": v1.CodeInvalidRequest,
+		"no_method":   v1.CodeMethodNotFound,
+		"bad_params":  v1.CodeInvalidParams,
+		"internal":    v1.CodeInternalError,
+		"unauth":      v1.CodeUnauthorized,
+		"not_found":   v1.CodeNotFound,
+		"conflict":    v1.CodeConflict,
+		"cursor":      v1.CodeCursorExpired,
+		"ambiguous":   v1.CodeAmbiguous,
+		"unavailable": v1.CodeUnavailable,
+		"retryable":   v1.CodeRetryable,
+		"unsupported": v1.CodeUnsupported,
 	}
 	seen := map[int]string{}
 	for name, code := range codes {
@@ -69,7 +71,7 @@ func TestErrorCodesAreDistinct(t *testing.T) {
 }
 
 func TestErrorJSONShape(t *testing.T) {
-	b, err := json.Marshal(Unsupported("agent does not support images"))
+	b, err := json.Marshal(v1.Unsupported("agent does not support images"))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

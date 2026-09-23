@@ -1,4 +1,4 @@
-package logging
+package tests
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/thupham/hive/internal/logging"
 )
 
 func TestParseLevel(t *testing.T) {
@@ -20,7 +22,7 @@ func TestParseLevel(t *testing.T) {
 		"nonsense": slog.LevelInfo,
 	}
 	for in, want := range cases {
-		if got := ParseLevel(in); got != want {
+		if got := logging.ParseLevel(in); got != want {
 			t.Errorf("ParseLevel(%q) = %v, want %v", in, got, want)
 		}
 	}
@@ -28,15 +30,15 @@ func TestParseLevel(t *testing.T) {
 
 func TestNewJSONFormat(t *testing.T) {
 	var buf bytes.Buffer
-	log := New(&buf, "debug", "json")
-	log.Info("started", FieldComponent, "coordinator", FieldRole, "auto")
+	log := logging.New(&buf, "debug", "json")
+	log.Info("started", logging.FieldComponent, "coordinator", logging.FieldRole, "auto")
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
 		t.Fatalf("json handler did not emit json: %v (%q)", err, buf.String())
 	}
-	if rec[FieldComponent] != "coordinator" {
-		t.Errorf("component = %v", rec[FieldComponent])
+	if rec[logging.FieldComponent] != "coordinator" {
+		t.Errorf("component = %v", rec[logging.FieldComponent])
 	}
 	if rec["msg"] != "started" {
 		t.Errorf("msg = %v", rec["msg"])
@@ -45,7 +47,7 @@ func TestNewJSONFormat(t *testing.T) {
 
 func TestNewTextFormatFiltersByLevel(t *testing.T) {
 	var buf bytes.Buffer
-	log := New(&buf, "warn", "text")
+	log := logging.New(&buf, "warn", "text")
 	log.Info("hidden")
 	log.Warn("shown")
 	out := buf.String()

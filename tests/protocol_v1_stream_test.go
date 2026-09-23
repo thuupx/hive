@@ -1,4 +1,4 @@
-package v1
+package tests
 
 import (
 	"bytes"
@@ -6,17 +6,19 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
 func TestStreamRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
-	s := NewStream(&buf, &buf)
+	s := v1.NewStream(&buf, &buf)
 
-	req, _ := NewRequest(NumberID(1), "session.create", nil)
-	note, _ := NewNotification("session.update", map[string]string{"state": "running"})
-	res, _ := NewResult(NumberID(1), map[string]string{"session_id": "sess_1"})
+	req, _ := v1.NewRequest(v1.NumberID(1), "session.create", nil)
+	note, _ := v1.NewNotification("session.update", map[string]string{"state": "running"})
+	res, _ := v1.NewResult(v1.NumberID(1), map[string]string{"session_id": "sess_1"})
 
-	for _, m := range []*Message{req, note, res} {
+	for _, m := range []*v1.Message{req, note, res} {
 		if err := s.Write(m); err != nil {
 			t.Fatalf("write: %v", err)
 		}
@@ -40,7 +42,7 @@ func TestStreamRoundTrip(t *testing.T) {
 
 func TestStreamSkipsBlankLines(t *testing.T) {
 	in := strings.NewReader("\n\n" + `{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n\n")
-	s := NewStream(in, io.Discard)
+	s := v1.NewStream(in, io.Discard)
 	m, err := s.Read()
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -51,16 +53,16 @@ func TestStreamSkipsBlankLines(t *testing.T) {
 }
 
 func TestStreamRejectsOversizeLine(t *testing.T) {
-	huge := `{"jsonrpc":"2.0","id":1,"method":"` + strings.Repeat("x", MaxMessageSize+16) + `"}`
-	s := NewStream(strings.NewReader(huge), io.Discard)
+	huge := `{"jsonrpc":"2.0","id":1,"method":"` + strings.Repeat("x", v1.MaxMessageSize+16) + `"}`
+	s := v1.NewStream(strings.NewReader(huge), io.Discard)
 	if _, err := s.Read(); err == nil {
 		t.Fatal("expected an error for an oversize message")
 	}
 }
 
 func TestStreamWriteValidates(t *testing.T) {
-	s := NewStream(strings.NewReader(""), io.Discard)
-	bad := &Message{JSONRPC: "1.0"}
+	s := v1.NewStream(strings.NewReader(""), io.Discard)
+	bad := &v1.Message{JSONRPC: "1.0"}
 	if err := s.Write(bad); err == nil {
 		t.Fatal("expected validation error on write")
 	}
@@ -68,8 +70,8 @@ func TestStreamWriteValidates(t *testing.T) {
 
 func TestStreamWriteIsLineDelimited(t *testing.T) {
 	var buf bytes.Buffer
-	s := NewStream(strings.NewReader(""), &buf)
-	m, _ := NewNotification("ping", nil)
+	s := v1.NewStream(strings.NewReader(""), &buf)
+	m, _ := v1.NewNotification("ping", nil)
 	if err := s.Write(m); err != nil {
 		t.Fatalf("write: %v", err)
 	}
