@@ -34,6 +34,13 @@ func (s *Service) SessionConfig(ctx context.Context, principal Principal, params
 		return nil, err
 	}
 
+	// An agent session lives in the agent process, so it does not survive a
+	// restart. Saying so is more useful than a bare failure.
+	if !run.State.IsWorking() && run.RuntimeSessionID == "" {
+		return nil, v1.Conflict(
+			"session %s has no live agent session; send a message first", params.SessionID)
+	}
+
 	// The change is recorded before it is applied, so a run that starts next keeps
 	// the choice even if the live session refuses it. Refusing the live change
 	// then surfaces as an error, which is the honest outcome: the user picked
