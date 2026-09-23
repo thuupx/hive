@@ -109,7 +109,12 @@ func (p *Plugin) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	go p.renderEvents(ctx, subscription.SubscriptionID)
+	// Rendering talks to the platform, which is slow, and the delivery channel is
+	// bounded. Draining it must never wait for a post, or a burst of agent events
+	// overflows the buffer and the events are lost.
+	render := make(chan v1.DeliveredEvent, renderQueue)
+	go p.renderWorker(ctx, subscription.SubscriptionID, render)
+	go p.drain(ctx, render)
 
 	// The SDK loop is what dispatches core-invoked methods and delivers subscribed
 	// events. A transport that subscribes without running it receives nothing:
@@ -124,6 +129,37 @@ func (p *Plugin) Run(ctx context.Context) error {
 	err = <-ended
 	cancel()
 	return err
+}
+
+// dispatch hands a delivered event to the render worker.
+//
+// The drain loop is what keeps delivery flowing, so it must not block on a
+// network call. A full queue is reported rather than silently waited on.
+func (p *Plugin) dispatch(ctx context.Context, render chan<- v1.DeliveredEvent, delivered v1.DeliveredEvent) {
+	select {
+	case render <- delivered:
+	case <-ctx.Done():
+	default:
+		p.log.Warn("rendering is behind; an event was not shown",
+			"session", delivered.Event.SessionID, "sequence", delivered.Event.Sequence)
+	}
+}
+
+// drain delivers subscribed events to the render worker.
+func (p *Plugin) drain(ctx context.Context, render chan<- v1.DeliveredEvent) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-p.host.Done():
+			return
+		case delivered, ok := <-p.host.Events():
+			if !ok {
+				return
+			}
+			p.dispatch(ctx, render, delivered)
+		}
+	}
 }
 
 // serveInbound reads platform deliveries, normalizes them, and renders the
@@ -251,15 +287,25 @@ func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
 	}
 }
 
-// renderEvents posts Hive events into the conversations that belong to them.
-func (p *Plugin) renderEvents(ctx context.Context, subscriptionID string) {
+// renderQueue bounds how much rendering may be outstanding.
+//
+// It is generous because the work is a network call and the input is a burst of
+// agent events, and it is bounded so a wedged platform cannot grow memory without
+// limit.
+const renderQueue = 2048
+
+// renderWorker posts Hive events into the conversations that belong to them.
+//
+// It runs in its own goroutine and in order, so a tool card is created before its
+// updates and the drain loop is never blocked by a network call.
+func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render <-chan v1.DeliveredEvent) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-p.host.Done():
 			return
-		case delivered, ok := <-p.host.Events():
+		case delivered, ok := <-render:
 			if !ok {
 				return
 			}
