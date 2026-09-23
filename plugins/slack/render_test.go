@@ -2,6 +2,7 @@ package slack
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -255,5 +256,131 @@ func TestRenderTraceReportsAGap(t *testing.T) {
 	message := RenderOutcome(v1.TransportOutcome{Method: v1.MethodSessionEvents, Result: result})
 	if !strings.Contains(message.Text, "pruned") || !strings.Contains(message.Text, "400") {
 		t.Fatalf("text = %q", message.Text)
+	}
+}
+
+// Every outcome Hive can produce must render into a message Slack accepts.
+//
+// Slack refuses a message whose section is over its limit, and refuses the whole
+// message, so an oversized render is not a cosmetic problem: nothing is posted at
+// all, which is what a user reports as no response. This checks every method the
+// transport can render, including the ones with long results.
+func TestEveryRenderedOutcomeIsAValidMessage(t *testing.T) {
+	methods := []string{
+		v1.MethodSessionCreate,
+		v1.MethodSessionPrompt,
+		v1.MethodSessionCancel,
+		v1.MethodSessionStatus,
+		v1.MethodSessionList,
+		v1.MethodSessionEvents,
+		v1.MethodSessionConfig,
+		v1.MethodSessionHandoff,
+		v1.MethodAgentList,
+		v1.MethodNodeList,
+	}
+
+	// A result long enough to be interesting: more options than a real agent
+	// offers, and a trace with many events.
+	longConfig := v1.SessionConfigResult{SessionID: "sess_1", AgentID: "devin"}
+	for i := 0; i < 60; i++ {
+		longConfig.Options = append(longConfig.Options, v1.SessionConfigOption{
+			ID:           fmt.Sprintf("model_%d", i),
+			Name:         fmt.Sprintf("Model %d", i),
+			Category:     v1.ConfigCategoryModel,
+			CurrentValue: json.RawMessage(fmt.Sprintf("%q", fmt.Sprintf("model-%d", i))),
+			Options: []v1.SessionConfigOptionValue{
+				{Value: fmt.Sprintf("model-%d", i), Name: fmt.Sprintf("Model %d", i)},
+			},
+		})
+	}
+
+	longTrace := v1.EventReplayResult{}
+	for i := 0; i < 200; i++ {
+		longTrace.Events = append(longTrace.Events, v1.Event{
+			Sequence: int64(i),
+			Type:     v1.EventTool,
+			Payload: json.RawMessage(
+				`{"toolCallId":"tc","title":"A tool with a fairly long title","kind":"execute","status":"completed"}`),
+		})
+	}
+
+	longStatus := v1.SessionStatusResult{SessionID: "sess_1", State: "active"}
+	for i := 0; i < 60; i++ {
+		longStatus.Runs = append(longStatus.Runs, v1.RunSummary{
+			RunID:   fmt.Sprintf("run_%d", i),
+			AgentID: "devin",
+			NodeID:  "node",
+			State:   "completed",
+		})
+	}
+
+	results := map[string]any{
+		v1.MethodSessionConfig: longConfig,
+		v1.MethodSessionEvents: longTrace,
+		v1.MethodSessionStatus: longStatus,
+	}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			var raw json.RawMessage
+			if result, ok := results[method]; ok {
+				encoded, err := json.Marshal(result)
+				if err != nil {
+					t.Fatalf("marshal: %v", err)
+				}
+				raw = encoded
+			}
+
+			message := RenderOutcome(v1.TransportOutcome{Method: method, Result: raw})
+
+			if strings.TrimSpace(message.Text) == "" {
+				t.Error("a message with no text is not searchable and shows nothing in a notification")
+			}
+			if len(message.Blocks) == 0 {
+				t.Error("a message with no blocks renders as nothing")
+			}
+			if len(message.Blocks) > MaxBlocks {
+				t.Errorf("blocks = %d, over the limit of %d", len(message.Blocks), MaxBlocks)
+			}
+			for i, block := range message.Blocks {
+				if block.Text == nil {
+					continue
+				}
+				if len(block.Text.Text) > MaxSectionChars {
+					t.Errorf("block %d is %d characters, over the limit of %d",
+						i, len(block.Text.Text), MaxSectionChars)
+				}
+			}
+		})
+	}
+}
+
+// A very long agent answer is what a user actually sends to Slack, so it is the
+// case that matters most.
+func TestAVeryLongAnswerRenders(t *testing.T) {
+	answer := strings.Repeat("A line of the answer that the agent wrote.\n", 300)
+	result, err := json.Marshal(map[string]string{"text": answer})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	rendered, ok := Renderer{SessionID: "sess_1"}.RenderEvent(v1.Event{
+		Sequence:  1,
+		SessionID: "sess_1",
+		Type:      v1.EventMessage,
+		Payload:   result,
+	})
+	if !ok {
+		t.Fatal("a message event should render")
+	}
+	message := rendered.Message
+
+	if len(message.Blocks) < 2 {
+		t.Fatalf("a %d character answer became %d block(s)", len(answer), len(message.Blocks))
+	}
+	for i, block := range message.Blocks {
+		if len(block.Text.Text) > MaxSectionChars {
+			t.Errorf("block %d is over the limit", i)
+		}
 	}
 }
