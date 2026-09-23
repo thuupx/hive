@@ -58,23 +58,61 @@ because the daemon resolves plugins from its own directory.
 ./bin/hive init
 ```
 
-This writes `~/.hive/config.toml` with every option commented out. It refuses to
-overwrite an existing file.
+`hive init` looks for ACP agents on your `PATH`, and writes
+`~/.hive/config.toml` naming what it found:
 
-### 2. Name an agent
+```text
+Found 2 ACP agent(s) on PATH:
 
-Hive does not ship an agent. It speaks ACP to whatever you have installed. Edit
-`~/.hive/config.toml` and add a section naming your agent:
+  devin            devin acp  (ACP invocation is a convention: verify it)
+  hermes           hermes-acp
 
-```toml
-[agents.claude]
-protocol = "acp"
-command = ["claude", "acp"]
+Which agent should be the default for new sessions?
+
+  1) devin
+  2) hermes
+
+Choose 1-2, or a name (default: devin):
 ```
 
-The `command` is the program Hive launches and talks ACP to. The agent name
-(`claude` here) is also the plugin identity, so it is what you pass to
-`-agent` and what a node declares it can run.
+It writes **every key** with its effective default, so nothing has to be guessed
+and nothing depends on knowing what a zero value means. It refuses to overwrite
+an existing file unless you pass `-force`.
+
+How discovery works, and what it cannot know:
+
+- A dedicated **ACP adapter** is named for what it is (`<something>-acp`), so a
+  `PATH` scan finds adapters Hive has never heard of without guessing an
+  invocation.
+- A **tool that exposes ACP as a mode** is launched with that subcommand. That is
+  a convention, not a fact, so `hive init` marks it: *verify it against this
+  tool's documentation*.
+- Nothing found? The file says so, and shows a commented example to fill in.
+
+Flags for scripting:
+
+```sh
+hive init -agent hermes      # choose without prompting
+hive init -force             # overwrite an existing file
+```
+
+### 2. Check the agent section
+
+Hive does not ship an agent. It speaks ACP to whatever you have installed. The
+generated file should contain something like:
+
+```toml
+default_agent = "hermes"
+
+[agents.hermes]
+protocol = "acp"
+command = ["hermes-acp"]
+endpoint = ""
+```
+
+The `command` is the program Hive launches and talks ACP to. The agent name is
+also the plugin identity, so it is what you pass to `-agent` and what a node
+declares it can run.
 
 > **This is the step people miss.** Without an `[agents.*]` section, Hive starts
 > and serves status, but it cannot create a session, and it will not start a node
@@ -147,7 +185,7 @@ Global flags work anywhere on the line, before or after the subcommand:
 ### Daemon
 
 ```sh
-hive init                      # write a starter configuration
+hive init [-agent <name>] [-force]   # write a starter configuration
 hive config                    # validate and print the effective configuration
 hive serve                     # run the daemon
 hive version                   # build and protocol version
@@ -311,8 +349,12 @@ More:
 
 **`no agents configured`, and `node list` is empty.**
 You have no `[agents.<name>]` section. Hive starts and serves status without one,
-but it cannot create sessions and it will not start a node child process. Add an
-agent (step 2 of the quick start).
+but it cannot create sessions and it will not start a node child process. Run
+`hive init` and let it find your agents, or add a section by hand.
+
+**`hive init` found an agent, but `hive serve` says the command is missing.**
+The ACP invocation it wrote is a convention. Check that tool's documentation and
+correct `command` in `~/.hive/config.toml`.
 
 **`client: connect to ~/.hive/data/hive.sock: no such file or directory`.**
 `hive serve` is not running, or it is running under a different `HOME` or

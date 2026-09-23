@@ -7,8 +7,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,8 +19,11 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/term"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -101,7 +106,7 @@ func run(args []string) error {
 		printVersion()
 		return nil
 	case "init":
-		return runInit(f)
+		return runInit(f, rest[1:])
 	case "config":
 		return runConfig(f)
 	case "serve":
@@ -227,48 +232,19 @@ func printVersion() {
 	}
 }
 
-// starterConfig is a commented configuration a new installation can use.
-const starterConfig = `# Hive configuration.
-#
-# Every key here is optional except an agent: without one, Hive has nothing to
-# run. Uncomment and edit to match your machine.
-
-data_dir = ""          # default: ~/.hive/data
-
-[cluster]
-role = "auto"          # auto | coordinator | node
-spawn_node = true      # a coordinator starts a node child process
-
-[log]
-level = "info"         # debug | info | warn | error
-format = "text"        # text | json
-
-[event_store]
-retention_days = 30
-
-[security]
-# A transport asserts these principals. Unknown access is denied by default.
-allowed_users = []
-
-# An agent is a protocol plus a command. Replace this with an agent you have
-# installed: Hive speaks ACP to it.
-#
-# [agents.example]
-# protocol = "acp"
-# command = ["your-agent", "acp"]
-
-# A transport normalizes a platform into Hive operations. Credentials come from
-# the environment, never from this file.
-#
-# [transport.slack]
-# enabled = true
-# [transport.slack.options]
-# bot_user_id = "U0XXXXXXX"
-# require_mention = "true"
-`
-
 // runInit writes a starter configuration.
-func runInit(f flags) error {
+//
+// It discovers the ACP agents on this machine and asks which one should be the
+// default when there is more than one, so a first run starts from what is
+// actually installed rather than from a placeholder the user has to replace.
+func runInit(f flags, args []string) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	agentFlag := fs.String("agent", "", "the default agent, chosen without prompting")
+	force := fs.Bool("force", false, "overwrite an existing configuration file")
+	if err := parseArgsAndFlags(fs, args); err != nil {
+		return err
+	}
+
 	cfgPath := f.configPath
 	if cfgPath == "" {
 		var err error
@@ -277,22 +253,141 @@ func runInit(f flags) error {
 		}
 	}
 
-	// Refuse to overwrite: a configuration file is not ours to replace.
-	if _, err := os.Stat(cfgPath); err == nil {
-		return fmt.Errorf("%s already exists; edit it or remove it first", cfgPath)
+	// Refuse to overwrite unless asked: a configuration file is not ours to
+	// replace.
+	if _, err := os.Stat(cfgPath); err == nil && !*force {
+		return fmt.Errorf("%s already exists; edit it, remove it, or pass -force", cfgPath)
 	}
+
+	agents := config.DiscoverAgents()
+	reportDiscovery(agents)
+
+	defaultAgent, err := chooseDefaultAgent(agents, *agentFlag)
+	if err != nil {
+		return err
+	}
+
+	content := config.RenderStarter(config.StarterOptions{
+		Agents:       agents,
+		DefaultAgent: defaultAgent,
+	})
 
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(cfgPath), err)
 	}
-	if err := os.WriteFile(cfgPath, []byte(starterConfig), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", cfgPath, err)
 	}
 
-	fmt.Printf("wrote %s\n\n", cfgPath)
-	fmt.Println("Next: add an [agents.<name>] section naming an ACP agent you have")
-	fmt.Println("installed, then run `hive serve` and `hive agent list`.")
+	fmt.Printf("\nwrote %s\n", cfgPath)
+	if defaultAgent != "" {
+		fmt.Printf("default agent: %s\n", defaultAgent)
+	}
+	fmt.Println("\nNext: `hive serve`, then `hive agent list` in another terminal.")
 	return nil
+}
+
+// reportDiscovery prints what was found, and is explicit about what is a guess.
+func reportDiscovery(agents []config.DiscoveredAgent) {
+	if len(agents) == 0 {
+		fmt.Println("No ACP agent was found on this machine's PATH.")
+		fmt.Println("Hive will start and serve status, but it cannot create a session")
+		fmt.Println("until one is installed and named in the configuration.")
+		return
+	}
+
+	fmt.Printf("Found %d ACP agent(s) on PATH:\n\n", len(agents))
+	for _, agent := range agents {
+		note := ""
+		if agent.NeedsVerification() {
+			note = "  (ACP invocation is a convention: verify it)"
+		}
+		fmt.Printf("  %-16s %s%s\n", agent.Name, strings.Join(agent.Command, " "), note)
+	}
+}
+
+// chooseDefaultAgent picks which agent a session uses by default.
+func chooseDefaultAgent(agents []config.DiscoveredAgent, requested string) (string, error) {
+	if requested != "" {
+		for _, agent := range agents {
+			if agent.Name == requested {
+				return requested, nil
+			}
+		}
+		if len(agents) == 0 {
+			return "", fmt.Errorf("agent %q was requested but no ACP agent was found on PATH", requested)
+		}
+		return "", fmt.Errorf("agent %q was not found on PATH; found: %s", requested, agentNames(agents))
+	}
+
+	switch {
+	case len(agents) == 0:
+		return "", nil
+	case len(agents) == 1:
+		return agents[0].Name, nil
+	case !isInteractive():
+		// Nothing can be asked, so name every agent and let the user choose by
+		// editing default_agent.
+		fmt.Printf("\nSeveral agents were found. default_agent is set to %s; edit it to change.\n", agents[0].Name)
+		return agents[0].Name, nil
+	}
+
+	return promptForAgent(agents)
+}
+
+// promptForAgent asks which agent should be the default.
+func promptForAgent(agents []config.DiscoveredAgent) (string, error) {
+	fmt.Println("\nWhich agent should be the default for new sessions?")
+	fmt.Println()
+	for i, agent := range agents {
+		fmt.Printf("  %d) %s\n", i+1, agent.Name)
+	}
+	fmt.Printf("\nChoose 1-%d, or a name (default: %s): ", len(agents), agents[0].Name)
+
+	reader := bufio.NewReader(os.Stdin)
+	for attempt := 0; attempt < 3; attempt++ {
+		line, err := reader.ReadString('\n')
+		if err != nil && strings.TrimSpace(line) == "" {
+			// End of input: take the default rather than failing.
+			return agents[0].Name, nil
+		}
+
+		choice := strings.TrimSpace(line)
+		if choice == "" {
+			return agents[0].Name, nil
+		}
+
+		if n, err := strconv.Atoi(choice); err == nil {
+			if n >= 1 && n <= len(agents) {
+				return agents[n-1].Name, nil
+			}
+		} else {
+			for _, agent := range agents {
+				if agent.Name == choice {
+					return choice, nil
+				}
+			}
+		}
+
+		fmt.Printf("Enter 1-%d, or one of the names above: ", len(agents))
+	}
+	return "", errors.New("no valid choice after three attempts")
+}
+
+// isInteractive reports whether stdin is a terminal.
+//
+// A character device is not enough: /dev/null is one. Asking the terminal itself
+// is what distinguishes a prompt from noise in a script.
+func isInteractive() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+func agentNames(agents []config.DiscoveredAgent) string {
+	names := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		names = append(names, agent.Name)
+	}
+	return strings.Join(names, ", ")
 }
 
 func runConfig(f flags) error {
