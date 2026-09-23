@@ -310,8 +310,19 @@ func installLaunchAgent(binary, dir string) error {
 	}
 
 	// Reload so the change takes effect without a logout.
-	_ = exec.Command("launchctl", "bootout", launchDomain()+"/"+serviceLabel).Run()
-	if out, err := exec.Command("launchctl", "bootstrap", launchDomain(), path).CombinedOutput(); err != nil {
+	domain := launchDomain()
+	_ = exec.Command("launchctl", "bootout", domain+"/"+serviceLabel).Run()
+
+	if out, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
+		// Installing over a service that is already loaded is a normal thing to do:
+		// it is how a new build is picked up. bootstrap refuses that, so the loaded
+		// service is restarted instead, which is what the user meant.
+		if _, loaded := exec.Command("launchctl", "print", domain+"/"+serviceLabel).Output(); loaded == nil {
+			if out, err := exec.Command("launchctl", "kickstart", "-k", domain+"/"+serviceLabel).CombinedOutput(); err != nil {
+				return fmt.Errorf("hive: launchctl kickstart: %s: %w", strings.TrimSpace(string(out)), err)
+			}
+			return nil
+		}
 		return fmt.Errorf("hive: launchctl bootstrap: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil

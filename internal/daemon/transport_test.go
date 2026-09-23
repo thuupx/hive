@@ -63,6 +63,20 @@ func runTestTransport() {
 		}
 	}
 
+	// A second delivery lets a test drive two steps of one conversation: a message
+	// that binds it, then the button press that answers in it.
+	if second := os.Getenv("HIVE_TEST_TRANSPORT_2"); second != "" {
+		var follow v1.TransportInboundParams
+		if err := json.Unmarshal([]byte(second), &follow); err != nil {
+			os.Exit(6)
+		}
+		var first v1.TransportOutcome
+		if err := host.Call(ctx, v1.MethodTransportInbound, params, &first); err != nil {
+			os.Exit(7)
+		}
+		params = follow
+	}
+
 	var outcome v1.TransportOutcome
 	callErr := host.Call(ctx, v1.MethodTransportInbound, params, &outcome)
 
@@ -483,4 +497,102 @@ func receivedPrompt(t *testing.T, store *storage.Store, sessionID string) (map[s
 		}
 	}
 	return nil, false
+}
+
+// Pressing a permission button resolves the request.
+//
+// Found by pressing one: the transport sent its own action name, the core
+// compared it against a Hive method, and nothing matched, so every press
+// answered "method not found" and the agent waited forever.
+//
+// This drives the same two steps a conversation does: a message that binds the
+// conversation, then the button press that answers in it.
+func TestTransportPermissionButtonResolvesTheRequest(t *testing.T) {
+	press := v1.TransportInboundParams{
+		Transport:      "slack",
+		ConversationID: "C123",
+		Principal:      "slack:U123",
+		SourceID:       "event:C123:1700000000.000600",
+		Kind:           "interaction",
+		Action:         "permission_allow",
+		Method:         v1.MethodPermissionRespond,
+		Value:          `{"agentRequestId":"perm_1","approved":true}`,
+	}
+
+	store, outcome, callErr := startStackWithTransportFollowedBy(t, v1.TransportInboundParams{
+		Transport:      "slack",
+		ConversationID: "C123",
+		Principal:      "slack:U123",
+		SourceID:       "event:C123:1700000000.000500",
+		Kind:           "message",
+		Text:           "do something",
+	}, press)
+
+	// The regression: the press must reach the permission path. It used to answer
+	// "method not found", because the core compared the transport's action name
+	// against a Hive method and nothing matched, so the agent waited forever.
+	if callErr != nil {
+		if e := v1.AsError(callErr); e.Code == v1.CodeMethodNotFound {
+			t.Fatalf("the press never reached the permission path: %s", e.Message)
+		}
+	}
+	if outcome.Error != nil && outcome.Error.Code == v1.CodeMethodNotFound {
+		t.Fatalf("the press never reached the permission path: %s", outcome.Error.Message)
+	}
+
+	// The conversation is bound, so a press in it has a session to answer in.
+	ctx := context.Background()
+	binding, err := store.GetBinding(ctx, "slack", "C123")
+	if err != nil {
+		t.Fatalf("GetBinding: %v", err)
+	}
+	if binding.SessionID == "" {
+		t.Fatal("the conversation should be bound to a session")
+	}
+}
+
+// An action the transport recognized but did not map is reported, not ignored.
+//
+// A button that does nothing is worse than no button.
+func TestTransportUnmappedActionIsReported(t *testing.T) {
+	_, outcome, callErr := startStackWithTransportFollowedBy(t, v1.TransportInboundParams{
+		Transport:      "slack",
+		ConversationID: "C123",
+		Principal:      "slack:U123",
+		SourceID:       "event:C123:1700000000.000700",
+		Kind:           "message",
+		Text:           "do something",
+	}, v1.TransportInboundParams{
+		Transport:      "slack",
+		ConversationID: "C123",
+		Principal:      "slack:U123",
+		SourceID:       "event:C123:1700000000.000800",
+		Kind:           "interaction",
+		Action:         "mystery_button",
+		Value:          `{}`,
+	})
+
+	if callErr != nil {
+		t.Fatalf("delivery failed: %v", callErr)
+	}
+	if outcome.Error == nil {
+		t.Fatal("an unmapped action should be reported")
+	}
+	if outcome.Error.Code != v1.CodeMethodNotFound {
+		t.Errorf("code = %d, want %d", outcome.Error.Code, v1.CodeMethodNotFound)
+	}
+}
+
+// startStackWithTransportFollowedBy delivers two envelopes through one transport,
+// so both steps land in the same conversation.
+func startStackWithTransportFollowedBy(t *testing.T, first, second v1.TransportInboundParams) (*storage.Store, v1.TransportOutcome, error) {
+	t.Helper()
+
+	encoded, err := json.Marshal(second)
+	if err != nil {
+		t.Fatalf("marshal the second delivery: %v", err)
+	}
+	t.Setenv("HIVE_TEST_TRANSPORT_2", string(encoded))
+
+	return startStackWithTransport(t, first)
 }
