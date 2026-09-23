@@ -78,6 +78,54 @@ func (s *Store) UpdateSession(ctx context.Context, tx Execer, sess *session.Sess
 	return nil
 }
 
+// ListSessions returns sessions, most recently updated first.
+//
+// A limit of zero or less returns every session.
+func (s *Store) ListSessions(ctx context.Context, limit int) ([]*session.Session, error) {
+	query := `
+		SELECT id, state, workspace_id, default_interactive_run_id, metadata, created_at, updated_at
+		FROM sessions
+		ORDER BY updated_at DESC`
+	args := []any{}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("storage: list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*session.Session
+	for rows.Next() {
+		var (
+			sess      session.Session
+			state     string
+			workspace sql.NullString
+			defRun    sql.NullString
+			meta      string
+			created   int64
+			updated   int64
+		)
+		if err := rows.Scan(&sess.ID, &state, &workspace, &defRun, &meta, &created, &updated); err != nil {
+			return nil, fmt.Errorf("storage: scan session: %w", err)
+		}
+		sess.State = session.State(state)
+		sess.WorkspaceID = workspace.String
+		sess.DefaultInteractiveRunID = defRun.String
+		sess.Metadata = json.RawMessage(meta)
+		sess.CreatedAt = fromUnixNano(created)
+		sess.UpdatedAt = fromUnixNano(updated)
+		out = append(out, &sess)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: list sessions: %w", err)
+	}
+	return out, nil
+}
+
 // GetSession returns a session by id, or ErrNotFound.
 func (s *Store) GetSession(ctx context.Context, id string) (*session.Session, error) {
 	row := s.db.QueryRowContext(ctx, `

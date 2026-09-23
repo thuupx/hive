@@ -552,25 +552,76 @@ Deliberately not in M6:
 
 ### M7 — Control API and gateway
 
-- [ ] Control API domains: `session.*`, `agent.*`, `node.*`,
-      `workspace.*`, `command.*`
-- [ ] Authentication: owner principal model, `allowed_users` (§18.1)
-- [ ] Authorization evaluated before accepting a mutating operation;
-      deny by default
-- [ ] An unverified client-supplied principal string is never treated as
+- [x] Control API domains: `session.*`, `agent.*`, `node.*`, `command.*`
+      (`workspace.*` lands with M11)
+- [x] Authentication: owner principal model, `allowed_users` (§18.1)
+- [x] Authorization evaluated before accepting a mutating operation; deny by
+      default
+- [x] An unverified client-supplied principal string is never treated as
       identity
-- [ ] Transport-neutral normalization: `IncomingMessage` /
-      `IncomingCommand` / `IncomingInteraction` → Hive operation
-- [ ] `source_id` → `command_id` dedupe at the authoritative domain
-      boundary
-- [ ] Unix socket endpoint for the local CLI/TUI
-- [ ] Tests: session isolation, authentication/authorization, duplicate
+- [x] `source_id` → `command_id` dedupe at the authoritative domain boundary
+- [x] Unix socket endpoint for the local CLI/TUI, owner-only
+- [x] Session orchestration: create a session and its run, start the
+      execution on a node, route prompts deterministically
+- [x] Tests: session isolation, authentication and authorization, duplicate
       inbound delivery yields one command, new user message yields a new
       command
 
-**Exit criteria:** §42 "Transport isolation", "Authentication and
-authorization", and "Transport command correctness" (normalization half)
-have passing tests.
+**Exit criteria:** §42 "Authentication and authorization", "Session
+isolation", and "Command idempotency" have passing tests.
+
+Status: met. `make ci` is green with 197 passing tests; the suite is clean
+under `-race`. Verified against a running daemon, not only in tests:
+
+```text
+$ hive serve
+coordinator ready url=wss://127.0.0.1:60582/node agents=1 control=.../hive.sock
+$ # over the owner-only unix socket
+agent.list      -> {"agents":[{"id":"claude","protocol":"acp"}]}
+node.list       -> {"nodes":[{"nodeId":"...","connected":true,...}]}
+session.create  -> {"sessionId":"sess_...","runId":"run_...","agentId":"claude",...}
+```
+
+Implementation notes:
+
+- The Control API shares method names with the plugin-invokable set. The same
+  operation reached over a different transport is the same operation, so
+  `session.create` means one thing whether a client or a transport plugin asks
+  for it.
+- Authorization runs before the handler, so a denied caller cannot reach one.
+- A principal is resolved from the **connection**, not from the message. A
+  trusted transport may assert a principal per message, but only one prefixed
+  with its own transport name, so a client-supplied string never grants
+  authority on its own.
+- A non-owner reaches a session only through a binding it holds, and an
+  unreachable session is reported as not-found rather than unauthorized, so a
+  principal cannot learn that a session it cannot reach exists.
+- `session.create` commits the session, the run, and the command in one
+  transaction, then starts the execution as a post-commit side effect. When the
+  agent cannot be started the session and run remain durable and reconcilable
+  instead of leaving a half-created operation. The smoke test above exercises
+  exactly that path, because `claude` is not installed on the test machine.
+- The created run becomes the session's default interactive run, so the first
+  prompt routes to it rather than creating a second run.
+- Two bugs were found and fixed while wiring this up:
+  - `startRun` persisted the whole AgentRun row from an in-memory copy whose
+    state was still `created`, silently overwriting the `starting` state the
+    node had just reported. Read-modify-write now happens inside one
+    transaction (`UpdateAgentRunWith`), because a run's state and generation are
+    written by the node, the lease sweep, and the control plane.
+  - Storage errors were surfaced as internal failures instead of not-found,
+    because `v1.AsError` does not know about `storage.ErrNotFound`. The mapping
+    now lives in one place, `internal/apierr`.
+- The unix socket path is bounded by the platform's `sockaddr_un`, so
+  `ListenUnix` rejects an over-long path with a message that names the cause.
+
+Deliberately not in M7:
+
+- Transport-neutral normalization (`IncomingMessage` / `IncomingCommand` /
+  `IncomingInteraction`) and the `source_id` → `command_id` derivation belong to
+  the transport layer and land in M8. M7 delivers the boundary those normalize
+  into: the same command id resolves to the same logical operation.
+- `session.handoff` is M9. `workspace.*` is M11.
 
 ### M8 — Slack transport plugin
 

@@ -56,7 +56,18 @@ func (s *Store) GetCommand(ctx context.Context, id string) (*command.Command, er
 }
 
 // SetCommandState records a lifecycle transition and its outcome.
+//
+// The transition is validated by the domain, so a lifecycle change cannot be
+// written as an arbitrary state string.
 func (s *Store) SetCommandState(ctx context.Context, tx Execer, id string, state command.State, result, errData json.RawMessage) error {
+	current, err := s.getCommand(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if err := current.Transition(state); err != nil {
+		return fmt.Errorf("storage: command %s: %w", id, err)
+	}
+
 	res, err := tx.ExecContext(ctx, `
 		UPDATE commands
 		SET state = ?, result = ?, error = ?, updated_at = ?
@@ -75,17 +86,21 @@ func (s *Store) SetCommandState(ctx context.Context, tx Execer, id string, state
 	return nil
 }
 
-// AcceptCommand commits a command, its domain events, and the outbox records
-// in a single transaction.
+// AcceptCommandWith commits a command, a domain mutation, and the command's
+// events in a single transaction (§7.1.2).
 //
 // When the command id is already bound to a logical operation, the existing
-// record is returned and its events are not appended again. The bool reports
-// whether the operation was created by this call.
-func (s *Store) AcceptCommand(ctx context.Context, cmd *command.Command, evs []*event.Event) (*command.Command, bool, error) {
+// record is returned and apply is not called. That is what stops a retry from
+// creating a second session, AgentRun, handoff, or permission transition: the
+// idempotency decision and the mutation are the same commit.
+//
+// The bool reports whether this call created the operation.
+func (s *Store) AcceptCommandWith(ctx context.Context, cmd *command.Command, apply func(tx Execer) error, evs []*event.Event) (*command.Command, bool, error) {
 	var (
 		stored  *command.Command
 		created bool
 	)
+
 	err := s.WriteTx(ctx, func(tx Execer) error {
 		var err error
 		stored, created, err = s.EnsureCommand(ctx, tx, cmd)
@@ -95,6 +110,11 @@ func (s *Store) AcceptCommand(ctx context.Context, cmd *command.Command, evs []*
 		if !created {
 			return nil
 		}
+		if apply != nil {
+			if err := apply(tx); err != nil {
+				return err
+			}
+		}
 		_, err = s.AppendEvents(ctx, tx, evs...)
 		return err
 	})
@@ -102,6 +122,11 @@ func (s *Store) AcceptCommand(ctx context.Context, cmd *command.Command, evs []*
 		return nil, false, err
 	}
 	return stored, created, nil
+}
+
+// AcceptCommand is AcceptCommandWith without a domain mutation.
+func (s *Store) AcceptCommand(ctx context.Context, cmd *command.Command, evs []*event.Event) (*command.Command, bool, error) {
+	return s.AcceptCommandWith(ctx, cmd, nil, evs)
 }
 
 func (s *Store) getCommand(ctx context.Context, q Execer, id string) (*command.Command, error) {

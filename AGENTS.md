@@ -83,6 +83,23 @@ is an example of the internal form.
 - Permission requests are never buffered: a request that cannot be relayed must
   fail closed.
 
+### Errors
+
+- Storage and domain errors are Go errors, not protocol errors. Translate them
+  at the API boundary with `internal/apierr.From`, which lives in one place so
+  the mapping cannot drift between the Control API, the node link, and the
+  plugin link.
+- A record a caller may not reach is reported as not-found, not unauthorized, so
+  a caller cannot learn that it exists.
+
+### Concurrency
+
+- Read-modify-write must happen inside one write transaction. An AgentRun's
+  state and execution generation are written by the node, the lease sweep, and
+  the control plane, so persisting a stale in-memory copy silently overwrites a
+  newer one. Use `Store.UpdateAgentRunWith` rather than loading, mutating, and
+  calling `UpdateAgentRun`.
+
 ### Layering
 
 Domain packages own the entity types; storage is an adapter over them.

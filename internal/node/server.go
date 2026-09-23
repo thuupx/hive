@@ -46,6 +46,7 @@ type ExecutionStore interface {
 type Node struct {
 	NodeID               string
 	Version              string
+	Agents               []string
 	ConnectionGeneration int64
 	LeaseDuration        time.Duration
 	ConnectedAt          time.Time
@@ -56,6 +57,23 @@ type Node struct {
 	connected  bool
 
 	peer *v1.Peer
+}
+
+// Agents returns the agent ids the node declared it can run.
+func (n *Node) AgentIDs() []string {
+	out := make([]string, len(n.Agents))
+	copy(out, n.Agents)
+	return out
+}
+
+// RunsAgent reports whether the node declared it can run agentID.
+func (n *Node) RunsAgent(agentID string) bool {
+	for _, id := range n.Agents {
+		if id == agentID {
+			return true
+		}
+	}
+	return false
 }
 
 // Executions returns the executions the node last reported, in a stable order.
@@ -254,6 +272,7 @@ func (s *Server) handshake(ctx context.Context, peer *v1.Peer) (*Node, error) {
 		node := &Node{
 			NodeID:               hello.NodeID,
 			Version:              hello.Version,
+			Agents:               hello.Agents,
 			ConnectionGeneration: generation,
 			LeaseDuration:        lease,
 			ConnectedAt:          now,

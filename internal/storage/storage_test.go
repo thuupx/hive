@@ -343,7 +343,23 @@ func TestCommandStateTransition(t *testing.T) {
 	}
 
 	result := json.RawMessage(`{"session_id":"sess_1"}`)
+
+	// The lifecycle is validated by the domain at this boundary.
 	err := s.WriteTx(ctx, func(tx storage.Execer) error {
+		return s.SetCommandState(ctx, tx, "cmd_3", command.StateCompleted, result, nil)
+	})
+	if err == nil {
+		t.Fatal("received -> completed skips acceptance and must be refused")
+	}
+
+	err = s.WriteTx(ctx, func(tx storage.Execer) error {
+		return s.SetCommandState(ctx, tx, "cmd_3", command.StateAccepted, nil, nil)
+	})
+	if err != nil {
+		t.Fatalf("SetCommandState accepted: %v", err)
+	}
+
+	err = s.WriteTx(ctx, func(tx storage.Execer) error {
 		return s.SetCommandState(ctx, tx, "cmd_3", command.StateCompleted, result, nil)
 	})
 	if err != nil {

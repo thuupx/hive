@@ -27,6 +27,10 @@ type NodeHello struct {
 	Version         string          `json:"version"`
 	ProtocolVersion ProtocolVersion `json:"protocolVersion"`
 
+	// Agents lists the agent ids this node can run. The coordinator routes
+	// execution work by agent, so a node has to declare what it offers.
+	Agents []string `json:"agents,omitempty"`
+
 	// LeaseSeconds is how long the node's liveness claim lasts. The node
 	// renews it with heartbeats.
 	//

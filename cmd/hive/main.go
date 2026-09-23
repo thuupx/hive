@@ -23,6 +23,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/thupham/hive/internal/config"
+	"github.com/thupham/hive/internal/control"
 	"github.com/thupham/hive/internal/daemon"
 	"github.com/thupham/hive/internal/logging"
 	"github.com/thupham/hive/internal/node"
@@ -241,11 +242,25 @@ func serveCoordinator(ctx context.Context, cfgPath string, cfg config.Config, lo
 		return err
 	}
 
+	agentNames := cfg.AgentNames()
+	defaultAgent, err := cfg.EffectiveDefaultAgent()
+	if err != nil {
+		// A coordinator with no agents can still serve status, listing, and
+		// replay. It simply cannot create sessions, which is a better outcome
+		// than refusing to start.
+		log.Warn("no agents are configured; sessions cannot be created", "error", err)
+		defaultAgent = ""
+	}
+
 	coordinator, err := daemon.NewCoordinator(daemon.CoordinatorOptions{
-		Store:       store,
-		Log:         log,
-		Listen:      cfg.Cluster.Listen,
-		Certificate: cert,
+		Store:         store,
+		Log:           log,
+		Listen:        cfg.Cluster.Listen,
+		Certificate:   cert,
+		Agents:        agentNames,
+		DefaultAgent:  defaultAgent,
+		AllowedUsers:  cfg.Security.AllowedUsers,
+		ControlSocket: filepath.Join(dataDir, control.SocketFile),
 	})
 	if err != nil {
 		return err
@@ -255,7 +270,11 @@ func serveCoordinator(ctx context.Context, cfgPath string, cfg config.Config, lo
 	}
 	defer coordinator.Close()
 
-	log.Info("coordinator ready", "url", coordinator.URL())
+	log.Info("coordinator ready",
+		"url", coordinator.URL(),
+		"agents", len(agentNames),
+		"control", coordinator.ControlSocket(),
+	)
 
 	if cfg.Cluster.SpawnsNode() {
 		child, err := spawnNodeChild(cfgPath, coordinator.URL(), log)

@@ -34,8 +34,13 @@ type Options struct {
 	NodeID       string
 	Version      string
 	LeaseSeconds int
-	Executor     Executor
-	Log          *slog.Logger
+
+	// Agents lists the agent ids this node can run. The coordinator routes
+	// execution work by agent.
+	Agents []string
+
+	Executor Executor
+	Log      *slog.Logger
 
 	// ReconnectDelay is the pause before reconnecting. Zero uses a default.
 	ReconnectDelay time.Duration
@@ -252,6 +257,7 @@ func (c *Client) handshake(ctx context.Context) error {
 		NodeID:          c.opts.NodeID,
 		Version:         c.opts.Version,
 		ProtocolVersion: v1.Current(),
+		Agents:          c.opts.Agents,
 		LeaseSeconds:    c.opts.LeaseSeconds,
 	}, &ready)
 	if err != nil {

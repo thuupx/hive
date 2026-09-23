@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thupham/hive/internal/event"
+	"github.com/thupham/hive/internal/ids"
 	"github.com/thupham/hive/internal/node"
 	"github.com/thupham/hive/internal/plugin"
 	"github.com/thupham/hive/internal/storage"
@@ -76,13 +77,14 @@ func NewNode(opts NodeOptions) (*Node, error) {
 		opts:        opts,
 		log:         log,
 		store:       opts.Store,
-		eventPrefix: newID("ev"),
+		eventPrefix: ids.New("ev"),
 	}
 	n.supervisor = plugin.NewSupervisor(log)
 	n.executor = &pluginExecutor{supervisor: n.supervisor, pluginID: opts.AgentPluginID}
 	n.client = node.New(node.Options{
 		NodeID:       opts.NodeID,
 		Version:      opts.Version,
+		Agents:       agentIDs(opts.AgentPlugins),
 		LeaseSeconds: opts.LeaseSeconds,
 		Executor:     n.executor,
 		Log:          log,
@@ -283,6 +285,18 @@ func (n *Node) flushBuffer(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// agentIDs lists the agents a node offers, derived from its plugin specs.
+//
+// The plugin id is the agent name, so configuration alone decides which agents
+// a node runs and the coordinator routes execution work by that name.
+func agentIDs(specs []plugin.Spec) []string {
+	out := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, spec.ID)
+	}
+	return out
 }
 
 // nextEventID returns a stable event id that is unique across node restarts.

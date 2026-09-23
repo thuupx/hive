@@ -28,9 +28,46 @@ func (s *Store) InsertAgentRun(ctx context.Context, tx Execer, run *agent.AgentR
 	return nil
 }
 
-// UpdateAgentRun persists the mutable fields of an existing AgentRun,
-// including its execution generation.
+// UpdateAgentRunWith loads an AgentRun inside a write transaction, applies fn,
+// and persists the result.
+//
+// Read-modify-write must happen inside one transaction. A run's state and its
+// execution generation are written by the node, by the lease sweep, and by the
+// control plane, so persisting a stale in-memory copy would silently overwrite a
+// newer one.
+func (s *Store) UpdateAgentRunWith(ctx context.Context, agentRunID string, fn func(run *agent.AgentRun) error) (*agent.AgentRun, error) {
+	var updated *agent.AgentRun
+
+	err := s.WriteTx(ctx, func(tx Execer) error {
+		run, err := s.getAgentRun(ctx, tx, agentRunID)
+		if err != nil {
+			return err
+		}
+		if err := fn(run); err != nil {
+			return err
+		}
+		if err := s.updateAgentRun(ctx, tx, run); err != nil {
+			return err
+		}
+		updated = run
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+// UpdateAgentRun persists the mutable fields of an existing AgentRun, including
+// its execution generation.
+//
+// It writes the whole row, so a caller that may be racing another writer must
+// load the run inside the same transaction. Prefer UpdateAgentRunWith.
 func (s *Store) UpdateAgentRun(ctx context.Context, tx Execer, run *agent.AgentRun) error {
+	return s.updateAgentRun(ctx, tx, run)
+}
+
+func (s *Store) updateAgentRun(ctx context.Context, tx Execer, run *agent.AgentRun) error {
 	if err := run.Validate(); err != nil {
 		return err
 	}
@@ -57,7 +94,11 @@ func (s *Store) UpdateAgentRun(ctx context.Context, tx Execer, run *agent.AgentR
 
 // GetAgentRun returns an AgentRun by id, or ErrNotFound.
 func (s *Store) GetAgentRun(ctx context.Context, id string) (*agent.AgentRun, error) {
-	row := s.db.QueryRowContext(ctx, `
+	return s.getAgentRun(ctx, s.db, id)
+}
+
+func (s *Store) getAgentRun(ctx context.Context, q Execer, id string) (*agent.AgentRun, error) {
+	row := q.QueryRowContext(ctx, `
 		SELECT id, session_id, agent_id, node_id, protocol, runtime_session_id,
 		       execution_generation, node_execution_id, state, started_at, ended_at
 		FROM agent_runs WHERE id = ?`, id)

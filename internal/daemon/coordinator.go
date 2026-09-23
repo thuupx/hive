@@ -13,8 +13,11 @@ import (
 	"time"
 
 	"github.com/thupham/hive/internal/agent"
+	"github.com/thupham/hive/internal/apierr"
+	"github.com/thupham/hive/internal/control"
 	"github.com/thupham/hive/internal/event"
 	"github.com/thupham/hive/internal/eventbus"
+	"github.com/thupham/hive/internal/ids"
 	"github.com/thupham/hive/internal/node"
 	"github.com/thupham/hive/internal/permission"
 	"github.com/thupham/hive/internal/plugin"
@@ -31,6 +34,19 @@ type CoordinatorOptions struct {
 	Log         *slog.Logger
 	Listen      string
 	Certificate tls.Certificate
+
+	// Agents are the configured agent ids, used to route execution work.
+	Agents []string
+
+	// DefaultAgent is used when a request does not name one.
+	DefaultAgent string
+
+	// AllowedUsers is the configured allow list of additional principals.
+	AllowedUsers []string
+
+	// ControlSocket enables the local Control API when set. The socket is
+	// owner-only, so the caller is authenticated by the operating system.
+	ControlSocket string
 }
 
 // Coordinator is the control plane.
@@ -44,6 +60,11 @@ type Coordinator struct {
 	nodeServer  *node.Server
 	certificate tls.Certificate
 	listen      string
+
+	control         *control.Service
+	gateway         *control.Gateway
+	controlSocket   string
+	controlListener net.Listener
 
 	listener   net.Listener
 	httpServer *http.Server
@@ -77,6 +98,21 @@ func NewCoordinator(opts CoordinatorOptions) (*Coordinator, error) {
 		events:     events,
 		nodeServer: nodeServer,
 	}
+
+	service, err := control.New(control.Options{
+		Store:        opts.Store,
+		Nodes:        nodeServer,
+		Log:          log,
+		Agents:       opts.Agents,
+		DefaultAgent: opts.DefaultAgent,
+		AllowedUsers: opts.AllowedUsers,
+	})
+	if err != nil {
+		return nil, err
+	}
+	c.control = service
+	c.gateway = control.NewGateway(service, log)
+	c.controlSocket = opts.ControlSocket
 
 	nodeServer.Handle(v1.MethodEventPublish, c.handleEventPublish)
 	nodeServer.Handle(v1.MethodPermissionRequest, c.handlePermissionRequest)
@@ -128,8 +164,36 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	go func() { _ = c.nodeServer.WatchLeases(ctx, LeaseSweepInterval, c.onLeaseExpired) }()
 
 	c.log.Info("coordinator listening", "url", c.url)
+
+	if c.controlSocket != "" {
+		listener, err := control.ListenUnix(c.controlSocket)
+		if err != nil {
+			return err
+		}
+		c.controlListener = listener
+
+		// The socket is owner-only, so the operating system has already
+		// authenticated the caller.
+		conn := control.Connection{Principal: control.OwnerPrincipal}
+		go func() {
+			if err := control.ServeUnix(ctx, listener, c.gateway, conn, c.log); err != nil {
+				c.log.Error("control listener stopped", "error", err)
+			}
+		}()
+		c.log.Info("control api listening", "socket", c.controlSocket)
+	}
+
 	return nil
 }
+
+// ControlSocket returns the Control API socket path, if one is enabled.
+func (c *Coordinator) ControlSocket() string { return c.controlSocket }
+
+// ControlService exposes the Control API service.
+func (c *Coordinator) ControlService() *control.Service { return c.control }
+
+// Gateway exposes the Control API gateway.
+func (c *Coordinator) Gateway() *control.Gateway { return c.gateway }
 
 // URL returns the node link URL a node should connect to.
 func (c *Coordinator) URL() string { return c.url }
@@ -150,6 +214,9 @@ func (c *Coordinator) Store() *storage.Store { return c.store }
 func (c *Coordinator) Close() error {
 	c.supervisor.StopAll()
 	c.bus.Close()
+	if c.controlListener != nil {
+		_ = c.controlListener.Close()
+	}
 	if c.httpServer != nil {
 		return c.httpServer.Close()
 	}
@@ -227,7 +294,7 @@ func (c *Coordinator) handlePermissionRequest(ctx context.Context, call node.Cal
 		expiresAt = time.Now().UTC().Add(time.Duration(params.ExpiresInSeconds) * time.Second)
 	}
 
-	req := permission.New(newID("perm"), params.SessionID, params.AgentRunID,
+	req := permission.New(ids.New("perm"), params.SessionID, params.AgentRunID,
 		params.AgentRequestID, params.Payload, expiresAt)
 
 	if err := c.store.WriteTx(ctx, func(tx storage.Execer) error {
@@ -252,33 +319,25 @@ func (c *Coordinator) handleExecutionReport(ctx context.Context, call node.Call)
 		return nil, v1.InvalidParams("agent run id is required")
 	}
 
-	run, err := c.store.GetAgentRun(ctx, params.AgentRunID)
+	// The read-modify-write happens inside one transaction, and the report is
+	// fenced on the execution generation: a report from a superseded generation
+	// must not move the current one.
+	run, err := c.store.UpdateAgentRunWith(ctx, params.AgentRunID, func(run *agent.AgentRun) error {
+		if err := run.CheckGeneration(params.Generation); err != nil {
+			return err
+		}
+		if params.RuntimeSessionID != "" {
+			run.RuntimeSessionID = params.RuntimeSessionID
+		}
+		return applyExecutionReport(run, params)
+	})
 	if errors.Is(err, storage.ErrNotFound) {
 		// The coordinator has no record of this run, so the node should stop
 		// claiming it rather than keep reporting.
 		return map[string]any{"known": false}, nil
 	}
 	if err != nil {
-		return nil, v1.Unavailable("agent run could not be read: %s", err.Error())
-	}
-
-	// Fence on the execution generation: a report from a superseded generation
-	// must not move the current one.
-	if err := run.CheckGeneration(params.Generation); err != nil {
-		return nil, v1.AsError(err)
-	}
-
-	if params.RuntimeSessionID != "" {
-		run.RuntimeSessionID = params.RuntimeSessionID
-	}
-	if err := applyExecutionReport(run, params); err != nil {
-		return nil, v1.AsError(err)
-	}
-
-	if err := c.store.WriteTx(ctx, func(tx storage.Execer) error {
-		return c.store.UpdateAgentRun(ctx, tx, run)
-	}); err != nil {
-		return nil, v1.Unavailable("agent run could not be updated: %s", err.Error())
+		return nil, apierr.From(err)
 	}
 
 	return map[string]any{"known": true, "state": string(run.State)}, nil
@@ -318,27 +377,20 @@ func applyExecutionReport(run *agent.AgentRun, params v1.ExecutionReportParams) 
 func (c *Coordinator) onLeaseExpired(nodeID string, ref v1.ExecutionRef) {
 	ctx := context.Background()
 
-	run, err := c.store.GetAgentRun(ctx, ref.AgentRunID)
-	if err != nil {
+	_, err := c.store.UpdateAgentRunWith(ctx, ref.AgentRunID, func(run *agent.AgentRun) error {
+		if err := run.CheckGeneration(ref.Generation); err != nil {
+			// A superseded generation is not this run's current execution.
+			return apierr.ErrNoChange
+		}
+		if run.State.IsTerminal() || !run.State.CanTransitionTo(agent.StateInterrupted) {
+			return apierr.ErrNoChange
+		}
+		return run.Transition(agent.StateInterrupted)
+	})
+	switch {
+	case errors.Is(err, apierr.ErrNoChange):
 		return
-	}
-	if err := run.CheckGeneration(ref.Generation); err != nil {
-		// A superseded generation is not this run's current execution.
-		return
-	}
-	if run.State.IsTerminal() {
-		return
-	}
-	if !run.State.CanTransitionTo(agent.StateInterrupted) {
-		return
-	}
-
-	if err := run.Transition(agent.StateInterrupted); err != nil {
-		return
-	}
-	if err := c.store.WriteTx(ctx, func(tx storage.Execer) error {
-		return c.store.UpdateAgentRun(ctx, tx, run)
-	}); err != nil {
+	case err != nil:
 		c.log.Warn("could not record an interrupted run", "run", ref.AgentRunID, "error", err)
 		return
 	}
