@@ -484,6 +484,7 @@ func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
 		// root says. A card that is not in a thread belongs to the channel.
 		root := payload.Message.ThreadTS
 		key, thread := conversationKey(env.ConversationID, root, root, p.opts.FlatReplies)
+		env.ConversationID = key
 		return delivery{
 			envelope:       env,
 			conversationID: key,
@@ -513,6 +514,10 @@ func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
 			return delivery{}, false
 		}
 		key, thread := conversationKey(event.Channel, event.Timestamp, event.ThreadTS, p.opts.FlatReplies)
+		// Hive binds what the envelope names, so the envelope names the conversation:
+		// the thread, not the channel that holds it. Binding the channel would make
+		// two threads one conversation again.
+		env.ConversationID = key
 		return delivery{
 			envelope:       env,
 			conversationID: key,

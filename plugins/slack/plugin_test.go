@@ -79,3 +79,38 @@ func mustJSON(t *testing.T, v any) []byte {
 	}
 	return encoded
 }
+
+// The envelope names the thread, because that is what Hive binds.
+//
+// Found by testing the new key against a real channel: the delivery carried the
+// thread, and the envelope still carried the channel, so Hive bound the channel
+// and two threads were one conversation again.
+func TestTheEnvelopeNamesTheThread(t *testing.T) {
+	p := New(nil, nil, Options{})
+
+	d, ok := p.parse(Inbound{
+		Type: "event_callback",
+		Payload: json.RawMessage(`{
+			"type": "message",
+			"channel": "C1",
+			"user": "U1",
+			"text": "hello",
+			"ts": "1.2",
+			"thread_ts": "1.0"
+		}`),
+	})
+	if !ok {
+		t.Fatal("a message should parse")
+	}
+
+	if d.conversationID != "C1:1.0" {
+		t.Fatalf("conversation = %q, want the thread", d.conversationID)
+	}
+	if d.envelope.ConversationID != d.conversationID {
+		t.Fatalf("the envelope says %q and the delivery says %q, so Hive would bind the wrong one",
+			d.envelope.ConversationID, d.conversationID)
+	}
+	if d.channelID != "C1" {
+		t.Fatalf("channel = %q, want the channel that holds the thread", d.channelID)
+	}
+}
