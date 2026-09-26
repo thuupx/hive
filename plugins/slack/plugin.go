@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/slack-go/slack/slackevents"
 	"github.com/thupham/hive/plugins/sdk"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
@@ -284,8 +285,11 @@ func (p *Plugin) serveInbound(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	p.log.Info("slack socket mode connected")
 
+	// The socket's own "connected" line comes from the client, when the library
+	// has actually connected. Saying it here would say it before dialling, and a
+	// transport that reports itself connected without a socket is the state that
+	// took three days to notice once.
 	for {
 		select {
 		case <-ctx.Done():
@@ -306,7 +310,7 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	if !ok {
 		// Not addressed to Hive, or not something a user typed. Saying so at debug
 		// level is what makes "I typed something and nothing happened" answerable.
-		p.log.Debug("ignoring a delivery", "type", inbound.Type)
+		p.log.Debug("ignoring a delivery", "type", inbound.Type())
 		return
 	}
 
@@ -361,13 +365,11 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	if err != nil {
 		p.log.Warn("inbound delivery failed", "error", err)
 
-		// The indicator is replaced rather than left behind: a clock that keeps
+		// The indicator goes rather than being left behind: a clock that keeps
 		// ticking says the turn is still working, and it is not. Saying what
 		// happened is the honest end to it.
-		failure := textMessage(fmt.Sprintf(":warning: %s", err.Error()))
-		if !p.replaceTyping(ctx, d.conversationID, failure) {
-			p.post(ctx, d.conversationID, d.thread, failure)
-		}
+		p.stopTyping(ctx, d.conversationID)
+		p.post(ctx, d.conversationID, d.thread, textMessage(fmt.Sprintf(":warning: %s", err.Error())))
 		return
 	}
 
@@ -410,11 +412,29 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 		return
 	}
 
-	// The outcome replaces the indicator, so a failure or a command answer lands
-	// where the user is already looking.
-	if !p.replaceTyping(ctx, d.conversationID, RenderOutcome(outcome)) {
-		p.post(ctx, d.conversationID, d.thread, RenderOutcome(outcome))
+	// The outcome is its own message. The indicator goes when this delivery is the
+	// turn the indicator belongs to — the message that started it, or the cancel
+	// that ended it — and stays while a turn is still working.
+	//
+	// A status answer that took the "working" signal away would read as an agent
+	// that had stopped, and the turn would still be running.
+	if endsTurn(d, outcome) {
+		p.stopTyping(ctx, d.conversationID)
 	}
+	p.post(ctx, d.conversationID, d.thread, RenderOutcome(outcome))
+}
+
+// endsTurn reports whether a delivery's outcome ends the turn its indicator
+// stood for.
+//
+// A message is the turn: its answer ends it, and a failure means there was no
+// turn, so the indicator must go too. A cancel ends the turn it was shown for.
+// Everything else — a status read, a settings change — leaves the turn working.
+func endsTurn(d delivery, outcome v1.TransportOutcome) bool {
+	if d.envelope.Kind == v1.EnvelopeMessage {
+		return true
+	}
+	return outcome.Error == nil && outcome.Method == v1.MethodSessionCancel
 }
 
 // settleInteraction replaces a card's buttons with the decision that was made.
@@ -459,6 +479,23 @@ func chosenLabel(env v1.Envelope) string {
 		return ""
 	}
 	return value.Label
+}
+
+// messageEvent is the message an Events API delivery carried.
+//
+// Only a callback event carries one: a url_verification or a rate-limit notice
+// is not user intent, and neither is a mention handled as its own event type —
+// the message event carries the mention text, which is what addressing is read
+// from.
+func messageEvent(event slackevents.EventsAPIEvent) (slackevents.MessageEvent, bool) {
+	if event.Type != slackevents.CallbackEvent {
+		return slackevents.MessageEvent{}, false
+	}
+	message, ok := event.InnerEvent.Data.(*slackevents.MessageEvent)
+	if !ok || message == nil {
+		return slackevents.MessageEvent{}, false
+	}
+	return *message, true
 }
 
 // commandName is the command a delivery carried, if it carried one.
@@ -535,30 +572,27 @@ func (p *Plugin) readRoom(ctx context.Context, d delivery) []v1.ChannelMessage {
 // parse turns a platform delivery into an envelope, reporting false when the
 // delivery is not for Hive.
 func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
-	switch inbound.Type {
-	case "block_actions":
-		var payload ActionPayload
-		if err := json.Unmarshal(inbound.Payload, &payload); err != nil {
-			return delivery{}, false
-		}
+	switch {
+	case inbound.Interaction != nil:
+		payload := *inbound.Interaction
 		env := p.parser.ParseInteraction(payload)
 		// The conversation is the thread the card is in, which is what the thread
 		// root says. A card that is not in a thread belongs to the channel.
-		root := payload.Message.ThreadTS
+		root := payload.Message.ThreadTimestamp
 		key, thread := conversationKey(env.ConversationID, root, root, p.opts.FlatReplies)
 		env.ConversationID = key
 		return delivery{
 			envelope:       env,
 			conversationID: key,
 			channelID:      env.ConversationID,
-			timestamp:      payload.ActionTS,
-			messageTS:      payload.Message.TS,
+			timestamp:      payload.ActionTs,
+			messageTS:      payload.Message.Timestamp,
 			thread:         thread,
 		}, true
 
-	default:
-		var event MessageEvent
-		if err := json.Unmarshal(inbound.Payload, &event); err != nil {
+	case inbound.Events != nil:
+		event, ok := messageEvent(*inbound.Events)
+		if !ok {
 			return delivery{}, false
 		}
 
@@ -571,12 +605,12 @@ func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
 			return delivery{}, false
 		}
 
-		env := p.parser.ParseMessage(event)
+		env := p.parser.ParseMessage(event, messageFiles(inbound.Payload))
 		if env.Kind == "" {
 			// Not addressed to Hive.
 			return delivery{}, false
 		}
-		key, thread := conversationKey(event.Channel, event.Timestamp, event.ThreadTS, p.opts.FlatReplies)
+		key, thread := conversationKey(event.Channel, event.TimeStamp, event.ThreadTimeStamp, p.opts.FlatReplies)
 		// Hive binds what the envelope names, so the envelope names the conversation:
 		// the thread, not the channel that holds it. Binding the channel would make
 		// two threads one conversation again.
@@ -585,10 +619,12 @@ func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
 			envelope:       env,
 			conversationID: key,
 			channelID:      event.Channel,
-			timestamp:      event.Timestamp,
+			timestamp:      event.TimeStamp,
 			thread:         thread,
 		}, true
 	}
+
+	return delivery{}, false
 }
 
 // renderQueue bounds how much rendering may be outstanding.
@@ -657,14 +693,17 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 			renderer := Renderer{SessionID: delivered.Event.SessionID}
 			rendered, ok := renderer.RenderEvent(delivered.Event)
 
-			// The answer takes the place of the indicator, so the turn ends with one
-			// message where the indicator was.
+			// The answer is a message of its own, and the indicator that said the
+			// turn was working goes away with it.
+			//
+			// It is not edited into the indicator's place: that would put the
+			// answer above the turn's own tool list, out of order, and Slack
+			// refuses an edited text over 4,000 characters while a posted one may
+			// be far larger. A long answer that could never be posted that way is
+			// exactly what a user reports as a bot that stopped answering.
 			if ok && isAnswer(delivered.Event) {
 				for _, conversation := range conversations {
-					if p.replaceTyping(ctx, conversation, rendered.Message) {
-						ok = false
-						break
-					}
+					p.stopTyping(ctx, conversation)
 				}
 			}
 

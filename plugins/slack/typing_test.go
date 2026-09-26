@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 type fakeClient struct {
 	posted   []PostMessageRequest
 	updated  []UpdateMessageRequest
+	deleted  []string
 	reaction []ReactionRequest
 
 	failPost bool
@@ -30,6 +30,11 @@ func (c *fakeClient) PostMessage(_ context.Context, req PostMessageRequest) (str
 
 func (c *fakeClient) UpdateMessage(_ context.Context, req UpdateMessageRequest) error {
 	c.updated = append(c.updated, req)
+	return nil
+}
+
+func (c *fakeClient) DeleteMessage(_ context.Context, _ string, timestamp string) error {
+	c.deleted = append(c.deleted, timestamp)
 	return nil
 }
 
@@ -50,9 +55,13 @@ func (c *fakeClient) Events(ctx context.Context) (<-chan Inbound, error) { retur
 
 func (c *fakeClient) Close() error { return nil }
 
-// A turn shows that it is working with one message, and the answer takes its
-// place rather than arriving as a second message.
-func TestTheAnswerReplacesTheTypingIndicator(t *testing.T) {
+// The indicator is removed when the turn ends, and the answer is its own message.
+//
+// Found in a live conversation: the answer was edited into the indicator's
+// message, so it landed above the turn's own tool list — out of order — and an
+// answer longer than 4,000 characters could not be posted at all, because
+// chat.update refuses a text that long while chat.postMessage accepts it.
+func TestTheIndicatorIsRemovedRatherThanEditedIntoTheAnswer(t *testing.T) {
 	client := &fakeClient{}
 	p := New(nil, client, Options{TypingIndicator: true})
 
@@ -65,22 +74,23 @@ func TestTheAnswerReplacesTheTypingIndicator(t *testing.T) {
 		t.Errorf("the indicator went to thread %q, want the turn's", client.posted[0].ThreadTS)
 	}
 
-	replaced := p.replaceTyping(context.Background(), "C1", textMessage("the answer"))
+	p.stopTyping(context.Background(), "C1")
 
-	if !replaced {
-		t.Fatal("the answer should have replaced the indicator")
+	if len(client.deleted) != 1 {
+		t.Fatalf("deleted %d message(s), want the indicator", len(client.deleted))
 	}
-	if len(client.updated) != 1 {
-		t.Fatalf("updated %d message(s), want one", len(client.updated))
+	if client.deleted[0] != "1.0" {
+		t.Errorf("deleted %q, want the indicator's message", client.deleted[0])
 	}
-	if client.updated[0].Timestamp != "1.0" {
-		t.Errorf("updated %q, want the indicator's message", client.updated[0].Timestamp)
+	if len(client.updated) != 0 {
+		t.Errorf("updated %d message(s), want none: an answer is posted, never edited into the indicator",
+			len(client.updated))
 	}
 
-	// A second answer has nothing left to replace, so it is posted as its own
-	// message rather than vanishing.
-	if p.replaceTyping(context.Background(), "C1", textMessage("again")) {
-		t.Fatal("there is no indicator to replace a second time")
+	// A turn that ends twice removes one indicator, not two.
+	p.stopTyping(context.Background(), "C1")
+	if len(client.deleted) != 1 {
+		t.Fatalf("deleted %d message(s), want one", len(client.deleted))
 	}
 }
 
@@ -94,8 +104,10 @@ func TestTypingIndicatorCanBeTurnedOff(t *testing.T) {
 	if len(client.posted) != 0 {
 		t.Fatalf("posted %d message(s), want none", len(client.posted))
 	}
-	if p.replaceTyping(context.Background(), "C1", textMessage("x")) {
-		t.Fatal("there is no indicator to replace")
+
+	p.stopTyping(context.Background(), "C1")
+	if len(client.deleted) != 0 {
+		t.Fatalf("deleted %d message(s), want none", len(client.deleted))
 	}
 }
 
@@ -106,14 +118,16 @@ func TestAnIndicatorThatCannotBeShownIsNotFatal(t *testing.T) {
 
 	p.startTyping(context.Background(), "C1", "")
 
-	if p.replaceTyping(context.Background(), "C1", textMessage("x")) {
-		t.Fatal("a failed indicator leaves nothing to replace")
+	// Nothing to remove, and that is not a failure.
+	p.stopTyping(context.Background(), "C1")
+	if len(client.deleted) != 0 {
+		t.Fatalf("deleted %d message(s), want none", len(client.deleted))
 	}
 }
 
-// Only an answer replaces the indicator. A tool card is a step, and it belongs
-// after the indicator rather than in place of it.
-func TestOnlyAnAnswerReplacesTheIndicator(t *testing.T) {
+// Only an answer ends the turn. A tool card is a step, and the turn is still
+// working while it happens.
+func TestOnlyAnAnswerEndsTheTurn(t *testing.T) {
 	cases := map[string]struct {
 		event v1.Event
 		want  bool
@@ -177,8 +191,9 @@ func TestAnIndicatorStopsAfterTheTimeout(t *testing.T) {
 	if len(client.updated) != 0 {
 		t.Fatalf("updated %d message(s), want none", len(client.updated))
 	}
-	if p.replaceTyping(context.Background(), "C1", textMessage("x")) {
-		t.Fatal("the indicator should have been forgotten")
+	p.stopTyping(context.Background(), "C1")
+	if len(client.deleted) != 0 {
+		t.Fatalf("deleted %d message(s), want none: the indicator was already forgotten", len(client.deleted))
 	}
 }
 
@@ -197,39 +212,33 @@ func TestASuccessfulPromptPostsNoAcknowledgement(t *testing.T) {
 		t.Fatalf("posted %d message(s), want only the indicator", len(client.posted))
 	}
 
-	// The answer replaces it, so the turn ends with one message.
-	p.replaceTyping(context.Background(), "C1", textMessage("the answer"))
-
+	// Nothing is posted for a turn that is still running.
 	if len(client.posted) != 1 {
 		t.Fatalf("posted %d message(s) in total, want one", len(client.posted))
 	}
 }
 
-// A delivery that fails replaces the indicator.
+// A delivery that fails takes the indicator down.
 //
 // Found in a live conversation: a restart killed a delivery, and the clock it had
 // posted kept ticking for the rest of its thirty minutes, saying the turn was
 // still working when it was not.
-func TestAFailedDeliveryReplacesTheIndicator(t *testing.T) {
+func TestAFailedDeliveryTakesTheIndicatorDown(t *testing.T) {
 	client := &fakeClient{}
 	p := New(nil, client, Options{TypingIndicator: true})
 
 	p.startTyping(context.Background(), "C1", "")
 
-	// What the transport does when the delivery fails.
-	failure := textMessage(":warning: hive: connection closed")
-	if !p.replaceTyping(context.Background(), "C1", failure) {
-		t.Fatal("the failure should have replaced the indicator")
-	}
+	// What the transport does when the delivery fails: the indicator goes, and
+	// what happened is posted as its own message.
+	p.stopTyping(context.Background(), "C1")
 
-	if len(client.updated) != 1 {
-		t.Fatalf("updated %d message(s), want one", len(client.updated))
-	}
-	if !strings.Contains(client.updated[0].Message.Text, "connection closed") {
-		t.Fatalf("the message is %q, want the failure", client.updated[0].Message.Text)
+	if len(client.deleted) != 1 {
+		t.Fatalf("deleted %d message(s), want the indicator", len(client.deleted))
 	}
 	// And there is nothing left to tick.
-	if p.replaceTyping(context.Background(), "C1", failure) {
-		t.Fatal("there should be no indicator left")
+	p.stopTyping(context.Background(), "C1")
+	if len(client.deleted) != 1 {
+		t.Fatalf("deleted %d message(s), want one", len(client.deleted))
 	}
 }

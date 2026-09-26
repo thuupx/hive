@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	slackgo "github.com/slack-go/slack"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
@@ -18,9 +19,13 @@ const (
 	ActionPermissionAllow = "permission_allow"
 	ActionPermissionDeny  = "permission_deny"
 
-	// ActionPermissionRespond is one of the agent's own choices. Which choice is
-	// in the button's value, so one action id covers every option an agent
-	// offers, however many there are.
+	// ActionPermissionRespond is one of the agent's own choices.
+	//
+	// Each button carries this plus its position — "permission_respond.2" — because
+	// Slack rejects a message whose elements in one block share an action id
+	// ("action_id ... already exists"), and rejecting the message means a
+	// permission card that never appears. Which choice a button stands for is in
+	// its value, so the suffix is only there to keep the ids apart.
 	ActionPermissionRespond = "permission_respond"
 )
 
@@ -226,11 +231,30 @@ func renderTool(ev v1.Event) (Rendered, bool) {
 func toolRunMessage(calls []v1.ToolCall) Message {
 	var text strings.Builder
 	fmt.Fprintf(&text, ":toolbox: %s", toolCount(len(calls)))
+
+	// The list is bounded by the edit limit rather than the post limit, because
+	// the message is edited as calls arrive. A list that grew past it would stop
+	// updating without saying so, and the reader would see a turn that quietly
+	// stopped reporting.
+	room := MaxUpdateChars - len("\n… 0000 more")
+	shown := 0
 	for _, call := range calls {
-		text.WriteString("\n")
-		text.WriteString(toolLine(call))
+		line := "\n" + toolLine(call)
+		if text.Len()+len(line) > room {
+			break
+		}
+		text.WriteString(line)
+		shown++
 	}
-	return textMessage(text.String())
+	if shown < len(calls) {
+		fmt.Fprintf(&text, "\n… %d more", len(calls)-shown)
+	}
+
+	converted := mrkdwn(text.String())
+	return Message{
+		Text:   fallbackText(converted, MaxUpdateChars),
+		Blocks: blocksFor(converted),
+	}
 }
 
 // toolCount is the heading for a turn's tool calls.
@@ -323,11 +347,13 @@ func permissionMessage(ev v1.Event) Message {
 		title = "a sensitive operation"
 	}
 
-	blocks := []Block{
-		{Type: "section", Text: &TextObject{Type: "mrkdwn", Text: fmt.Sprintf("*Permission requested*\n%s", title)}},
+	blocks := []slackgo.Block{
+		slackgo.NewSectionBlock(
+			slackgo.NewTextBlockObject(slackgo.MarkdownType,
+				fmt.Sprintf("*Permission requested*\n%s", title), false, false), nil, nil),
 	}
 	if actions := permissionActions(ev, payload.Options); len(actions) > 0 {
-		blocks = append(blocks, Block{Type: "actions", Elements: actions})
+		blocks = append(blocks, slackgo.NewActionBlock("", actions...))
 	}
 
 	return Message{
@@ -348,16 +374,15 @@ type permissionOption struct {
 // The agent decides what a user may choose. An agent that offers "Allow once"
 // and "Allow always" offers two buttons, and the transport renders what it was
 // given rather than deciding that a decision has two answers.
-func permissionActions(ev v1.Event, options []permissionOption) []Element {
-	elements := make([]Element, 0, len(options))
-	for _, option := range options {
-		elements = append(elements, Element{
-			Type:     "button",
-			Text:     &TextObject{Type: "plain_text", Text: optionLabel(option)},
-			ActionID: ActionPermissionRespond,
-			Value:    encodeOption(ev, option),
-			Style:    optionStyle(option.Kind),
-		})
+func permissionActions(ev v1.Event, options []permissionOption) []slackgo.BlockElement {
+	elements := make([]slackgo.BlockElement, 0, len(options))
+	for i, option := range options {
+		elements = append(elements, permissionButton(
+			fmt.Sprintf("%s.%d", ActionPermissionRespond, i),
+			optionLabel(option),
+			encodeOption(ev, option),
+			optionStyle(option.Kind),
+		))
 	}
 	if len(elements) > 0 {
 		return elements
@@ -365,16 +390,20 @@ func permissionActions(ev v1.Event, options []permissionOption) []Element {
 
 	// An agent that offered no choices still needs an answer, or it waits
 	// forever. The pair a permission request has always had is the fallback.
-	return []Element{
-		{
-			Type: "button", Text: &TextObject{Type: "plain_text", Text: "Allow"},
-			ActionID: ActionPermissionAllow, Value: encodeDecision(ev, true), Style: "primary",
-		},
-		{
-			Type: "button", Text: &TextObject{Type: "plain_text", Text: "Deny"},
-			ActionID: ActionPermissionDeny, Value: encodeDecision(ev, false), Style: "danger",
-		},
+	return []slackgo.BlockElement{
+		permissionButton(ActionPermissionAllow, "Allow", encodeDecision(ev, true), slackgo.StylePrimary),
+		permissionButton(ActionPermissionDeny, "Deny", encodeDecision(ev, false), slackgo.StyleDanger),
 	}
+}
+
+// permissionButton builds one button of a permission card.
+func permissionButton(actionID, label, value string, style slackgo.Style) slackgo.BlockElement {
+	button := slackgo.NewButtonBlockElement(actionID, value,
+		slackgo.NewTextBlockObject(slackgo.PlainTextType, label, false, false))
+	if style != "" {
+		button = button.WithStyle(style)
+	}
+	return button
 }
 
 // optionLabel is what a button says.
@@ -389,15 +418,26 @@ func optionLabel(option permissionOption) string {
 
 // optionStyle styles a button by the kind the agent gave it. A kind the
 // transport does not know is neither safe nor dangerous, so it is left plain.
-func optionStyle(kind string) string {
-	switch kind {
-	case "allow":
-		return "primary"
-	case "deny":
-		return "danger"
+func optionStyle(kind string) slackgo.Style {
+	switch {
+	case allows(kind):
+		return slackgo.StylePrimary
+	case rejects(kind):
+		return slackgo.StyleDanger
 	default:
 		return ""
 	}
+}
+
+// allows and rejects read an option's kind.
+//
+// The vocabulary belongs to the agent, so these read the prefix rather than an
+// exact list: an agent that offers "allow_once" and "allow_always" offers two
+// approvals, and one that offers "reject_once" offers a refusal.
+func allows(kind string) bool { return strings.HasPrefix(kind, "allow") }
+
+func rejects(kind string) bool {
+	return strings.HasPrefix(kind, "deny") || strings.HasPrefix(kind, "reject")
 }
 
 // encodeOption builds the button payload for one of the agent's own choices.
@@ -408,7 +448,10 @@ func optionStyle(kind string) string {
 func encodeOption(ev v1.Event, option permissionOption) string {
 	return encodeValue(ev, map[string]any{
 		"optionId": option.OptionID,
-		"approved": option.Kind == "allow",
+		// The option id is the decision; this is the fallback a reader uses when it
+		// cannot resolve one. It follows the kind, because reading an agent's
+		// "allow_once" as "not an approval" would deny a choice the user made.
+		"approved": allows(option.Kind),
 		"label":    optionLabel(option),
 	})
 }
@@ -445,7 +488,7 @@ func encodeValue(ev v1.Event, fields map[string]any) string {
 func textMessage(text string) Message {
 	converted := mrkdwn(text)
 	return Message{
-		Text:   fallbackText(converted),
+		Text:   fallbackText(converted, MaxMessageChars),
 		Blocks: blocksFor(converted),
 	}
 }

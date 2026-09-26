@@ -854,11 +854,29 @@ func (b *Bridge) pump(client *acp.Client) {
 	}
 }
 
+// publish turns one agent update into what Hive records.
+//
+// An update that arrives with no turn in flight is history, not this turn's work.
+// An agent replays its conversation when a session is loaded, and Hive already has
+// that history — durably, from the turn that produced it — so collecting the
+// replay publishes the previous answer a second time, at the head of the next one.
+// A reader sees a message that answers the old question before it says anything
+// about the new one.
 func (b *Bridge) publish(update acp.Update) {
 	r := b.runFor(update.SessionID)
 	if r == nil {
 		return
 	}
+
+	b.mu.Lock()
+	inTurn := r.inTurn
+	b.mu.Unlock()
+	if !inTurn {
+		b.log.Debug("dropping an update that belongs to no turn",
+			"run", r.agentRunID, "method", update.Method)
+		return
+	}
+
 	b.publishUpdate(r, update)
 }
 

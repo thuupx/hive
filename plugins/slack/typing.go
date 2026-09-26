@@ -9,13 +9,14 @@ import (
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
-// A turn shows that it is working by animating one message, and the answer
-// replaces that message when it arrives.
+// A turn shows that it is working by animating one message, and that message is
+// removed when the turn's answer arrives.
 //
 // Slack has no typing indicator a bot can send, so the indicator is a message
-// that says nothing and means "working". Making it the message the answer replaces
-// is what keeps a turn to one message per thing it has to say, instead of an
-// acknowledgement followed by an answer that repeats it.
+// that says nothing and means "working". It is deleted rather than edited into
+// the answer: an edit puts the answer where the indicator was — above the turn's
+// own tool list, out of order — and Slack refuses an edited text over 4,000
+// characters while it accepts a posted one far larger.
 const (
 	// typingInterval is how often the indicator advances. Slack rate-limits a
 	// channel to about one update a second, so this is comfortably inside it.
@@ -39,7 +40,6 @@ var typingFrames = []string{
 // typing is one message that is showing a turn is working.
 type typing struct {
 	conversation string
-	thread       string
 	timestamp    string
 	frame        int
 	started      time.Time
@@ -82,7 +82,6 @@ func (p *Plugin) startTyping(ctx context.Context, conversationID, thread string)
 
 	p.typing[p.typingKey(conversationID)] = &typing{
 		conversation: conversationID,
-		thread:       thread,
 		timestamp:    timestamp,
 		started:      time.Now(),
 	}
@@ -142,8 +141,7 @@ func (p *Plugin) advanceTyping(ctx context.Context) {
 // takeTyping stops the indicator for a conversation, returning the message that
 // was showing it.
 //
-// The caller replaces that message, so the turn ends with one message where the
-// indicator was, rather than two.
+// The caller removes that message.
 func (p *Plugin) takeTyping(conversationID string) *typing {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -157,23 +155,23 @@ func (p *Plugin) takeTyping(conversationID string) *typing {
 	return entry
 }
 
-// replaceTyping edits the indicator into what the turn produced.
-func (p *Plugin) replaceTyping(ctx context.Context, conversationID string, message Message) bool {
+// stopTyping takes the indicator down for a conversation.
+//
+// It is called when the turn the indicator stood for has something to say: an
+// answer, a failure, or a cancel. A conversation with no indicator is not an
+// error — the indicator is best-effort, and a turn that never showed one still
+// has an answer to post.
+func (p *Plugin) stopTyping(ctx context.Context, conversationID string) {
 	entry := p.takeTyping(conversationID)
 	if entry == nil {
-		return false
+		return
 	}
 
-	if err := p.client.UpdateMessage(ctx, UpdateMessageRequest{
-		Channel:   channelOf(entry.conversation),
-		Timestamp: entry.timestamp,
-		Message:   message,
-	}); err != nil {
-		p.log.Warn("could not replace the typing indicator",
+	if err := p.client.DeleteMessage(ctx, channelOf(entry.conversation), entry.timestamp); err != nil {
+		// A clock left behind is cosmetic. Failing the turn over it is not.
+		p.log.Debug("could not remove the typing indicator",
 			"conversation", conversationID, "error", err)
-		return false
 	}
-	return true
 }
 
 // isAnswer is whether an event is the answer to a turn.

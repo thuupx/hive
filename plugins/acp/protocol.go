@@ -305,7 +305,18 @@ type PermissionOption struct {
 	Kind     string `json:"kind"`
 }
 
-// PermissionOutcome is the response to a permission request.
+// PermissionResponse is the result of session/request_permission.
+//
+// ACP nests the decision: the result is `{"outcome": {"outcome": "selected",
+// "optionId": "..."}}`, not a flat `{"outcome": "selected"}`. Sending the flat
+// form is not a smaller version of the right one — the agent cannot decode it, so
+// it reports the request as failed and rejects the tool. Every "allow" becomes a
+// rejection, which reads as permission requests simply not working.
+type PermissionResponse struct {
+	Outcome PermissionOutcome `json:"outcome"`
+}
+
+// PermissionOutcome is the decision inside a permission response.
 type PermissionOutcome struct {
 	Outcome  string `json:"outcome"`
 	OptionID string `json:"optionId,omitempty"`
