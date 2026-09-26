@@ -76,11 +76,8 @@ func TestLongTextIsSplitIntoBlocks(t *testing.T) {
 		t.Fatalf("a %d character answer became %d block(s)", len(text), len(blocks))
 	}
 	for i, block := range blocks {
-		if block.Text == nil {
-			t.Fatalf("block %d has no text", i)
-		}
-		if len(block.Text.Text) > MaxSectionChars {
-			t.Errorf("block %d is %d characters, over the limit", i, len(block.Text.Text))
+		if len(sectionText(t, block)) > MaxSectionChars {
+			t.Errorf("block %d is over the limit", i)
 		}
 	}
 }
@@ -96,7 +93,7 @@ func TestOneVeryLongLineIsSplit(t *testing.T) {
 
 	var rebuilt strings.Builder
 	for _, block := range blocks {
-		rebuilt.WriteString(block.Text.Text)
+		rebuilt.WriteString(sectionText(t, block))
 	}
 	if rebuilt.Len() != len(text) {
 		t.Errorf("the line lost %d characters", len(text)-rebuilt.Len())
@@ -113,7 +110,7 @@ func TestAVeryLongAnswerIsTruncatedNotRefused(t *testing.T) {
 	if len(blocks) > MaxBlocks {
 		t.Fatalf("blocks = %d, over the limit of %d", len(blocks), MaxBlocks)
 	}
-	last := blocks[len(blocks)-1].Text.Text
+	last := sectionText(t, blocks[len(blocks)-1])
 	if !strings.Contains(last, "longer than Slack accepts") {
 		t.Error("a truncated answer should say so")
 	}

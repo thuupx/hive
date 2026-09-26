@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	slackgo "github.com/slack-go/slack"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
@@ -18,9 +19,13 @@ const (
 	ActionPermissionAllow = "permission_allow"
 	ActionPermissionDeny  = "permission_deny"
 
-	// ActionPermissionRespond is one of the agent's own choices. Which choice is
-	// in the button's value, so one action id covers every option an agent
-	// offers, however many there are.
+	// ActionPermissionRespond is one of the agent's own choices.
+	//
+	// Each button carries this plus its position — "permission_respond.2" — because
+	// Slack rejects a message whose elements in one block share an action id
+	// ("action_id ... already exists"), and rejecting the message means a
+	// permission card that never appears. Which choice a button stands for is in
+	// its value, so the suffix is only there to keep the ids apart.
 	ActionPermissionRespond = "permission_respond"
 )
 
@@ -323,11 +328,13 @@ func permissionMessage(ev v1.Event) Message {
 		title = "a sensitive operation"
 	}
 
-	blocks := []Block{
-		{Type: "section", Text: &TextObject{Type: "mrkdwn", Text: fmt.Sprintf("*Permission requested*\n%s", title)}},
+	blocks := []slackgo.Block{
+		slackgo.NewSectionBlock(
+			slackgo.NewTextBlockObject(slackgo.MarkdownType,
+				fmt.Sprintf("*Permission requested*\n%s", title), false, false), nil, nil),
 	}
 	if actions := permissionActions(ev, payload.Options); len(actions) > 0 {
-		blocks = append(blocks, Block{Type: "actions", Elements: actions})
+		blocks = append(blocks, slackgo.NewActionBlock("", actions...))
 	}
 
 	return Message{
@@ -348,16 +355,15 @@ type permissionOption struct {
 // The agent decides what a user may choose. An agent that offers "Allow once"
 // and "Allow always" offers two buttons, and the transport renders what it was
 // given rather than deciding that a decision has two answers.
-func permissionActions(ev v1.Event, options []permissionOption) []Element {
-	elements := make([]Element, 0, len(options))
-	for _, option := range options {
-		elements = append(elements, Element{
-			Type:     "button",
-			Text:     &TextObject{Type: "plain_text", Text: optionLabel(option)},
-			ActionID: ActionPermissionRespond,
-			Value:    encodeOption(ev, option),
-			Style:    optionStyle(option.Kind),
-		})
+func permissionActions(ev v1.Event, options []permissionOption) []slackgo.BlockElement {
+	elements := make([]slackgo.BlockElement, 0, len(options))
+	for i, option := range options {
+		elements = append(elements, permissionButton(
+			fmt.Sprintf("%s.%d", ActionPermissionRespond, i),
+			optionLabel(option),
+			encodeOption(ev, option),
+			optionStyle(option.Kind),
+		))
 	}
 	if len(elements) > 0 {
 		return elements
@@ -365,16 +371,20 @@ func permissionActions(ev v1.Event, options []permissionOption) []Element {
 
 	// An agent that offered no choices still needs an answer, or it waits
 	// forever. The pair a permission request has always had is the fallback.
-	return []Element{
-		{
-			Type: "button", Text: &TextObject{Type: "plain_text", Text: "Allow"},
-			ActionID: ActionPermissionAllow, Value: encodeDecision(ev, true), Style: "primary",
-		},
-		{
-			Type: "button", Text: &TextObject{Type: "plain_text", Text: "Deny"},
-			ActionID: ActionPermissionDeny, Value: encodeDecision(ev, false), Style: "danger",
-		},
+	return []slackgo.BlockElement{
+		permissionButton(ActionPermissionAllow, "Allow", encodeDecision(ev, true), slackgo.StylePrimary),
+		permissionButton(ActionPermissionDeny, "Deny", encodeDecision(ev, false), slackgo.StyleDanger),
 	}
+}
+
+// permissionButton builds one button of a permission card.
+func permissionButton(actionID, label, value string, style slackgo.Style) slackgo.BlockElement {
+	button := slackgo.NewButtonBlockElement(actionID, value,
+		slackgo.NewTextBlockObject(slackgo.PlainTextType, label, false, false))
+	if style != "" {
+		button = button.WithStyle(style)
+	}
+	return button
 }
 
 // optionLabel is what a button says.
@@ -389,12 +399,12 @@ func optionLabel(option permissionOption) string {
 
 // optionStyle styles a button by the kind the agent gave it. A kind the
 // transport does not know is neither safe nor dangerous, so it is left plain.
-func optionStyle(kind string) string {
+func optionStyle(kind string) slackgo.Style {
 	switch kind {
-	case "allow":
-		return "primary"
-	case "deny":
-		return "danger"
+	case "allow", "allow_once", "allow_always":
+		return slackgo.StylePrimary
+	case "deny", "reject_once", "reject_always":
+		return slackgo.StyleDanger
 	default:
 		return ""
 	}

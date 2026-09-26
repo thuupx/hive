@@ -3,6 +3,8 @@ package slack
 import (
 	"regexp"
 	"strings"
+
+	slackgo "github.com/slack-go/slack"
 )
 
 // Slack's own limits, which a message must respect or it is rejected whole.
@@ -204,18 +206,16 @@ func inline(line string) string {
 // whole message, so a long answer would otherwise never arrive. The text is split
 // on line boundaries where it can be, and a single line longer than a block is
 // split on the limit.
-func blocksFor(text string) []Block {
+func blocksFor(text string) []slackgo.Block {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
 
 	chunks := splitForBlocks(text)
-	blocks := make([]Block, 0, len(chunks))
+	blocks := make([]slackgo.Block, 0, len(chunks))
 	for _, chunk := range chunks {
-		blocks = append(blocks, Block{
-			Type: "section",
-			Text: &TextObject{Type: "mrkdwn", Text: chunk},
-		})
+		blocks = append(blocks, slackgo.NewSectionBlock(
+			slackgo.NewTextBlockObject(slackgo.MarkdownType, chunk, false, false), nil, nil))
 	}
 	return blocks
 }

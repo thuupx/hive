@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	slackgo "github.com/slack-go/slack"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
@@ -31,17 +32,9 @@ func TestRenderPermissionRequestOffersButtons(t *testing.T) {
 		t.Errorf("text = %q", rendered.Message.Text)
 	}
 
-	var actions *Block
-	for i := range rendered.Message.Blocks {
-		if rendered.Message.Blocks[i].Type == "actions" {
-			actions = &rendered.Message.Blocks[i]
-		}
-	}
-	if actions == nil {
-		t.Fatal("the permission message has no actions block")
-	}
-	if len(actions.Elements) != 2 {
-		t.Fatalf("elements = %d, want allow and deny", len(actions.Elements))
+	cards := buttons(t, actionsBlock(t, rendered.Message))
+	if len(cards) != 2 {
+		t.Fatalf("buttons = %d, want allow and deny", len(cards))
 	}
 
 	// The value must carry the agent's own request id, so Hive can correlate the
@@ -50,7 +43,7 @@ func TestRenderPermissionRequestOffersButtons(t *testing.T) {
 		AgentRequestID string `json:"agentRequestId"`
 		Approved       bool   `json:"approved"`
 	}
-	if err := json.Unmarshal([]byte(actions.Elements[0].Value), &allowValue); err != nil {
+	if err := json.Unmarshal([]byte(cards[0].Value), &allowValue); err != nil {
 		t.Fatalf("allow value is not valid json: %v", err)
 	}
 	if allowValue.AgentRequestID != "7" || !allowValue.Approved {
@@ -60,7 +53,7 @@ func TestRenderPermissionRequestOffersButtons(t *testing.T) {
 	var denyValue struct {
 		Approved bool `json:"approved"`
 	}
-	if err := json.Unmarshal([]byte(actions.Elements[1].Value), &denyValue); err != nil {
+	if err := json.Unmarshal([]byte(cards[1].Value), &denyValue); err != nil {
 		t.Fatalf("deny value is not valid json: %v", err)
 	}
 	if denyValue.Approved {
@@ -93,21 +86,20 @@ func TestPermissionRendersTheAgentsOwnOptions(t *testing.T) {
 		t.Fatal("a permission request must be rendered")
 	}
 
-	actions := actionsBlock(t, rendered.Message)
-	if len(actions.Elements) != 3 {
-		t.Fatalf("elements = %d, want one per option the agent offered", len(actions.Elements))
+	cards := buttons(t, actionsBlock(t, rendered.Message))
+	if len(cards) != 3 {
+		t.Fatalf("buttons = %d, want one per option the agent offered", len(cards))
 	}
 	for i, want := range []string{"Allow once", "Allow always", "Deny"} {
-		if actions.Elements[i].Text.Text != want {
-			t.Errorf("button %d = %q, want %q", i, actions.Elements[i].Text.Text, want)
+		if cards[i].Text.Text != want {
+			t.Errorf("button %d = %q, want %q", i, cards[i].Text.Text, want)
 		}
-		if actions.Elements[i].ActionID != ActionPermissionRespond {
-			t.Errorf("button %d action = %q", i, actions.Elements[i].ActionID)
+		if !strings.HasPrefix(cards[i].ActionID, ActionPermissionRespond) {
+			t.Errorf("button %d action = %q, want a permission response", i, cards[i].ActionID)
 		}
 	}
-	if actions.Elements[0].Style != "primary" || actions.Elements[2].Style != "danger" {
-		t.Errorf("styles = %q and %q, want primary and danger",
-			actions.Elements[0].Style, actions.Elements[2].Style)
+	if cards[0].Style != slackgo.StylePrimary || cards[2].Style != slackgo.StyleDanger {
+		t.Errorf("styles = %q and %q, want primary and danger", cards[0].Style, cards[2].Style)
 	}
 
 	// The value names the choice, so the agent's own option is the one answered.
@@ -116,11 +108,74 @@ func TestPermissionRendersTheAgentsOwnOptions(t *testing.T) {
 		OptionID       string `json:"optionId"`
 		Label          string `json:"label"`
 	}
-	if err := json.Unmarshal([]byte(actions.Elements[1].Value), &value); err != nil {
+	if err := json.Unmarshal([]byte(cards[1].Value), &value); err != nil {
 		t.Fatalf("value is not valid json: %v", err)
 	}
 	if value.AgentRequestID != "e1bf" || value.OptionID != "allow-always" || value.Label != "Allow always" {
 		t.Fatalf("value = %+v", value)
+	}
+}
+
+// Every action id in a message must be unique.
+//
+// Found in a live conversation: every option button carried "permission_respond",
+// and Slack answered chat.postMessage with "invalid_blocks" — for the whole card.
+// A permission card that never appears is an agent waiting for an answer nobody
+// can give, which reads as an agent that stopped working.
+func TestActionIDsAreUniqueWithinAMessage(t *testing.T) {
+	ev := v1.Event{
+		Type:      v1.EventPermissionRequested,
+		SessionID: "sess_1",
+		Payload: json.RawMessage(`{
+			"agentRequestId": "e1bf",
+			"toolCall": {"title": "Run git log"},
+			"options": [
+				{"optionId": "allow_once", "name": "Allow", "kind": "allow_once"},
+				{"optionId": "allow_session", "name": "Yes, allow for this session", "kind": "allow_always"},
+				{"optionId": "allow_always", "name": "Yes, always allow", "kind": "allow_always"},
+				{"optionId": "switch_bypass", "name": "Yes, switch to bypass mode", "kind": "allow_always"},
+				{"optionId": "reject_once", "name": "Reject", "kind": "reject_once"}
+			]
+		}`),
+	}
+
+	rendered, ok := Renderer{}.RenderEvent(ev)
+	if !ok {
+		t.Fatal("a permission request must be rendered")
+	}
+
+	seen := map[string]bool{}
+	for _, card := range buttons(t, actionsBlock(t, rendered.Message)) {
+		if card.ActionID == "" {
+			t.Error("a button has no action id")
+			continue
+		}
+		if seen[card.ActionID] {
+			t.Errorf("action id %q is used twice; Slack rejects the whole message for it", card.ActionID)
+		}
+		seen[card.ActionID] = true
+	}
+	if len(seen) != 5 {
+		t.Fatalf("action ids = %d, want one per option the agent offered", len(seen))
+	}
+}
+
+// A suffixed button performs the same Hive operation as the plain one.
+func TestASuffixedPermissionActionResolves(t *testing.T) {
+	for _, id := range []string{
+		ActionPermissionRespond,
+		ActionPermissionRespond + ".0",
+		ActionPermissionRespond + ".4",
+	} {
+		if got := actionMethod(id); got != v1.MethodPermissionRespond {
+			t.Errorf("actionMethod(%q) = %q, want %q", id, got, v1.MethodPermissionRespond)
+		}
+	}
+
+	for _, id := range []string{"", "permission_denied", "permission_respondx.0"} {
+		if got := actionMethod(id); got != "" {
+			t.Errorf("actionMethod(%q) = %q, want empty", id, got)
+		}
 	}
 }
 
@@ -137,25 +192,13 @@ func TestPermissionWithoutOptionsOffersAllowAndDeny(t *testing.T) {
 		t.Fatal("a permission request must be rendered")
 	}
 
-	actions := actionsBlock(t, rendered.Message)
-	if len(actions.Elements) != 2 {
-		t.Fatalf("elements = %d, want allow and deny", len(actions.Elements))
+	cards := buttons(t, actionsBlock(t, rendered.Message))
+	if len(cards) != 2 {
+		t.Fatalf("buttons = %d, want allow and deny", len(cards))
 	}
-	if actions.Elements[0].ActionID != ActionPermissionAllow || actions.Elements[1].ActionID != ActionPermissionDeny {
-		t.Errorf("actions = %q, %q", actions.Elements[0].ActionID, actions.Elements[1].ActionID)
+	if cards[0].ActionID != ActionPermissionAllow || cards[1].ActionID != ActionPermissionDeny {
+		t.Errorf("actions = %q, %q", cards[0].ActionID, cards[1].ActionID)
 	}
-}
-
-// actionsBlock is the actions block of a message.
-func actionsBlock(t *testing.T, message Message) Block {
-	t.Helper()
-	for _, block := range message.Blocks {
-		if block.Type == "actions" {
-			return block
-		}
-	}
-	t.Fatal("the message has no actions block")
-	return Block{}
 }
 
 // Agent streaming updates are preserved as raw protocol data, and turning every
@@ -433,12 +476,13 @@ func TestEveryRenderedOutcomeIsAValidMessage(t *testing.T) {
 				t.Errorf("blocks = %d, over the limit of %d", len(message.Blocks), MaxBlocks)
 			}
 			for i, block := range message.Blocks {
-				if block.Text == nil {
+				section, ok := block.(*slackgo.SectionBlock)
+				if !ok || section.Text == nil {
 					continue
 				}
-				if len(block.Text.Text) > MaxSectionChars {
+				if len(section.Text.Text) > MaxSectionChars {
 					t.Errorf("block %d is %d characters, over the limit of %d",
-						i, len(block.Text.Text), MaxSectionChars)
+						i, len(section.Text.Text), MaxSectionChars)
 				}
 			}
 		})
@@ -469,7 +513,7 @@ func TestAVeryLongAnswerRenders(t *testing.T) {
 		t.Fatalf("a %d character answer became %d block(s)", len(answer), len(message.Blocks))
 	}
 	for i, block := range message.Blocks {
-		if len(block.Text.Text) > MaxSectionChars {
+		if len(sectionText(t, block)) > MaxSectionChars {
 			t.Errorf("block %d is over the limit", i)
 		}
 	}

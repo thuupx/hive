@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	slackgo "github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
@@ -97,7 +99,7 @@ func TestAPermissionCardIsSettledAfterADecision(t *testing.T) {
 		t.Errorf("timestamp = %q, want the card's", updated.Timestamp)
 	}
 	for _, block := range updated.Message.Blocks {
-		if block.Type == "actions" {
+		if _, ok := block.(*slackgo.ActionBlock); ok {
 			t.Error("the card still has an actions block, so its buttons are still there")
 		}
 	}
@@ -118,6 +120,42 @@ func TestASettleWithoutAMessageDoesNothing(t *testing.T) {
 	}
 }
 
+// A command answered while a turn runs does not take the turn's indicator.
+//
+// Found in a live conversation: a /status sent mid-turn replaced the "working"
+// message, so the agent looked like it had stopped. It had not — it was waiting
+// on a permission request whose card Slack had refused.
+func TestACommandDoesNotTakeTheTurnsIndicator(t *testing.T) {
+	message := delivery{envelope: v1.Envelope{Kind: v1.EnvelopeMessage}}
+	command := delivery{envelope: v1.Envelope{Kind: v1.EnvelopeCommand}}
+
+	for _, tc := range []struct {
+		name    string
+		d       delivery
+		outcome v1.TransportOutcome
+		want    bool
+	}{
+		{"a message is the turn", message,
+			v1.TransportOutcome{Method: v1.MethodSessionPrompt}, true},
+		{"a failed message has no turn to show", message,
+			v1.TransportOutcome{Method: v1.MethodSessionPrompt, Error: v1.Internal("no")}, true},
+		{"a status read is its own message", command,
+			v1.TransportOutcome{Method: v1.MethodSessionStatus}, false},
+		{"a settings change is its own message", command,
+			v1.TransportOutcome{Method: v1.MethodSessionConfig}, false},
+		{"a cancel ends the turn it was shown for", command,
+			v1.TransportOutcome{Method: v1.MethodSessionCancel}, true},
+		{"a failed cancel leaves the turn running", command,
+			v1.TransportOutcome{Method: v1.MethodSessionCancel, Error: v1.Conflict("nothing to cancel")}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := replacesIndicator(tc.d, tc.outcome); got != tc.want {
+				t.Errorf("replacesIndicator = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // A delivery carries the thread its turn belongs to.
 //
 // This is the wiring, not the rule: the rule was tested and correct while the
@@ -125,13 +163,10 @@ func TestASettleWithoutAMessageDoesNothing(t *testing.T) {
 func TestChannelDeliveryCarriesItsThread(t *testing.T) {
 	p := New(nil, nil, Options{})
 
-	d, ok := p.parse(Inbound{Type: "event", Payload: mustJSON(t, MessageEvent{
-		Type:      "message",
-		Channel:   "C123",
-		User:      "U1",
-		Text:      "<@U0BOT> hello",
-		Timestamp: "1.0",
-	})})
+	inChannel := testMessage("<@U0BOT> hello")
+	inChannel.TimeStamp = "1.0"
+
+	d, ok := p.parse(eventsInbound(inChannel))
 	if !ok {
 		t.Fatal("the message should be for Hive")
 	}
@@ -140,19 +175,24 @@ func TestChannelDeliveryCarriesItsThread(t *testing.T) {
 	}
 
 	// A direct message stays flat.
-	dm, ok := p.parse(Inbound{Type: "event", Payload: mustJSON(t, MessageEvent{
-		Type:      "message",
-		Channel:   "D123",
-		User:      "U1",
-		Text:      "hello",
-		Timestamp: "1.0",
-	})})
+	direct := testMessage("hello")
+	direct.Channel = "D123"
+	direct.TimeStamp = "1.0"
+	dm, ok := p.parse(eventsInbound(direct))
 	if !ok {
 		t.Fatal("the direct message should be for Hive")
 	}
 	if dm.thread != "" {
 		t.Fatalf("a direct message thread = %q, want empty", dm.thread)
 	}
+}
+
+// eventsInbound is an Events API delivery carrying one message.
+func eventsInbound(event slackevents.MessageEvent) Inbound {
+	return Inbound{Events: &slackevents.EventsAPIEvent{
+		Type:       slackevents.CallbackEvent,
+		InnerEvent: slackevents.EventsAPIInnerEvent{Type: event.Type, Data: &event},
+	}}
 }
 
 func mustJSON(t *testing.T, v any) []byte {
@@ -172,17 +212,13 @@ func mustJSON(t *testing.T, v any) []byte {
 func TestTheEnvelopeNamesTheThread(t *testing.T) {
 	p := New(nil, nil, Options{})
 
-	d, ok := p.parse(Inbound{
-		Type: "event_callback",
-		Payload: json.RawMessage(`{
-			"type": "message",
-			"channel": "C1",
-			"user": "U1",
-			"text": "hello",
-			"ts": "1.2",
-			"thread_ts": "1.0"
-		}`),
-	})
+	inThread := testMessage("hello")
+	inThread.Channel = "C1"
+	inThread.User = "U1"
+	inThread.TimeStamp = "1.2"
+	inThread.ThreadTimeStamp = "1.0"
+
+	d, ok := p.parse(eventsInbound(inThread))
 	if !ok {
 		t.Fatal("a message should parse")
 	}

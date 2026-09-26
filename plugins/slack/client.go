@@ -7,22 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"sync"
-	"time"
+	"strings"
 
-	"github.com/coder/websocket"
-)
-
-// Slack Web API endpoints.
-const (
-	connectionsOpenURL = "https://slack.com/api/apps.connections.open"
-	postMessageURL     = "https://slack.com/api/chat.postMessage"
-	updateMessageURL   = "https://slack.com/api/chat.update"
-	historyURL         = "https://slack.com/api/conversations.history"
-	addReactionURL     = "https://slack.com/api/reactions.add"
+	slackgo "github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
+	"github.com/slack-go/slack/socketmode"
 )
 
 // Client is the Slack API surface the transport needs.
@@ -57,11 +49,37 @@ type Client interface {
 	Close() error
 }
 
-// Inbound is one inbound delivery, still in Slack form.
+// Inbound is one inbound delivery, decoded by the Slack library.
+//
+// Exactly one field is set: an Events API delivery carries Events, and a button
+// press carries Interaction. The library decides how a delivery is framed; the
+// transport decides what it means.
 type Inbound struct {
-	// Type is the Slack event type, such as "message" or "block_actions".
-	Type    string
+	// Events is an Events API delivery, such as a message.
+	Events *slackevents.EventsAPIEvent
+
+	// Interaction is a block action: a button someone pressed.
+	Interaction *slackgo.InteractionCallback
+
+	// Payload is the envelope as Slack sent it.
+	//
+	// It is here for the one field the library's event types omit: a message
+	// carries its attachments as "files", and only the app-mention event declares
+	// them. Dropping a user's attachment because of a gap in a type would be a
+	// silent loss, so that one field is read from the payload instead.
 	Payload json.RawMessage
+}
+
+// Type is what Slack called this delivery, for logging.
+func (i Inbound) Type() string {
+	switch {
+	case i.Interaction != nil:
+		return string(slackgo.InteractionTypeBlockActions)
+	case i.Events != nil:
+		return i.Events.Type
+	default:
+		return "unknown"
+	}
 }
 
 // PostMessageRequest is a message to post.
@@ -114,14 +132,16 @@ type Config struct {
 }
 
 // SocketClient is the live Slack client.
+//
+// The Socket Mode connection belongs to the library. It reconnects when Slack
+// asks it to and when a connection fails, and it treats a missing WebSocket ping
+// as a dead connection — none of which a hand-written read loop notices. A
+// transport that has silently stopped receiving is the failure that is hardest to
+// see, and the one this library exists to prevent.
 type SocketClient struct {
-	config Config
-	http   *http.Client
+	api    *slackgo.Client
+	socket *socketmode.Client
 	log    *slog.Logger
-
-	mu     sync.Mutex
-	conn   *websocket.Conn
-	closed bool
 }
 
 // NewSocketClient returns a live Slack client.
@@ -132,16 +152,35 @@ func NewSocketClient(config Config) (*SocketClient, error) {
 	case config.BotToken == "":
 		return nil, errors.New("slack: a bot token is required")
 	}
-	if config.BaseURL == "" {
-		config.BaseURL = "https://slack.com/api"
-	}
-	if config.HTTPClient == nil {
-		config.HTTPClient = &http.Client{Timeout: 30 * time.Second}
-	}
 	if config.Log == nil {
 		config.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &SocketClient{config: config, http: config.HTTPClient, log: config.Log}, nil
+
+	options := []slackgo.Option{
+		// The bot token is the credential for the Web API; the app token is what
+		// opens the socket, which is the one call that needs it.
+		slackgo.OptionAppLevelToken(config.AppToken),
+		// The library's own log goes to the transport's, at debug: it is where a
+		// reconnect or a refused acknowledgement is explained.
+		slackgo.OptionLog(log.New(libraryWriter{log: config.Log}, "", 0)),
+	}
+	if config.HTTPClient != nil {
+		options = append(options, slackgo.OptionHTTPClient(config.HTTPClient))
+	}
+	if config.BaseURL != "" {
+		options = append(options, slackgo.OptionAPIURL(config.BaseURL))
+	}
+
+	api := slackgo.New(config.BotToken, options...)
+	return &SocketClient{api: api, socket: socketmode.New(api), log: config.Log}, nil
+}
+
+// libraryWriter sends the library's log to the transport's.
+type libraryWriter struct{ log *slog.Logger }
+
+func (w libraryWriter) Write(p []byte) (int, error) {
+	w.log.Debug("slack library", "message", strings.TrimSpace(string(p)))
+	return len(p), nil
 }
 
 // Events opens a Socket Mode connection and streams inbound deliveries.
@@ -149,133 +188,134 @@ func NewSocketClient(config Config) (*SocketClient, error) {
 // Socket Mode means no public endpoint and no inbound tunnel is needed, which is
 // what makes it the right default for a personal installation.
 func (c *SocketClient) Events(ctx context.Context) (<-chan Inbound, error) {
-	url, err := c.openConnection(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	conn, _, err := websocket.Dial(ctx, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("slack: dial socket mode: %w", err)
-	}
-
-	c.mu.Lock()
-	c.conn = conn
-	c.mu.Unlock()
-
 	out := make(chan Inbound, 64)
-	go c.readLoop(ctx, conn, out)
+	done := make(chan struct{})
+
+	// RunContext blocks until the context ends, reconnecting in between. Its
+	// return is the end of the socket, and the stream is closed with it: a
+	// transport that kept reading a channel nobody will write to again would look
+	// alive while receiving nothing, which is the failure this library was adopted
+	// to end.
+	go func() {
+		defer close(done)
+		if err := c.socket.RunContext(ctx); err != nil && ctx.Err() == nil {
+			c.log.Warn("slack socket mode stopped", "error", err)
+		}
+	}()
+
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case event, ok := <-c.socket.Events:
+				if !ok {
+					return
+				}
+				c.dispatch(ctx, event, out)
+			}
+		}
+	}()
 	return out, nil
 }
 
-func (c *SocketClient) openConnection(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(connectionsOpenURL), nil)
-	if err != nil {
-		return "", err
+// dispatch acknowledges one delivery and hands it on.
+func (c *SocketClient) dispatch(ctx context.Context, event socketmode.Event, out chan<- Inbound) {
+	// Every envelope is acknowledged before it is handled. Slack redelivers an
+	// unacknowledged envelope, and Hive deduplicates by the delivery's source id,
+	// so an acknowledgement lost in flight is safe — and acknowledging late is
+	// what makes Slack resend.
+	if event.Request != nil {
+		if err := c.socket.Ack(*event.Request); err != nil {
+			c.log.Debug("could not acknowledge a delivery", "error", err)
+		}
 	}
-	req.Header.Set("Authorization", "Bearer "+c.config.AppToken)
 
-	var response struct {
-		OK    bool   `json:"ok"`
-		URL   string `json:"url"`
-		Error string `json:"error"`
+	var inbound Inbound
+	if event.Request != nil {
+		inbound.Payload = event.Request.Payload
 	}
-	if err := c.do(req, &response); err != nil {
-		return "", err
-	}
-	if !response.OK {
-		return "", fmt.Errorf("slack: apps.connections.open failed: %s", response.Error)
-	}
-	return response.URL, nil
-}
-
-func (c *SocketClient) readLoop(ctx context.Context, conn *websocket.Conn, out chan<- Inbound) {
-	defer close(out)
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	for {
-		_, data, err := conn.Read(ctx)
-		if err != nil {
+	switch event.Type {
+	case socketmode.EventTypeEventsAPI:
+		parsed, ok := event.Data.(slackevents.EventsAPIEvent)
+		if !ok {
+			c.log.Debug("slack sent an unreadable event")
 			return
 		}
+		inbound.Events = &parsed
 
-		var envelope Envelope
-		if err := json.Unmarshal(data, &envelope); err != nil {
-			continue
-		}
-
-		// Acknowledge every envelope. Slack redelivers an unacknowledged
-		// envelope, and Hive deduplicates by the delivery's source id, so an
-		// acknowledgement lost in flight is safe.
-		if envelope.EnvelopeID != "" {
-			ack, _ := json.Marshal(map[string]string{"envelope_id": envelope.EnvelopeID})
-			if err := conn.Write(ctx, websocket.MessageText, ack); err != nil {
-				return
-			}
-		}
-
-		// Every envelope is reported, because an envelope Hive does not handle is
-		// the answer to "why did nothing happen" and would otherwise leave no trace.
-		c.log.Debug("socket envelope", "type", envelope.Type)
-
-		switch envelope.Type {
-		case "events_api", "interactive":
-			var wrapper struct {
-				Event   json.RawMessage `json:"event"`
-				Actions json.RawMessage `json:"actions"`
-			}
-			_ = json.Unmarshal(envelope.Payload, &wrapper)
-
-			payload := wrapper.Event
-			kind := "events_api"
-			if len(wrapper.Actions) > 0 {
-				payload = envelope.Payload
-				kind = "block_actions"
-			}
-
-			select {
-			case out <- Inbound{Type: kind, Payload: payload}:
-			case <-ctx.Done():
-				return
-			}
-
-		case "disconnect":
-			// Slack asks the client to reconnect. Ending the stream lets the
-			// caller reconnect with a fresh URL.
+	case socketmode.EventTypeInteractive:
+		callback, ok := event.Data.(slackgo.InteractionCallback)
+		if !ok {
+			c.log.Debug("slack sent an unreadable interaction")
 			return
 		}
+		inbound.Interaction = &callback
+
+	case socketmode.EventTypeConnected:
+		// The socket is up. This is the line that says Slack is reachable, and its
+		// absence is what a silent transport looks like from the outside.
+		c.log.Info("slack socket mode connected")
+		return
+
+	case socketmode.EventTypeConnectionError:
+		c.log.Warn("slack socket mode connection failed; it is retried")
+		return
+
+	default:
+		// A delivery Hive does not handle is the answer to "why did nothing
+		// happen", and would otherwise leave no trace.
+		c.log.Debug("slack sent an unhandled delivery", "type", string(event.Type))
+		return
+	}
+
+	select {
+	case out <- inbound:
+	case <-ctx.Done():
 	}
 }
 
 // PostMessage posts a message through the Web API.
 func (c *SocketClient) PostMessage(ctx context.Context, req PostMessageRequest) (string, error) {
-	body := map[string]any{
-		"channel": req.Channel,
-		"text":    req.Message.Text,
-	}
-	if len(req.Message.Blocks) > 0 {
-		blocks, err := json.Marshal(req.Message.Blocks)
-		if err != nil {
-			return "", err
-		}
-		body["blocks"] = json.RawMessage(blocks)
-	}
+	options := messageOptions(req.Message)
 	if req.ThreadTS != "" {
-		body["thread_ts"] = req.ThreadTS
+		options = append(options, slackgo.MsgOptionTS(req.ThreadTS))
 	}
 
-	var response struct {
-		OK        bool   `json:"ok"`
-		Timestamp string `json:"ts"`
-		Error     string `json:"error"`
+	_, timestamp, err := c.api.PostMessageContext(ctx, req.Channel, options...)
+	if err != nil {
+		return "", fmt.Errorf("slack: chat.postMessage: %w", err)
 	}
-	if err := c.post(ctx, postMessageURL, body, &response); err != nil {
-		return "", err
+	return timestamp, nil
+}
+
+// UpdateMessage edits a message through the Web API.
+func (c *SocketClient) UpdateMessage(ctx context.Context, req UpdateMessageRequest) error {
+	if _, _, _, err := c.api.UpdateMessageContext(ctx, req.Channel, req.Timestamp, messageOptions(req.Message)...); err != nil {
+		return fmt.Errorf("slack: chat.update: %w", err)
 	}
-	if !response.OK {
-		return "", fmt.Errorf("slack: chat.postMessage failed: %s", response.Error)
+	return nil
+}
+
+// messageOptions renders a message as what the API takes.
+func messageOptions(message Message) []slackgo.MsgOption {
+	options := []slackgo.MsgOption{slackgo.MsgOptionText(message.Text, false)}
+	if len(message.Blocks) > 0 {
+		options = append(options, slackgo.MsgOptionBlocks(message.Blocks...))
 	}
-	return response.Timestamp, nil
+	return options
+}
+
+// AddReaction adds a reaction through the Web API.
+func (c *SocketClient) AddReaction(ctx context.Context, req ReactionRequest) error {
+	item := slackgo.ItemRef{Channel: req.Channel, Timestamp: req.Timestamp}
+	if err := c.api.AddReactionContext(ctx, req.Name, item); err != nil {
+		return fmt.Errorf("slack: reactions.add: %w", err)
+	}
+	return nil
 }
 
 // ChannelHistory reads a conversation through the Web API.
@@ -284,28 +324,12 @@ func (c *SocketClient) ChannelHistory(ctx context.Context, channel string, limit
 		limit = 20
 	}
 
-	url := fmt.Sprintf("%s?channel=%s&limit=%d", c.endpoint(historyURL), url.QueryEscape(channel), limit)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	response, err := c.api.GetConversationHistoryContext(ctx, &slackgo.GetConversationHistoryParameters{
+		ChannelID: channel,
+		Limit:     limit,
+	})
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.config.BotToken)
-
-	var response struct {
-		OK       bool   `json:"ok"`
-		Error    string `json:"error"`
-		Messages []struct {
-			User  string `json:"user"`
-			BotID string `json:"bot_id"`
-			Text  string `json:"text"`
-			TS    string `json:"ts"`
-		} `json:"messages"`
-	}
-	if err := c.do(req, &response); err != nil {
-		return nil, err
-	}
-	if !response.OK {
-		return nil, fmt.Errorf("slack: conversations.history failed: %s", response.Error)
+		return nil, fmt.Errorf("slack: conversations.history: %w", err)
 	}
 
 	out := make([]HistoryMessage, 0, len(response.Messages))
@@ -313,12 +337,15 @@ func (c *SocketClient) ChannelHistory(ctx context.Context, channel string, limit
 		out = append(out, HistoryMessage{
 			Author:    message.User,
 			Text:      message.Text,
-			Timestamp: message.TS,
+			Timestamp: message.Timestamp,
 			Self:      message.BotID != "",
 		})
 	}
 	return out, nil
 }
+
+// DefaultMaxAttachmentBytes bounds how large an attachment may be.
+const DefaultMaxAttachmentBytes = 8 << 20
 
 // DownloadFile fetches a file through the Web API.
 //
@@ -329,148 +356,33 @@ func (c *SocketClient) DownloadFile(ctx context.Context, url string, maxBytes in
 		maxBytes = DefaultMaxAttachmentBytes
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.config.BotToken)
-
-	response, err := c.http.Do(req)
-	if err != nil {
+	var buffer bytes.Buffer
+	if err := c.api.GetFileContext(ctx, url, &boundedWriter{writer: &buffer, remaining: maxBytes, limit: maxBytes}); err != nil {
 		return nil, fmt.Errorf("slack: download: %w", err)
 	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("slack: download returned %d", response.StatusCode)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("slack: download: %w", err)
-	}
-	if int64(len(data)) > maxBytes {
-		return nil, fmt.Errorf("slack: file is larger than %d bytes", maxBytes)
-	}
-	return data, nil
+	return buffer.Bytes(), nil
 }
 
-// DefaultMaxAttachmentBytes bounds how large an attachment may be.
-const DefaultMaxAttachmentBytes = 8 << 20
-
-// UpdateMessage edits a message through the Web API.
-func (c *SocketClient) UpdateMessage(ctx context.Context, req UpdateMessageRequest) error {
-	body := map[string]any{
-		"channel": req.Channel,
-		"ts":      req.Timestamp,
-		"text":    req.Message.Text,
-	}
-	if len(req.Message.Blocks) > 0 {
-		blocks, err := json.Marshal(req.Message.Blocks)
-		if err != nil {
-			return err
-		}
-		body["blocks"] = json.RawMessage(blocks)
-	}
-
-	var response struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
-	if err := c.post(ctx, updateMessageURL, body, &response); err != nil {
-		return err
-	}
-	if !response.OK {
-		return fmt.Errorf("slack: chat.update failed: %s", response.Error)
-	}
-	return nil
+// boundedWriter refuses a download that exceeds its bound.
+//
+// It errors rather than truncating: a truncated attachment would reach the agent
+// as a corrupt file, which is worse than a refusal it can report.
+type boundedWriter struct {
+	writer    io.Writer
+	remaining int64
+	limit     int64
 }
 
-// AddReaction adds a reaction through the Web API.
-func (c *SocketClient) AddReaction(ctx context.Context, req ReactionRequest) error {
-	body := map[string]any{
-		"channel":   req.Channel,
-		"timestamp": req.Timestamp,
-		"name":      req.Name,
+func (w *boundedWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > w.remaining {
+		return 0, fmt.Errorf("slack: file is larger than %d bytes", w.limit)
 	}
-
-	var response struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
-	if err := c.post(ctx, addReactionURL, body, &response); err != nil {
-		return err
-	}
-	if !response.OK {
-		return fmt.Errorf("slack: reactions.add failed: %s", response.Error)
-	}
-	return nil
+	w.remaining -= int64(len(p))
+	return w.writer.Write(p)
 }
 
 // Close releases the connection.
-func (c *SocketClient) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.closed = true
-	if c.conn == nil {
-		return nil
-	}
-	return c.conn.Close(websocket.StatusNormalClosure, "")
-}
-
-func (c *SocketClient) post(ctx context.Context, url string, body any, target any) error {
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(url), bytes.NewReader(encoded))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	req.Header.Set("Authorization", "Bearer "+c.config.BotToken)
-
-	return c.do(req, target)
-}
-
-func (c *SocketClient) do(req *http.Request, target any) error {
-	response, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("slack: %s: %w", req.URL.Path, err)
-	}
-	defer response.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return fmt.Errorf("slack: read %s: %w", req.URL.Path, err)
-	}
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("slack: %s returned %d", req.URL.Path, response.StatusCode)
-	}
-	if err := json.Unmarshal(body, target); err != nil {
-		return fmt.Errorf("slack: decode %s: %w", req.URL.Path, err)
-	}
-	return nil
-}
-
-func (c *SocketClient) endpoint(fallback string) string {
-	if c.config.BaseURL == "" || c.config.BaseURL == "https://slack.com/api" {
-		return fallback
-	}
-	switch fallback {
-	case connectionsOpenURL:
-		return c.config.BaseURL + "/apps.connections.open"
-	case postMessageURL:
-		return c.config.BaseURL + "/chat.postMessage"
-	case updateMessageURL:
-		return c.config.BaseURL + "/chat.update"
-	case historyURL:
-		return c.config.BaseURL + "/conversations.history"
-	case addReactionURL:
-		return c.config.BaseURL + "/reactions.add"
-	default:
-		return fallback
-	}
-}
+//
+// The socket's lifetime is the context Events was given: the library's RunContext
+// returns when it ends, so there is nothing else to close here.
+func (c *SocketClient) Close() error { return nil }

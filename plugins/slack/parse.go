@@ -7,10 +7,13 @@
 package slack
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
+	slackgo "github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
@@ -92,13 +95,26 @@ const HelpCommand = "help"
 // Actions maps a transport action to the Hive method it performs.
 //
 // The transport owns this mapping, exactly as it owns command names: it decides
-// that a button labelled Allow is a permission response. Every kind of
-// permission button is the same Hive operation, because which choice a button
-// stands for is the agent's, and it travels in the button's value.
+// that a button labelled Allow is a permission response.
 var Actions = map[string]string{
 	ActionPermissionAllow:   v1.MethodPermissionRespond,
 	ActionPermissionDeny:    v1.MethodPermissionRespond,
 	ActionPermissionRespond: v1.MethodPermissionRespond,
+}
+
+// actionMethod resolves a button's action id to the Hive method it performs.
+//
+// A permission button names its own choice in its value, so every button in the
+// card shares one operation and differs only in the suffix that keeps Slack's
+// action ids apart.
+func actionMethod(actionID string) string {
+	if method, ok := Actions[actionID]; ok {
+		return method
+	}
+	if strings.HasPrefix(actionID, ActionPermissionRespond+".") {
+		return v1.MethodPermissionRespond
+	}
+	return ""
 }
 
 // Catalog returns the commands this transport exposes, in a stable order.
@@ -135,12 +151,12 @@ type Parser struct {
 // The parser resolves platform addressing first, then parses command syntax. A
 // command is only recognized in the first token, so ordinary text that merely
 // contains a slash-like token stays a prompt.
-func (p Parser) ParseMessage(ev MessageEvent) v1.Envelope {
+func (p Parser) ParseMessage(ev slackevents.MessageEvent, files []slackgo.File) v1.Envelope {
 	env := v1.Envelope{
 		Transport:      Name,
 		ConversationID: ev.Channel,
 		Principal:      Name + ":" + ev.User,
-		SourceID:       sourceID(ev.Channel, ev.Timestamp),
+		SourceID:       sourceID(ev.Channel, ev.TimeStamp),
 	}
 
 	text, addressed := p.stripMention(ev.Text)
@@ -163,25 +179,46 @@ func (p Parser) ParseMessage(ev MessageEvent) v1.Envelope {
 	env.Kind = v1.EnvelopeMessage
 	env.Message = &v1.IncomingMessage{
 		Text:        strings.TrimSpace(text),
-		Attachments: attachmentsOf(ev.Files),
+		Attachments: attachmentsOf(files),
 	}
 	return env
+}
+
+// messageFiles are the attachments an Events API delivery carried.
+//
+// The library's MessageEvent declares no files field — only the app-mention event
+// does — so they are read from the envelope as Slack sent it. A user's attachment
+// disappearing because a type omits it is a silent loss, which is worse than one
+// field parsed by hand.
+func messageFiles(payload json.RawMessage) []slackgo.File {
+	if len(payload) == 0 {
+		return nil
+	}
+	var envelope struct {
+		Event struct {
+			Files []slackgo.File `json:"files"`
+		} `json:"event"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return nil
+	}
+	return envelope.Event.Files
 }
 
 // attachmentsOf carries the files a user sent.
 //
 // Only the transport knows how to fetch them, so the bytes are filled in later.
 // A file this transport cannot read is skipped rather than failing the message.
-func attachmentsOf(files []File) []v1.Attachment {
+func attachmentsOf(files []slackgo.File) []v1.Attachment {
 	out := make([]v1.Attachment, 0, len(files))
 	for _, file := range files {
-		url := file.DownloadURL()
+		url := downloadURL(file)
 		if url == "" {
 			continue
 		}
 		out = append(out, v1.Attachment{
 			Name:     file.Name,
-			MimeType: file.MimeType,
+			MimeType: file.Mimetype,
 			URL:      url,
 		})
 	}
@@ -193,21 +230,30 @@ func attachmentsOf(files []File) []v1.Attachment {
 // Buttons, menus, and modal submissions are interactions, not a second
 // business-logic system: they carry the authenticated principal and a stable
 // action identity, and Hive performs the domain transition.
-func (p Parser) ParseInteraction(payload ActionPayload) v1.Envelope {
-	actionID, value := payload.Action()
+func (p Parser) ParseInteraction(payload slackgo.InteractionCallback) v1.Envelope {
+	actionID, value := firstAction(payload)
 
 	return v1.Envelope{
 		Transport:      Name,
 		ConversationID: payload.Channel.ID,
 		Principal:      Name + ":" + payload.User.ID,
-		SourceID:       sourceID(payload.Channel.ID, payload.ActionTS),
+		SourceID:       sourceID(payload.Channel.ID, payload.ActionTs),
 		Kind:           v1.EnvelopeInteraction,
 		Interaction: &v1.IncomingInteraction{
 			Action: actionID,
-			Method: Actions[actionID],
+			Method: actionMethod(actionID),
 			Value:  value,
 		},
 	}
+}
+
+// firstAction is the action a press carried. Slack sends one per press.
+func firstAction(payload slackgo.InteractionCallback) (actionID, value string) {
+	actions := payload.ActionCallback.BlockActions
+	if len(actions) == 0 {
+		return "", ""
+	}
+	return actions[0].ActionID, actions[0].Value
 }
 
 // stripMention removes a bot mention and reports whether the message addressed it.

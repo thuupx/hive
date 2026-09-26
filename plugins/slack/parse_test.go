@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	slackgo "github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
@@ -12,18 +14,33 @@ func parser() Parser {
 	return Parser{BotUserID: "U0BOT", RequireMention: true}
 }
 
-func messageEvent(text string) MessageEvent {
-	return MessageEvent{
+// testMessage is a message event with this text, as Slack sends one.
+func testMessage(text string) slackevents.MessageEvent {
+	return slackevents.MessageEvent{
 		Type:      "message",
 		Channel:   "C123",
 		User:      "U123",
 		Text:      text,
-		Timestamp: "1700000000.000100",
+		TimeStamp: "1700000000.000100",
+	}
+}
+
+// testInteraction is a button press, as Slack sends one.
+func testInteraction(actionID, value string) slackgo.InteractionCallback {
+	return slackgo.InteractionCallback{
+		Type:     slackgo.InteractionTypeBlockActions,
+		ActionTs: "1700000000.000200",
+		Channel:  slackgo.Channel{ID: "C123"},
+		User:     slackgo.User{ID: "U123"},
+		Message:  slackgo.Message{Msg: slackgo.Msg{Timestamp: "1700000000.000100"}},
+		ActionCallback: slackgo.ActionCallbacks{
+			BlockActions: []*slackgo.BlockAction{{ActionID: actionID, Value: value}},
+		},
 	}
 }
 
 func TestParseCommandWithMention(t *testing.T) {
-	env := parser().ParseMessage(messageEvent("<@U0BOT> /new_chat"))
+	env := parser().ParseMessage(testMessage("<@U0BOT> /new_chat"), nil)
 
 	if env.Kind != v1.EnvelopeCommand {
 		t.Fatalf("kind = %q, want command", env.Kind)
@@ -47,7 +64,7 @@ func TestParseCommandWithMention(t *testing.T) {
 
 // The platform may allow a bare command name as well as a slash form.
 func TestParseBareCommandName(t *testing.T) {
-	env := parser().ParseMessage(messageEvent("<@U0BOT> new_chat"))
+	env := parser().ParseMessage(testMessage("<@U0BOT> new_chat"), nil)
 
 	if env.Kind != v1.EnvelopeCommand || env.Command.Method != v1.MethodSessionCreate {
 		t.Fatalf("envelope = %+v", env)
@@ -55,7 +72,7 @@ func TestParseBareCommandName(t *testing.T) {
 }
 
 func TestParseCommandWithArguments(t *testing.T) {
-	env := parser().ParseMessage(messageEvent("<@U0BOT> /new_chat claude"))
+	env := parser().ParseMessage(testMessage("<@U0BOT> /new_chat claude"), nil)
 
 	if env.Command.Name != "new_chat" {
 		t.Fatalf("name = %q", env.Command.Name)
@@ -68,7 +85,7 @@ func TestParseCommandWithArguments(t *testing.T) {
 // A recognized command the transport does not expose is a command error, not a
 // prompt: the text must not be forwarded to the agent.
 func TestParseUnknownCommand(t *testing.T) {
-	env := parser().ParseMessage(messageEvent("<@U0BOT> /teleport"))
+	env := parser().ParseMessage(testMessage("<@U0BOT> /teleport"), nil)
 
 	if env.Kind != v1.EnvelopeCommand {
 		t.Fatalf("kind = %q, want command", env.Kind)
@@ -79,7 +96,7 @@ func TestParseUnknownCommand(t *testing.T) {
 }
 
 func TestParseOrdinaryTextIsAMessage(t *testing.T) {
-	env := parser().ParseMessage(messageEvent("<@U0BOT> fix the login bug"))
+	env := parser().ParseMessage(testMessage("<@U0BOT> fix the login bug"), nil)
 
 	if env.Kind != v1.EnvelopeMessage {
 		t.Fatalf("kind = %q, want message", env.Kind)
@@ -91,7 +108,7 @@ func TestParseOrdinaryTextIsAMessage(t *testing.T) {
 
 // Text that merely contains a slash-like token must not become a command.
 func TestParseSlashInsideTextIsNotACommand(t *testing.T) {
-	env := parser().ParseMessage(messageEvent("<@U0BOT> check src/main.go and the /api route"))
+	env := parser().ParseMessage(testMessage("<@U0BOT> check src/main.go and the /api route"), nil)
 
 	if env.Kind != v1.EnvelopeMessage {
 		t.Fatalf("kind = %q, want message", env.Kind)
@@ -101,7 +118,7 @@ func TestParseSlashInsideTextIsNotACommand(t *testing.T) {
 // Without a mention in a channel that requires one, the transport ignores the
 // message rather than guessing that Hive was addressed.
 func TestParseIgnoresUnaddressedMessages(t *testing.T) {
-	env := parser().ParseMessage(messageEvent("/agents"))
+	env := parser().ParseMessage(testMessage("/agents"), nil)
 
 	if env.Kind != "" {
 		t.Fatalf("kind = %q, want the message to be ignored", env.Kind)
@@ -111,23 +128,14 @@ func TestParseIgnoresUnaddressedMessages(t *testing.T) {
 func TestParseWithoutMentionRequirement(t *testing.T) {
 	p := Parser{BotUserID: "U0BOT", RequireMention: false}
 
-	env := p.ParseMessage(messageEvent("/agents"))
+	env := p.ParseMessage(testMessage("/agents"), nil)
 	if env.Kind != v1.EnvelopeCommand || env.Command.Method != v1.MethodAgentList {
 		t.Fatalf("envelope = %+v", env)
 	}
 }
 
 func TestParseInteraction(t *testing.T) {
-	payload := ActionPayload{
-		Type:     "block_actions",
-		ActionTS: "1700000000.000200",
-	}
-	payload.User.ID = "U123"
-	payload.Channel.ID = "C123"
-	payload.Actions = []struct {
-		ActionID string `json:"action_id"`
-		Value    string `json:"value"`
-	}{{ActionID: ActionPermissionAllow, Value: `{"agentRequestId":"7","approved":true}`}}
+	payload := testInteraction(ActionPermissionAllow, `{"agentRequestId":"7","approved":true}`)
 
 	env := parser().ParseInteraction(payload)
 
@@ -190,7 +198,7 @@ func TestParseMentionAnywhereInTheMessage(t *testing.T) {
 				text = "what is this <@U0BOT>"
 			}
 
-			env := parser().ParseMessage(messageEvent(text))
+			env := parser().ParseMessage(testMessage(text), nil)
 			if env.Kind != want.kind {
 				t.Fatalf("kind = %q, want %q", env.Kind, want.kind)
 			}
@@ -210,7 +218,7 @@ func TestParseMentionAnywhereInTheMessage(t *testing.T) {
 
 // A message with no mention at all is not addressed to the bot.
 func TestParseIgnoresAMessageWithNoMention(t *testing.T) {
-	env := parser().ParseMessage(messageEvent("hello everyone"))
+	env := parser().ParseMessage(testMessage("hello everyone"), nil)
 	if env.Kind != "" {
 		t.Fatalf("kind = %q, want the message to be ignored", env.Kind)
 	}
@@ -218,7 +226,7 @@ func TestParseIgnoresAMessageWithNoMention(t *testing.T) {
 
 // A repeated mention is removed from the prompt.
 func TestParseRemovesEveryMention(t *testing.T) {
-	env := parser().ParseMessage(messageEvent("<@U0BOT> thanks <@U0BOT>"))
+	env := parser().ParseMessage(testMessage("<@U0BOT> thanks <@U0BOT>"), nil)
 
 	if env.Kind != v1.EnvelopeMessage {
 		t.Fatalf("kind = %q", env.Kind)
@@ -235,7 +243,7 @@ func TestParseRemovesEveryMention(t *testing.T) {
 // form are accepted, because Slack reserves a leading slash for itself.
 func TestParseAcceptsSlashAndBareForms(t *testing.T) {
 	for _, text := range []string{"<@U0BOT> /agents", "<@U0BOT> agents"} {
-		env := parser().ParseMessage(messageEvent(text))
+		env := parser().ParseMessage(testMessage(text), nil)
 		if env.Kind != v1.EnvelopeCommand || env.Command.Method != v1.MethodAgentList {
 			t.Errorf("%q parsed as %+v, want the agents command", text, env)
 		}
@@ -264,17 +272,17 @@ func TestAlreadyHandledDeduplicatesADelivery(t *testing.T) {
 // A message with a file is still a message: it arrives with the file_share
 // subtype, which is not a reason to drop it.
 func TestParseImageMessage(t *testing.T) {
-	event := messageEvent("<@U0BOT> what is in this picture?")
+	event := testMessage("<@U0BOT> what is in this picture?")
 	event.SubType = "file_share"
-	event.Files = []File{{
+	files := []slackgo.File{{
 		ID:                 "F1",
 		Name:               "screenshot.png",
-		MimeType:           "image/png",
+		Mimetype:           "image/png",
 		Size:               1234,
 		URLPrivateDownload: "https://files.slack.com/files-pri/T1-F1/download",
 	}}
 
-	env := parser().ParseMessage(event)
+	env := parser().ParseMessage(event, files)
 
 	if env.Kind != v1.EnvelopeMessage {
 		t.Fatalf("kind = %q, want message", env.Kind)
@@ -304,11 +312,11 @@ func TestParseImageMessage(t *testing.T) {
 
 // A file with no download URL is skipped rather than failing the message.
 func TestParseSkipsAFileWithNoURL(t *testing.T) {
-	event := messageEvent("<@U0BOT> here")
+	event := testMessage("<@U0BOT> here")
 	event.SubType = "file_share"
-	event.Files = []File{{ID: "F1", Name: "broken.png", MimeType: "image/png"}}
+	files := []slackgo.File{{ID: "F1", Name: "broken.png", Mimetype: "image/png"}}
 
-	env := parser().ParseMessage(event)
+	env := parser().ParseMessage(event, files)
 	if len(env.Message.Attachments) != 0 {
 		t.Fatalf("attachments = %+v", env.Message.Attachments)
 	}
@@ -321,19 +329,7 @@ func TestParseSkipsAFileWithNoURL(t *testing.T) {
 // button answered "method not found" and the turn waited forever.
 func TestParseInteractionMapsTheActionToAMethod(t *testing.T) {
 	for _, action := range []string{ActionPermissionAllow, ActionPermissionDeny} {
-		env := parser().ParseInteraction(ActionPayload{
-			Channel: struct {
-				ID string `json:"id"`
-			}{ID: "C1"},
-			User: struct {
-				ID string `json:"id"`
-			}{ID: "U1"},
-			ActionTS: "1700000000.000100",
-			Actions: []struct {
-				ActionID string `json:"action_id"`
-				Value    string `json:"value"`
-			}{{ActionID: action, Value: `{"agentRequestId":"7"}`}},
-		})
+		env := parser().ParseInteraction(testInteraction(action, `{"agentRequestId":"7"}`))
 
 		if env.Interaction.Action != action {
 			t.Fatalf("action = %q, want %q", env.Interaction.Action, action)
@@ -365,14 +361,7 @@ func TestAClickCarriesAnIDHiveCanLookUp(t *testing.T) {
 	// The value is what the renderer puts on a button, from a clean request id.
 	value := `{"agentRequestId":"03b7dd82-eb1b-4362-bb6e-a269f0818cd3","approved":true}`
 
-	envelope := Parser{}.ParseInteraction(ActionPayload{
-		Type:     "block_actions",
-		ActionTS: "1700000000.000300",
-		Actions: []struct {
-			ActionID string `json:"action_id"`
-			Value    string `json:"value"`
-		}{{ActionID: "permission_allow", Value: value}},
-	})
+	envelope := Parser{}.ParseInteraction(testInteraction("permission_allow", value))
 
 	if envelope.Interaction == nil {
 		t.Fatal("the click produced no interaction")
