@@ -240,7 +240,9 @@ func (a *fakeAgent) notify(method string, params any) {
 	a.send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 }
 
-func (a *fakeAgent) request(id int, method string, params any) {
+// request sends an agent request. The id is any JSON value, because ACP lets an
+// agent use a number or a string, and a real one uses a string.
+func (a *fakeAgent) request(id any, method string, params any) {
 	a.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 }
 
@@ -565,6 +567,66 @@ func TestPermissionIsForwardedAndAnswered(t *testing.T) {
 	got := launcher.agent.outcomeSnapshot()[0]
 	if got.Outcome != "selected" || got.OptionID != "a1" {
 		t.Fatalf("agent outcome = %+v", got)
+	}
+}
+
+// An agent's request id is a string, and the id Hive is handed back has to be
+// the id it stored.
+//
+// Found in a live conversation: every click was refused with "permission request
+// ... is not pending", because the pending request was keyed by the id's raw
+// JSON — quotes included — and looked up by the id itself. A number hid it,
+// because a number's raw JSON is its text.
+func TestPermissionWithAStringRequestIDIsAnswered(t *testing.T) {
+	_, c, launcher := newBridge(t)
+	const requestID = "e1bf1074-79b2-4a3c-b60f-5ddba8f97e69"
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	launcher.agent.setHandler(func(method string, id json.RawMessage, params json.RawMessage) {
+		if method == "session/prompt" {
+			launcher.agent.request(requestID, "session/request_permission", map[string]any{
+				"sessionId": "agent-sess-1",
+				"toolCall":  map[string]any{"toolCallId": "tc1", "title": "Run ls"},
+				"options": []map[string]any{
+					{"optionId": "allow-once", "name": "Allow once", "kind": "allow"},
+					{"optionId": "allow-always", "name": "Allow always", "kind": "allow"},
+					{"optionId": "deny", "name": "Deny", "kind": "deny"},
+				},
+			})
+		}
+		launcher.agent.baseHandler(method, id, params)
+	})
+
+	if err := c.peer.Call(context.Background(), v1.MethodExecutionPrompt, v1.ExecutionPromptParams{
+		AgentRunID: "run_1", Generation: 1, Text: "run it",
+	}, &map[string]any{}); err != nil {
+		t.Fatalf("execution.prompt: %v", err)
+	}
+
+	waitFor(t, "the permission request", func() bool { return len(c.requestsSnapshot()) > 0 })
+	if got := c.requestsSnapshot()[0].AgentRequestID; got != requestID {
+		t.Fatalf("agent request id = %q, want %q", got, requestID)
+	}
+
+	// The user picks the agent's second option, which is what the agent's own
+	// button carries.
+	var out map[string]any
+	if err := c.peer.Call(context.Background(), v1.MethodPermissionRespond, v1.PermissionRespondParams{
+		AgentRunID:     "run_1",
+		AgentRequestID: requestID,
+		OptionID:       "allow-always",
+	}, &out); err != nil {
+		t.Fatalf("permission.respond: %v", err)
+	}
+
+	waitFor(t, "the agent to receive the outcome", func() bool {
+		return len(launcher.agent.outcomeSnapshot()) > 0
+	})
+	if got := launcher.agent.outcomeSnapshot()[0]; got.OptionID != "allow-always" {
+		t.Fatalf("agent outcome = %+v, want the option the user chose", got)
 	}
 }
 

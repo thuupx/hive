@@ -68,6 +68,96 @@ func TestRenderPermissionRequestOffersButtons(t *testing.T) {
 	}
 }
 
+// The agent decides what a user may choose, so the card offers what it offered.
+//
+// Found in a live conversation: an agent that offers "Allow once" and "Allow
+// always" was rendered as Allow/Deny, so one of its choices could not be made at
+// all.
+func TestPermissionRendersTheAgentsOwnOptions(t *testing.T) {
+	ev := v1.Event{
+		Type:      v1.EventPermissionRequested,
+		SessionID: "sess_1",
+		Payload: json.RawMessage(`{
+			"agentRequestId": "e1bf",
+			"toolCall": {"title": "Run ls"},
+			"options": [
+				{"optionId": "allow-once", "name": "Allow once", "kind": "allow"},
+				{"optionId": "allow-always", "name": "Allow always", "kind": "allow"},
+				{"optionId": "deny", "name": "Deny", "kind": "deny"}
+			]
+		}`),
+	}
+
+	rendered, ok := Renderer{}.RenderEvent(ev)
+	if !ok {
+		t.Fatal("a permission request must be rendered")
+	}
+
+	actions := actionsBlock(t, rendered.Message)
+	if len(actions.Elements) != 3 {
+		t.Fatalf("elements = %d, want one per option the agent offered", len(actions.Elements))
+	}
+	for i, want := range []string{"Allow once", "Allow always", "Deny"} {
+		if actions.Elements[i].Text.Text != want {
+			t.Errorf("button %d = %q, want %q", i, actions.Elements[i].Text.Text, want)
+		}
+		if actions.Elements[i].ActionID != ActionPermissionRespond {
+			t.Errorf("button %d action = %q", i, actions.Elements[i].ActionID)
+		}
+	}
+	if actions.Elements[0].Style != "primary" || actions.Elements[2].Style != "danger" {
+		t.Errorf("styles = %q and %q, want primary and danger",
+			actions.Elements[0].Style, actions.Elements[2].Style)
+	}
+
+	// The value names the choice, so the agent's own option is the one answered.
+	var value struct {
+		AgentRequestID string `json:"agentRequestId"`
+		OptionID       string `json:"optionId"`
+		Label          string `json:"label"`
+	}
+	if err := json.Unmarshal([]byte(actions.Elements[1].Value), &value); err != nil {
+		t.Fatalf("value is not valid json: %v", err)
+	}
+	if value.AgentRequestID != "e1bf" || value.OptionID != "allow-always" || value.Label != "Allow always" {
+		t.Fatalf("value = %+v", value)
+	}
+}
+
+// An agent that offered no choices still needs an answer, or it waits forever.
+func TestPermissionWithoutOptionsOffersAllowAndDeny(t *testing.T) {
+	ev := v1.Event{
+		Type:      v1.EventPermissionRequested,
+		SessionID: "sess_1",
+		Payload:   json.RawMessage(`{"agentRequestId": "7", "toolCall": {"title": "Write file"}}`),
+	}
+
+	rendered, ok := Renderer{}.RenderEvent(ev)
+	if !ok {
+		t.Fatal("a permission request must be rendered")
+	}
+
+	actions := actionsBlock(t, rendered.Message)
+	if len(actions.Elements) != 2 {
+		t.Fatalf("elements = %d, want allow and deny", len(actions.Elements))
+	}
+	if actions.Elements[0].ActionID != ActionPermissionAllow || actions.Elements[1].ActionID != ActionPermissionDeny {
+		t.Errorf("actions = %q, %q", actions.Elements[0].ActionID, actions.Elements[1].ActionID)
+	}
+}
+
+// actionsBlock is the actions block of a message.
+func actionsBlock(t *testing.T, message Message) Block {
+	t.Helper()
+	for _, block := range message.Blocks {
+		if block.Type == "actions" {
+			return block
+		}
+	}
+	t.Fatal("the message has no actions block")
+	return Block{}
+}
+
 // Agent streaming updates are preserved as raw protocol data, and turning every
 // one of them into a Slack message would be noise.
 func TestRenderSkipsAgentRaw(t *testing.T) {
@@ -425,8 +515,12 @@ func TestAnEmptyConfigWithoutAnAgent(t *testing.T) {
 	}
 }
 
-// What a turn cost is one line, posted after the answer it belongs to.
-func TestRenderUsage(t *testing.T) {
+// What a turn cost is not a message of its own.
+//
+// One line per turn is noise in a busy conversation, and the status command
+// already answers the question. The report is still published, so /status has the
+// numbers; it is simply not announced.
+func TestUsageIsNotRenderedIntoTheConversation(t *testing.T) {
 	payload, err := json.Marshal(v1.Usage{
 		InputTokens: 52854, OutputTokens: 677, TotalTokens: 53531,
 		ContextUsed: 53531, ContextSize: 200000,
@@ -435,29 +529,8 @@ func TestRenderUsage(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	rendered, ok := Renderer{}.RenderEvent(v1.Event{Type: v1.EventUsage, Payload: payload})
-	if !ok {
-		t.Fatal("a reported usage should render")
-	}
-	for _, want := range []string{
-		"53,531 tokens", "in 52,854", "out 677", "context 26%", "53,531/200,000",
-	} {
-		if !strings.Contains(rendered.Message.Text, want) {
-			t.Errorf("the line does not mention %q: %q", want, rendered.Message.Text)
-		}
-	}
-}
-
-// An agent that reported nothing renders nothing: a line of zeroes would be a
-// claim about the agent that is not true.
-func TestRenderUsageWithoutNumbers(t *testing.T) {
-	payload, err := json.Marshal(v1.Usage{})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-
 	if _, ok := (Renderer{}).RenderEvent(v1.Event{Type: v1.EventUsage, Payload: payload}); ok {
-		t.Error("an empty usage should not render")
+		t.Error("a usage report should not be rendered into the conversation")
 	}
 }
 

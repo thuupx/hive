@@ -92,10 +92,13 @@ const HelpCommand = "help"
 // Actions maps a transport action to the Hive method it performs.
 //
 // The transport owns this mapping, exactly as it owns command names: it decides
-// that a button labelled Allow is a permission response.
+// that a button labelled Allow is a permission response. Every kind of
+// permission button is the same Hive operation, because which choice a button
+// stands for is the agent's, and it travels in the button's value.
 var Actions = map[string]string{
-	ActionPermissionAllow: v1.MethodPermissionRespond,
-	ActionPermissionDeny:  v1.MethodPermissionRespond,
+	ActionPermissionAllow:   v1.MethodPermissionRespond,
+	ActionPermissionDeny:    v1.MethodPermissionRespond,
+	ActionPermissionRespond: v1.MethodPermissionRespond,
 }
 
 // Catalog returns the commands this transport exposes, in a stable order.

@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -63,6 +64,57 @@ func TestAToolCallUpdateKeepsItsPosition(t *testing.T) {
 	}
 	if run.calls[0].ToolCallID != "a" || run.calls[0].Status != v1.ToolCompleted {
 		t.Fatalf("calls[0] = %+v, want the first call updated in place", run.calls[0])
+	}
+}
+
+// A card loses its buttons once the decision was made.
+//
+// Found in a live conversation: the card kept offering Allow after the answer
+// was given, and a second press was refused with "not pending", which reads as
+// the first press having failed.
+func TestAPermissionCardIsSettledAfterADecision(t *testing.T) {
+	client := &fakeClient{}
+	p := New(nil, client, Options{})
+
+	p.settleInteraction(context.Background(), delivery{
+		conversationID: "C1:1.0",
+		messageTS:      "1.5",
+		envelope: v1.Envelope{
+			Kind: v1.EnvelopeInteraction,
+			Interaction: &v1.IncomingInteraction{
+				Action: ActionPermissionRespond,
+				Method: v1.MethodPermissionRespond,
+				Value:  `{"agentRequestId":"e1bf","optionId":"allow-always","approved":true,"label":"Allow always"}`,
+			},
+		},
+	})
+
+	if len(client.updated) != 1 {
+		t.Fatalf("updated %d message(s), want the card", len(client.updated))
+	}
+	updated := client.updated[0]
+	if updated.Timestamp != "1.5" {
+		t.Errorf("timestamp = %q, want the card's", updated.Timestamp)
+	}
+	for _, block := range updated.Message.Blocks {
+		if block.Type == "actions" {
+			t.Error("the card still has an actions block, so its buttons are still there")
+		}
+	}
+	if !strings.Contains(updated.Message.Text, "Allow always") {
+		t.Errorf("text = %q, want the choice that was made", updated.Message.Text)
+	}
+}
+
+// A card the platform did not name cannot be settled, and that is not a failure.
+func TestASettleWithoutAMessageDoesNothing(t *testing.T) {
+	client := &fakeClient{}
+	p := New(nil, client, Options{})
+
+	p.settleInteraction(context.Background(), delivery{conversationID: "C1:1.0"})
+
+	if len(client.updated) != 0 {
+		t.Fatalf("updated %d message(s), want none", len(client.updated))
 	}
 }
 

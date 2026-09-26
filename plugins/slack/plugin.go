@@ -123,6 +123,10 @@ type delivery struct {
 
 	timestamp string
 
+	// messageTS is the message an interaction came from, so the card that
+	// carried the button can be updated once it is pressed. Empty for a message.
+	messageTS string
+
 	// thread is where this turn's output belongs. Empty posts to the conversation
 	// itself.
 	thread string
@@ -386,6 +390,15 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 		)
 	}
 
+	// A button press is answered on the card that carried the button. A second
+	// message would leave the buttons where they were, and a card that still
+	// offers Allow after the answer was given invites a second click that is
+	// refused — which reads as the first one having failed.
+	if d.envelope.Kind == v1.EnvelopeInteraction && outcome.Error == nil {
+		p.settleInteraction(ctx, d)
+		return
+	}
+
 	// The turn runs in the background, so there is nothing to say yet. The
 	// reaction on the message is the acknowledgement, and the answer is the
 	// response: a message that only says "working on it" is noise between the two.
@@ -402,6 +415,50 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	if !p.replaceTyping(ctx, d.conversationID, RenderOutcome(outcome)) {
 		p.post(ctx, d.conversationID, d.thread, RenderOutcome(outcome))
 	}
+}
+
+// settleInteraction replaces a card's buttons with the decision that was made.
+//
+// The card is the message the button was on, which Slack names in the action.
+// The buttons go with it: leaving them invites a second press, and the second
+// press is refused because the request is no longer pending.
+func (p *Plugin) settleInteraction(ctx context.Context, d delivery) {
+	if d.messageTS == "" {
+		return
+	}
+	if err := p.client.UpdateMessage(ctx, UpdateMessageRequest{
+		Channel:   channelOf(d.conversationID),
+		Timestamp: d.messageTS,
+		Message:   resolvedMessage(d.envelope),
+	}); err != nil {
+		p.log.Warn("could not settle a permission card",
+			"conversation", d.conversationID, "error", err)
+	}
+}
+
+// resolvedMessage is what a card says once its button was pressed.
+func resolvedMessage(env v1.Envelope) Message {
+	if label := chosenLabel(env); label != "" {
+		return textMessage(":white_check_mark: " + label)
+	}
+	return textMessage(":white_check_mark: Resolved")
+}
+
+// chosenLabel reads the label the transport put on the button that was pressed.
+//
+// The label is the agent's own wording for the choice, kept with the button so
+// the card can say what was chosen without asking the core again.
+func chosenLabel(env v1.Envelope) string {
+	if env.Interaction == nil {
+		return ""
+	}
+	var value struct {
+		Label string `json:"label"`
+	}
+	if err := json.Unmarshal([]byte(env.Interaction.Value), &value); err != nil {
+		return ""
+	}
+	return value.Label
 }
 
 // commandName is the command a delivery carried, if it carried one.
@@ -495,6 +552,7 @@ func (p *Plugin) parse(inbound Inbound) (delivery, bool) {
 			conversationID: key,
 			channelID:      env.ConversationID,
 			timestamp:      payload.ActionTS,
+			messageTS:      payload.Message.TS,
 			thread:         thread,
 		}, true
 

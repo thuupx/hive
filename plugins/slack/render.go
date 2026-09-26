@@ -17,6 +17,11 @@ import (
 const (
 	ActionPermissionAllow = "permission_allow"
 	ActionPermissionDeny  = "permission_deny"
+
+	// ActionPermissionRespond is one of the agent's own choices. Which choice is
+	// in the button's value, so one action id covers every option an agent
+	// offers, however many there are.
+	ActionPermissionRespond = "permission_respond"
 )
 
 // Renderer turns Hive events into Slack messages.
@@ -80,11 +85,10 @@ func (r Renderer) RenderEvent(ev v1.Event) (Rendered, bool) {
 	case v1.EventTool:
 		return renderTool(ev)
 
-	case v1.EventUsage:
-		return renderUsage(ev)
-
 	default:
-		// agent.raw and anything unrecognized stay out of the conversation.
+		// agent.raw, usage, and anything unrecognized stay out of the
+		// conversation. A usage report is answered by the status command rather
+		// than announced: one line per turn is noise in a busy conversation.
 		return Rendered{}, false
 	}
 }
@@ -260,28 +264,11 @@ func toolLabel(call v1.ToolCall) string {
 	return "tool"
 }
 
-// renderUsage shows what a turn cost and how full the context is.
-//
-// It is published after the answer it belongs to, so the numbers a reader sees
-// are the turn they just read. An agent that reported nothing renders nothing:
-// a line of zeroes would be a claim about the agent that is not true.
-func renderUsage(ev v1.Event) (Rendered, bool) {
-	var usage v1.Usage
-	if err := json.Unmarshal(ev.Payload, &usage); err != nil || !usage.Reported() {
-		return Rendered{}, false
-	}
-
-	parts := usageParts(usage)
-	if len(parts) == 0 {
-		return Rendered{}, false
-	}
-	return Rendered{Message: textMessage(":abacus: " + strings.Join(parts, " · "))}, true
-}
-
 // usageParts is what a usage report says, in words.
 //
-// It is shared with the status command, so a number is described the same way
-// wherever a reader meets it.
+// It is read by the status command rather than announced per turn: a reader who
+// asks what a conversation costs gets the numbers, and a turn that only says
+// what it cost is noise.
 func usageParts(usage v1.Usage) []string {
 	parts := make([]string, 0, 3)
 	if turn := usage.Turn(); turn > 0 {
@@ -321,11 +308,7 @@ func permissionMessage(ev v1.Event) Message {
 		ToolCall struct {
 			Title string `json:"title"`
 		} `json:"toolCall"`
-		Options []struct {
-			OptionID string `json:"optionId"`
-			Name     string `json:"name"`
-			Kind     string `json:"kind"`
-		} `json:"options"`
+		Options []permissionOption `json:"options"`
 	}
 	_ = json.Unmarshal(ev.Payload, &payload)
 
@@ -334,52 +317,114 @@ func permissionMessage(ev v1.Event) Message {
 		title = "a sensitive operation"
 	}
 
-	// The value carries the agent's own request id, so Hive can correlate the
-	// response without the transport understanding the request.
-	allowValue := encodeValue(ev, true)
-	denyValue := encodeValue(ev, false)
+	blocks := []Block{
+		{Type: "section", Text: &TextObject{Type: "mrkdwn", Text: fmt.Sprintf("*Permission requested*\n%s", title)}},
+	}
+	if actions := permissionActions(ev, payload.Options); len(actions) > 0 {
+		blocks = append(blocks, Block{Type: "actions", Elements: actions})
+	}
 
 	return Message{
-		Text: fmt.Sprintf("Permission requested: %s", title),
-		Blocks: []Block{
-			{Type: "section", Text: &TextObject{Type: "mrkdwn", Text: fmt.Sprintf("*Permission requested*\n%s", title)}},
-			{
-				Type: "actions",
-				Elements: []Element{
-					{
-						Type:     "button",
-						Text:     &TextObject{Type: "plain_text", Text: "Allow"},
-						ActionID: ActionPermissionAllow,
-						Value:    allowValue,
-						Style:    "primary",
-					},
-					{
-						Type:     "button",
-						Text:     &TextObject{Type: "plain_text", Text: "Deny"},
-						ActionID: ActionPermissionDeny,
-						Value:    denyValue,
-						Style:    "danger",
-					},
-				},
-			},
+		Text:   fmt.Sprintf("Permission requested: %s", title),
+		Blocks: blocks,
+	}
+}
+
+// permissionOption is one choice the agent offered.
+type permissionOption struct {
+	OptionID string `json:"optionId"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+}
+
+// permissionActions renders one button per choice the agent offered.
+//
+// The agent decides what a user may choose. An agent that offers "Allow once"
+// and "Allow always" offers two buttons, and the transport renders what it was
+// given rather than deciding that a decision has two answers.
+func permissionActions(ev v1.Event, options []permissionOption) []Element {
+	elements := make([]Element, 0, len(options))
+	for _, option := range options {
+		elements = append(elements, Element{
+			Type:     "button",
+			Text:     &TextObject{Type: "plain_text", Text: optionLabel(option)},
+			ActionID: ActionPermissionRespond,
+			Value:    encodeOption(ev, option),
+			Style:    optionStyle(option.Kind),
+		})
+	}
+	if len(elements) > 0 {
+		return elements
+	}
+
+	// An agent that offered no choices still needs an answer, or it waits
+	// forever. The pair a permission request has always had is the fallback.
+	return []Element{
+		{
+			Type: "button", Text: &TextObject{Type: "plain_text", Text: "Allow"},
+			ActionID: ActionPermissionAllow, Value: encodeDecision(ev, true), Style: "primary",
+		},
+		{
+			Type: "button", Text: &TextObject{Type: "plain_text", Text: "Deny"},
+			ActionID: ActionPermissionDeny, Value: encodeDecision(ev, false), Style: "danger",
 		},
 	}
 }
 
-// encodeValue builds the button payload for a permission decision.
+// optionLabel is what a button says.
+func optionLabel(option permissionOption) string {
+	for _, label := range []string{option.Name, option.Kind} {
+		if label != "" {
+			return label
+		}
+	}
+	return "Respond"
+}
+
+// optionStyle styles a button by the kind the agent gave it. A kind the
+// transport does not know is neither safe nor dangerous, so it is left plain.
+func optionStyle(kind string) string {
+	switch kind {
+	case "allow":
+		return "primary"
+	case "deny":
+		return "danger"
+	default:
+		return ""
+	}
+}
+
+// encodeOption builds the button payload for one of the agent's own choices.
 //
-// It carries the agent's request id and the Hive session, which is all the router
-// needs to relay the decision.
-func encodeValue(ev v1.Event, approved bool) string {
+// It carries the agent's request id, the option the user picked, and the label
+// the card showed, so the card can say what was chosen once the buttons are
+// gone.
+func encodeOption(ev v1.Event, option permissionOption) string {
+	return encodeValue(ev, map[string]any{
+		"optionId": option.OptionID,
+		"approved": option.Kind == "allow",
+		"label":    optionLabel(option),
+	})
+}
+
+// encodeDecision builds the button payload for a plain allow or deny, which is
+// what a card posted before the agent's own options were rendered carries.
+func encodeDecision(ev v1.Event, approved bool) string {
+	return encodeValue(ev, map[string]any{"approved": approved})
+}
+
+// encodeValue builds a button payload around the agent's request id.
+//
+// It carries the agent's request id and the decision, which is all the router
+// needs to relay it.
+func encodeValue(ev v1.Event, fields map[string]any) string {
 	var payload struct {
 		AgentRequestID string `json:"agentRequestId"`
 	}
 	_ = json.Unmarshal(ev.Payload, &payload)
 
-	value, err := json.Marshal(map[string]any{
-		"agentRequestId": payload.AgentRequestID,
-		"approved":       approved,
-	})
+	fields["agentRequestId"] = payload.AgentRequestID
+	value, err := json.Marshal(fields)
 	if err != nil {
 		return ""
 	}

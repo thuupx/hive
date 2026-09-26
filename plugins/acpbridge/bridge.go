@@ -1214,8 +1214,11 @@ func (b *Bridge) forwardPermission(perm acp.PermissionRequest) {
 		return
 	}
 
+	// The pending request is keyed by the id as text, because that is the id the
+	// core is given and hands back. Keying it by the raw JSON would key it with
+	// the id's quotes still on it, and every answer would miss.
 	b.mu.Lock()
-	b.perms[string(perm.RequestID)] = pendingPermission{requestID: perm.RequestID, options: perm.Options}
+	b.perms[requestIDText(perm.RequestID)] = pendingPermission{requestID: perm.RequestID, options: perm.Options}
 	b.mu.Unlock()
 
 	ctx := context.Background()
