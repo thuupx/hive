@@ -139,16 +139,16 @@ type Plugin struct {
 	mu    sync.Mutex
 	bound map[string]string // conversation id to session id
 
-	// toolMessages maps a tool call to the message that represents it, so the
-	// call is one message instead of one per update.
+	// toolRuns maps a turn to the one message that shows its tool calls, so a
+	// turn is a message rather than one per call.
 	//
-	// It is bounded: a long-lived transport must not remember every tool call it
-	// has ever shown.
-	toolMessages map[string]string
+	// It is bounded: a long-lived transport must not remember every turn it has
+	// ever shown.
+	toolRuns map[string]*toolRun
 
-	// toolOrder is the order tool messages were created in, so the oldest can be
+	// toolRunOrder is the order turns were shown in, so the oldest can be
 	// forgotten.
-	toolOrder []string
+	toolRunOrder []string
 
 	// handled remembers recent deliveries, because one platform message can
 	// arrive as more than one event.
@@ -183,17 +183,17 @@ func New(host *sdk.Host, client Client, opts Options) *Plugin {
 	}
 
 	return &Plugin{
-		host:         host,
-		client:       client,
-		parser:       Parser{BotUserID: opts.BotUserID, RequireMention: opts.RequireMention},
-		opts:         opts,
-		log:          log,
-		bound:        make(map[string]string),
-		toolMessages: make(map[string]string),
-		handled:      make(map[string]time.Time),
-		cursors:      make(map[string]int64),
-		typing:       make(map[string]*typing),
-		lastSeen:     make(map[string]int64),
+		host:     host,
+		client:   client,
+		parser:   Parser{BotUserID: opts.BotUserID, RequireMention: opts.RequireMention},
+		opts:     opts,
+		log:      log,
+		bound:    make(map[string]string),
+		toolRuns: make(map[string]*toolRun),
+		handled:  make(map[string]time.Time),
+		cursors:  make(map[string]int64),
+		typing:   make(map[string]*typing),
+		lastSeen: make(map[string]int64),
 	}
 }
 
@@ -619,8 +619,8 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 					"threaded", thread != "",
 				)
 				for _, conversation := range conversations {
-					if rendered.ToolCallID != "" {
-						p.renderTool(ctx, conversation, thread, rendered)
+					if rendered.ToolCall != nil {
+						p.renderToolRun(ctx, conversation, thread, rendered)
 						continue
 					}
 					p.post(ctx, conversation, thread, rendered.Message)
@@ -645,50 +645,109 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 	}
 }
 
-// renderTool keeps one message per tool call.
+// toolRun is one turn's tool calls and the message that shows them.
+type toolRun struct {
+	// messageTS is the message the turn's calls are listed in, once it is posted.
+	messageTS string
+
+	// calls are the turn's tool calls in the order they were first seen, so the
+	// list does not reorder under the reader as calls are updated.
+	calls []v1.ToolCall
+
+	// index finds a call's place in calls by the agent's own identifier.
+	index map[string]int
+
+	// detailed records the calls whose output was already posted in the thread,
+	// so an update does not post it again.
+	detailed map[string]bool
+}
+
+// upsert records a tool call's latest state, keeping its first position.
+func (r *toolRun) upsert(call v1.ToolCall) {
+	if at, ok := r.index[call.ToolCallID]; ok {
+		r.calls[at] = call
+		return
+	}
+	r.index[call.ToolCallID] = len(r.calls)
+	r.calls = append(r.calls, call)
+}
+
+// renderToolRun keeps one message per turn for the tool calls it made.
 //
-// A tool call produces many updates. Posting each one would bury the conversation,
-// so the message is created once and then replaced, and any detail goes in its
-// thread.
-func (p *Plugin) renderTool(ctx context.Context, conversation, thread string, rendered Rendered) {
+// A turn can make many calls and each call produces many updates, so one message
+// per call buries the conversation. One message per turn keeps it readable, and
+// Slack collapses the list itself once it is long.
+func (p *Plugin) renderToolRun(ctx context.Context, conversation, thread string, rendered Rendered) {
+	runID := rendered.ToolRunID
+	if runID == "" {
+		runID = rendered.ToolCall.ToolCallID
+	}
+
 	p.mu.Lock()
-	timestamp := p.toolMessages[rendered.ToolCallID]
+	run := p.rememberToolRunLocked(runID)
+	run.upsert(*rendered.ToolCall)
+	message := toolRunMessage(run.calls)
+	timestamp := run.messageTS
 	p.mu.Unlock()
 
 	if timestamp == "" {
 		ts, err := p.client.PostMessage(ctx, PostMessageRequest{
 			Channel:  channelOf(conversation),
 			ThreadTS: thread,
-			Message:  rendered.Message,
+			Message:  message,
 		})
 		if err != nil {
-			p.log.Warn("could not post a tool call", "conversation", conversation, "error", err)
+			p.log.Warn("could not post a turn's tool calls", "conversation", conversation, "error", err)
 			return
 		}
 
 		p.mu.Lock()
-		p.toolMessages[rendered.ToolCallID] = ts
-		p.toolOrder = append(p.toolOrder, rendered.ToolCallID)
-		for len(p.toolOrder) > maxToolMessages {
-			oldest := p.toolOrder[0]
-			p.toolOrder = p.toolOrder[1:]
-			delete(p.toolMessages, oldest)
+		if current := p.toolRuns[runID]; current != nil {
+			current.messageTS = ts
 		}
 		p.mu.Unlock()
-		return
-	}
-
-	if err := p.client.UpdateMessage(ctx, UpdateMessageRequest{
+		timestamp = ts
+	} else if err := p.client.UpdateMessage(ctx, UpdateMessageRequest{
 		Channel:   channelOf(conversation),
 		Timestamp: timestamp,
-		Message:   rendered.Message,
+		Message:   message,
 	}); err != nil {
-		p.log.Warn("could not update a tool call", "conversation", conversation, "error", err)
+		p.log.Warn("could not update a turn's tool calls", "conversation", conversation, "error", err)
 	}
 
-	if rendered.Detail != "" {
-		p.post(ctx, conversation, timestamp, textMessage(rendered.Detail))
+	// A failed call's output is worth reading in full, so it goes in the thread
+	// under the list rather than in it, once per call.
+	if rendered.Detail == "" {
+		return
 	}
+	p.mu.Lock()
+	already := p.toolRuns[runID] != nil && p.toolRuns[runID].detailed[rendered.ToolCall.ToolCallID]
+	if current := p.toolRuns[runID]; current != nil {
+		current.detailed[rendered.ToolCall.ToolCallID] = true
+	}
+	p.mu.Unlock()
+	if already {
+		return
+	}
+	p.post(ctx, conversation, timestamp, textMessage(rendered.Detail))
+}
+
+// rememberToolRunLocked returns the run for a turn, creating it and forgetting
+// the oldest when the bound is reached. The caller holds the lock.
+func (p *Plugin) rememberToolRunLocked(runID string) *toolRun {
+	if run := p.toolRuns[runID]; run != nil {
+		return run
+	}
+
+	run := &toolRun{index: make(map[string]int), detailed: make(map[string]bool)}
+	p.toolRuns[runID] = run
+	p.toolRunOrder = append(p.toolRunOrder, runID)
+	for len(p.toolRunOrder) > maxToolRuns {
+		oldest := p.toolRunOrder[0]
+		p.toolRunOrder = p.toolRunOrder[1:]
+		delete(p.toolRuns, oldest)
+	}
+	return run
 }
 
 // maxRunThreads bounds how many runs are remembered.
@@ -825,8 +884,8 @@ func (p *Plugin) replay(ctx context.Context, sessionID string, after int64) (int
 			}
 		}
 		for _, conversation := range conversations {
-			if message.ToolCallID != "" {
-				p.renderTool(ctx, conversation, thread, message)
+			if message.ToolCall != nil {
+				p.renderToolRun(ctx, conversation, thread, message)
 				continue
 			}
 			p.post(ctx, conversation, thread, message.Message)
@@ -839,12 +898,12 @@ func (p *Plugin) replay(ctx context.Context, sessionID string, after int64) (int
 // catchUpLimit bounds how much history a restart replays.
 const catchUpLimit = 200
 
-// maxToolMessages bounds how many tool cards a transport remembers.
+// maxToolRuns bounds how many turns a transport remembers.
 //
-// A tool call keeps one message, so this is one entry per tool call the transport
-// has shown. Forgetting the oldest means a very old tool card is reposted rather
+// A turn keeps one message, so this is one entry per turn the transport has
+// shown. Forgetting the oldest means a very old turn's list is reposted rather
 // than updated, which is a smaller problem than growing forever.
-const maxToolMessages = 1024
+const maxToolRuns = 1024
 
 // reloadBindings rebuilds the conversation-to-session map.
 //

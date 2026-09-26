@@ -398,11 +398,45 @@ func (s *Service) Status(ctx context.Context, principal Principal, sessionID str
 		Workspace:    sess.WorkspaceID,
 		DefaultRunID: sess.DefaultInteractiveRunID,
 		Runs:         make([]v1.RunSummary, 0, len(runs)),
+		Settings:     sess.AgentConfig,
 	}
 	for _, run := range runs {
 		result.Runs = append(result.Runs, runSummary(run))
 	}
+
+	// What the session cost is read from the stream rather than remembered here:
+	// the events are already durable, and a status read that grew a second copy
+	// of them would be one more thing to keep in step.
+	if usage, err := s.lastUsage(ctx, sessionID); err != nil {
+		return nil, err
+	} else {
+		result.Usage = usage
+	}
+	toolCalls, err := s.store.ToolCallCount(ctx, sessionID)
+	if err != nil {
+		return nil, v1.Unavailable("tool calls could not be counted: %s", err.Error())
+	}
+	result.ToolCalls = int(toolCalls)
+
 	return result, nil
+}
+
+// lastUsage reads the newest usage report on a session stream, if there is one.
+func (s *Service) lastUsage(ctx context.Context, sessionID string) (*v1.Usage, error) {
+	latest, err := s.store.LatestEventOfType(ctx, sessionID, event.TypeUsage)
+	if err != nil {
+		return nil, v1.Unavailable("usage could not be read: %s", err.Error())
+	}
+	if latest == nil {
+		return nil, nil
+	}
+
+	var usage v1.Usage
+	if err := json.Unmarshal(latest.Payload, &usage); err != nil {
+		// A report this build cannot read is not a reason to fail a status read.
+		return nil, nil
+	}
+	return &usage, nil
 }
 
 // ListSessions returns the sessions a principal may see.

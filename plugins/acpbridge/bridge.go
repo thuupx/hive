@@ -146,6 +146,12 @@ type run struct {
 	// them. Hive renders them without knowing what they mean.
 	config []acp.ConfigOption
 
+	// contextUsed and contextSize are how full the context window is, as the
+	// agent last reported it. They are kept for the report a turn ends with,
+	// because the update arrives during the turn and the report after it.
+	contextUsed int
+	contextSize int
+
 	// betweenMessages reports that something other than assistant text arrived
 	// since the last message chunk, so the next chunk starts a new message.
 	betweenMessages bool
@@ -484,7 +490,7 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 		return nil, err
 	}
 
-	stopReason, err := client.Prompt(ctx, r.sessionID, b.promptContent(r, req))
+	result, err := client.Prompt(ctx, r.sessionID, b.promptContent(r, req))
 	if err != nil {
 		return nil, v1.Unavailable("agent prompt failed: %s", err.Error())
 	}
@@ -499,12 +505,16 @@ func (b *Bridge) prompt(ctx context.Context, params json.RawMessage) (any, error
 	// The turn is over, so the answer is complete.
 	b.publishAnswer(ctx, r)
 
-	if stopReason == "cancelled" {
+	// What the turn cost is known only now, so it is reported after the answer it
+	// belongs to.
+	b.publishUsage(ctx, r, result.Usage)
+
+	if result.StopReason == "cancelled" {
 		_ = b.report(ctx, req.AgentRunID, req.Generation, "terminal", r.sessionID, "cancelled")
 	} else {
-		_ = b.report(ctx, req.AgentRunID, req.Generation, "terminal", r.sessionID, stopReason)
+		_ = b.report(ctx, req.AgentRunID, req.Generation, "terminal", r.sessionID, result.StopReason)
 	}
-	return map[string]any{"stopReason": stopReason}, nil
+	return map[string]any{"stopReason": result.StopReason}, nil
 }
 
 // promptContent assembles what the agent actually receives.
@@ -948,6 +958,15 @@ func (b *Bridge) publishUpdate(r *run, update acp.Update) {
 		b.mu.Unlock()
 	}
 
+	// A usage update says how full the context is. It arrives during the turn, so
+	// it is kept for the report the turn ends with.
+	if context, ok := contextUsageFrom(payload); ok {
+		b.mu.Lock()
+		r.contextUsed = context.Used
+		r.contextSize = context.Size
+		b.mu.Unlock()
+	}
+
 	// Tool activity is the one thing normalized out of the stream, because it is
 	// what makes an agent observable.
 	if call, ok := b.toolCall(r, payload); ok {
@@ -988,6 +1007,61 @@ func configOptionsFrom(payload json.RawMessage) ([]acp.ConfigOption, bool) {
 		return nil, false
 	}
 	return update.ConfigOptions, true
+}
+
+// contextUsageFrom reads a usage_update.
+func contextUsageFrom(payload json.RawMessage) (acp.ContextUsage, bool) {
+	var update acp.ContextUsage
+	if err := json.Unmarshal(payload, &update); err != nil {
+		return acp.ContextUsage{}, false
+	}
+	if update.SessionUpdate != "usage_update" {
+		return acp.ContextUsage{}, false
+	}
+	return update, true
+}
+
+// publishUsage reports what a turn cost and how full the context is.
+//
+// A turn that reported nothing is not announced: a usage line with no numbers
+// would be a claim about the agent that is not true.
+func (b *Bridge) publishUsage(ctx context.Context, r *run, usage *acp.Usage) {
+	report := b.usageReport(r, usage)
+	if !report.Reported() {
+		return
+	}
+
+	payload, err := json.Marshal(report)
+	if err != nil {
+		return
+	}
+	_ = b.host.Call(ctx, v1.MethodEventPublish, v1.PublishEventParams{
+		AgentRunID: r.agentRunID,
+		SessionID:  r.hiveSessionID,
+		Type:       v1.EventUsage,
+		Protocol:   "acp",
+		Payload:    payload,
+	}, nil)
+}
+
+// usageReport combines what the turn cost with how full the context is.
+//
+// The two arrive separately — the turn's counts with the prompt response, the
+// context in a usage_update during the turn — so a report carries whichever the
+// agent gave.
+func (b *Bridge) usageReport(r *run, usage *acp.Usage) v1.Usage {
+	b.mu.Lock()
+	report := v1.Usage{ContextUsed: r.contextUsed, ContextSize: r.contextSize}
+	b.mu.Unlock()
+
+	if usage != nil {
+		report.InputTokens = usage.InputTokens
+		report.OutputTokens = usage.OutputTokens
+		report.ThoughtTokens = usage.ThoughtTokens
+		report.CachedReadTokens = usage.CachedReadTokens
+		report.TotalTokens = usage.TotalTokens
+	}
+	return report
 }
 
 // toolCall normalizes a tool call or one of its updates.

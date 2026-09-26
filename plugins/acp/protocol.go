@@ -237,6 +237,30 @@ type promptRequest struct {
 
 type promptResponse struct {
 	StopReason string `json:"stopReason"`
+
+	// Usage is what the turn cost. It is marked unstable in the protocol, so an
+	// agent may omit it, and one that does leaves the numbers unknown rather than
+	// zero.
+	Usage *Usage `json:"usage,omitempty"`
+}
+
+// Usage is a turn's token counts, as the agent reported them.
+//
+// The protocol marks this unstable, so every field is optional and an agent that
+// omits it is not broken: Hive reports what it is given.
+type Usage struct {
+	InputTokens      int `json:"inputTokens,omitempty"`
+	OutputTokens     int `json:"outputTokens,omitempty"`
+	ThoughtTokens    int `json:"thoughtTokens,omitempty"`
+	CachedReadTokens int `json:"cachedReadTokens,omitempty"`
+	TotalTokens      int `json:"totalTokens,omitempty"`
+}
+
+// ContextUsage is a usage_update notification: how full the context window is.
+type ContextUsage struct {
+	SessionUpdate string `json:"sessionUpdate"`
+	Used          int    `json:"used"`
+	Size          int    `json:"size"`
 }
 
 type cancelNotification struct {

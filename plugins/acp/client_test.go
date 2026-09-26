@@ -261,12 +261,12 @@ func TestPromptReturnsStopReason(t *testing.T) {
 		}
 	})
 
-	reason, err := client.Prompt(context.Background(), "s1", []Content{TextContent("fix the bug")})
+	result, err := client.Prompt(context.Background(), "s1", []Content{TextContent("fix the bug")})
 	if err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
-	if reason != "end_turn" {
-		t.Fatalf("stop reason = %q", reason)
+	if result.StopReason != "end_turn" {
+		t.Fatalf("stop reason = %q", result.StopReason)
 	}
 
 	var sent promptRequest
@@ -275,6 +275,50 @@ func TestPromptReturnsStopReason(t *testing.T) {
 	}
 	if sent.SessionID != "s1" || len(sent.Prompt) != 1 || sent.Prompt[0].Text != "fix the bug" {
 		t.Fatalf("prompt = %+v", sent)
+	}
+}
+
+// What a turn cost is carried through, because a client cannot show a number the
+// adapter drops.
+func TestPromptCarriesTheTurnsUsage(t *testing.T) {
+	client, agent := newPair(t, Options{})
+	agent.setHandler(func(msg rpcMessage) {
+		if msg.Method == methodSessionPrompt {
+			agent.reply(msg.ID, promptResponse{
+				StopReason: "end_turn",
+				Usage:      &Usage{InputTokens: 1200, OutputTokens: 34, TotalTokens: 1234},
+			})
+		}
+	})
+
+	result, err := client.Prompt(context.Background(), "s1", []Content{TextContent("hi")})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if result.Usage == nil {
+		t.Fatal("the usage was dropped")
+	}
+	if result.Usage.TotalTokens != 1234 || result.Usage.InputTokens != 1200 {
+		t.Fatalf("usage = %+v", result.Usage)
+	}
+}
+
+// An agent that reports no usage leaves the numbers unknown rather than zero,
+// because a zero would read as a turn that cost nothing.
+func TestPromptWithoutUsageReportsNone(t *testing.T) {
+	client, agent := newPair(t, Options{})
+	agent.setHandler(func(msg rpcMessage) {
+		if msg.Method == methodSessionPrompt {
+			agent.reply(msg.ID, promptResponse{StopReason: "end_turn"})
+		}
+	})
+
+	result, err := client.Prompt(context.Background(), "s1", []Content{TextContent("hi")})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if result.Usage != nil {
+		t.Fatalf("usage = %+v, want none", result.Usage)
 	}
 }
 

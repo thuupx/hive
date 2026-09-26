@@ -3,36 +3,66 @@ package slack
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
-// A long-lived transport must not remember every tool call it has ever shown.
-func TestToolMessagesAreBounded(t *testing.T) {
+// A long-lived transport must not remember every turn it has shown.
+func TestToolRunsAreBounded(t *testing.T) {
 	p := New(nil, nil, Options{})
 
-	for i := 0; i < maxToolMessages+10; i++ {
-		id := fmt.Sprintf("tc_%d", i)
+	for i := 0; i < maxToolRuns+10; i++ {
 		p.mu.Lock()
-		p.toolMessages[id] = "1.0"
-		p.toolOrder = append(p.toolOrder, id)
-		for len(p.toolOrder) > maxToolMessages {
-			oldest := p.toolOrder[0]
-			p.toolOrder = p.toolOrder[1:]
-			delete(p.toolMessages, oldest)
-		}
+		p.rememberToolRunLocked(fmt.Sprintf("run_%d", i))
 		p.mu.Unlock()
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if len(p.toolMessages) != maxToolMessages {
-		t.Fatalf("tool messages = %d, want %d", len(p.toolMessages), maxToolMessages)
+	if len(p.toolRuns) != maxToolRuns {
+		t.Fatalf("tool runs = %d, want %d", len(p.toolRuns), maxToolRuns)
 	}
-	if _, ok := p.toolMessages["tc_0"]; ok {
-		t.Error("the oldest tool message should have been forgotten")
+	if _, ok := p.toolRuns["run_0"]; ok {
+		t.Error("the oldest turn should have been forgotten")
+	}
+}
+
+// A turn's tool calls are one message, not one per call.
+func TestATurnsToolCallsAreOneMessage(t *testing.T) {
+	message := toolRunMessage([]v1.ToolCall{
+		{ToolCallID: "a", Title: "Read file", Status: v1.ToolCompleted},
+		{ToolCallID: "b", Title: "go test ./...", Status: v1.ToolInProgress},
+	})
+
+	for _, want := range []string{
+		"2 tool calls",
+		"Read file",
+		"go test ./...",
+		":white_check_mark:",
+		":hourglass_flowing_sand:",
+	} {
+		if !strings.Contains(message.Text, want) {
+			t.Errorf("the list does not mention %q: %q", want, message.Text)
+		}
+	}
+}
+
+// An update replaces a call in place, so the list does not reorder under the
+// reader while a turn is running.
+func TestAToolCallUpdateKeepsItsPosition(t *testing.T) {
+	run := &toolRun{index: map[string]int{}}
+	run.upsert(v1.ToolCall{ToolCallID: "a", Title: "first", Status: v1.ToolPending})
+	run.upsert(v1.ToolCall{ToolCallID: "b", Title: "second", Status: v1.ToolPending})
+	run.upsert(v1.ToolCall{ToolCallID: "a", Title: "first", Status: v1.ToolCompleted})
+
+	if len(run.calls) != 2 {
+		t.Fatalf("calls = %d, want 2", len(run.calls))
+	}
+	if run.calls[0].ToolCallID != "a" || run.calls[0].Status != v1.ToolCompleted {
+		t.Fatalf("calls[0] = %+v, want the first call updated in place", run.calls[0])
 	}
 }
 

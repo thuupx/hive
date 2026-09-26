@@ -571,7 +571,7 @@ func serveCoordinator(ctx context.Context, cfgPath string, cfg config.Config, lo
 		// A node with nothing to run would start, find no agent, and exit. Say
 		// what to fix instead of spawning a child that dies.
 		log.Warn("no node child started: no agents are configured",
-			"fix", "add an [agents.<name>] section to "+cfgPath, "see", "README.md")
+			"fix", "add an [agents.<name>] section to "+cfgPath, "see", "docs/reference.md")
 	default:
 		child, err := spawnNodeChild(cfgPath, coordinator.URL(), log)
 		if err != nil {

@@ -3,6 +3,8 @@ package slack
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	v1 "github.com/thupham/hive/protocol/hive/v1"
@@ -27,9 +29,15 @@ type Renderer struct {
 type Rendered struct {
 	Message Message
 
-	// ToolCallID identifies a tool call whose message is kept and updated rather
-	// than reposted. Empty means an ordinary message.
-	ToolCallID string
+	// ToolCall is the tool call this event carried, when it carried one. A turn's
+	// calls share one message, so the transport accumulates them rather than
+	// posting each.
+	ToolCall *v1.ToolCall
+
+	// ToolRunID is the turn the tool call belongs to, so the calls of one turn
+	// land in one message. It is empty for a call the core did not attribute to a
+	// run, and the call's own id is used instead.
+	ToolRunID string
 
 	// Detail is posted as a reply in the message's thread, so a long tool output
 	// does not bury the conversation.
@@ -71,6 +79,9 @@ func (r Renderer) RenderEvent(ev v1.Event) (Rendered, bool) {
 
 	case v1.EventTool:
 		return renderTool(ev)
+
+	case v1.EventUsage:
+		return renderUsage(ev)
 
 	default:
 		// agent.raw and anything unrecognized stay out of the conversation.
@@ -175,42 +186,134 @@ func RenderOutcome(outcome v1.TransportOutcome) Message {
 	}
 }
 
-// renderTool turns a normalized tool call into a card.
+// renderTool reads a normalized tool call out of an event.
 //
-// One tool call produces many updates. The card is the one message a client keeps
-// and replaces, and the agent's output goes in its thread.
+// The call is reported rather than rendered as a message: a turn's calls share
+// one message, and only the transport knows the whole turn, so it assembles the
+// list.
 func renderTool(ev v1.Event) (Rendered, bool) {
 	var call v1.ToolCall
 	if err := json.Unmarshal(ev.Payload, &call); err != nil || call.ToolCallID == "" {
 		return Rendered{}, false
 	}
 
-	icon := ":wrench:"
-	switch call.Status {
-	case v1.ToolCompleted:
-		icon = ":white_check_mark:"
-	case v1.ToolFailed:
-		icon = ":x:"
-	case v1.ToolInProgress:
-		icon = ":hourglass_flowing_sand:"
-	}
-
-	label := call.Title
-	if label == "" {
-		label = call.Kind
-	}
-	if label == "" {
-		label = "tool"
-	}
-
 	rendered := Rendered{
-		Message:    textMessage(fmt.Sprintf("%s %s", icon, label)),
-		ToolCallID: call.ToolCallID,
+		Message:   textMessage(toolLine(call)),
+		ToolCall:  &call,
+		ToolRunID: ev.RunID,
 	}
 	if call.Status == v1.ToolFailed && call.Summary != "" {
 		rendered.Detail = call.Summary
 	}
 	return rendered, true
+}
+
+// toolRunMessage renders a turn's tool calls as one list.
+//
+// One message per turn rather than one per call: a turn can make many calls and
+// each call produces many updates, so one message per call buries the
+// conversation. Slack collapses a long message itself, so the list can be whole.
+func toolRunMessage(calls []v1.ToolCall) Message {
+	var text strings.Builder
+	fmt.Fprintf(&text, ":toolbox: %s", toolCount(len(calls)))
+	for _, call := range calls {
+		text.WriteString("\n")
+		text.WriteString(toolLine(call))
+	}
+	return textMessage(text.String())
+}
+
+// toolCount is the heading for a turn's tool calls.
+func toolCount(n int) string {
+	if n == 1 {
+		return "1 tool call"
+	}
+	return fmt.Sprintf("%d tool calls", n)
+}
+
+// toolLine is one tool call as a line: its state, then what it did.
+func toolLine(call v1.ToolCall) string {
+	return fmt.Sprintf("%s %s", toolIcon(call.Status), toolLabel(call))
+}
+
+// toolIcon is the state a tool call is in.
+func toolIcon(status string) string {
+	switch status {
+	case v1.ToolCompleted:
+		return ":white_check_mark:"
+	case v1.ToolFailed:
+		return ":x:"
+	case v1.ToolInProgress:
+		return ":hourglass_flowing_sand:"
+	default:
+		return ":wrench:"
+	}
+}
+
+// toolLabel is what the agent calls the operation.
+func toolLabel(call v1.ToolCall) string {
+	for _, label := range []string{call.Title, call.Kind} {
+		if label != "" {
+			return label
+		}
+	}
+	return "tool"
+}
+
+// renderUsage shows what a turn cost and how full the context is.
+//
+// It is published after the answer it belongs to, so the numbers a reader sees
+// are the turn they just read. An agent that reported nothing renders nothing:
+// a line of zeroes would be a claim about the agent that is not true.
+func renderUsage(ev v1.Event) (Rendered, bool) {
+	var usage v1.Usage
+	if err := json.Unmarshal(ev.Payload, &usage); err != nil || !usage.Reported() {
+		return Rendered{}, false
+	}
+
+	parts := usageParts(usage)
+	if len(parts) == 0 {
+		return Rendered{}, false
+	}
+	return Rendered{Message: textMessage(":abacus: " + strings.Join(parts, " · "))}, true
+}
+
+// usageParts is what a usage report says, in words.
+//
+// It is shared with the status command, so a number is described the same way
+// wherever a reader meets it.
+func usageParts(usage v1.Usage) []string {
+	parts := make([]string, 0, 3)
+	if turn := usage.Turn(); turn > 0 {
+		parts = append(parts, fmt.Sprintf("*%s tokens*", commas(turn)))
+	}
+	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+		parts = append(parts, fmt.Sprintf("in %s · out %s",
+			commas(usage.InputTokens), commas(usage.OutputTokens)))
+	}
+	if usage.ContextSize > 0 {
+		parts = append(parts, fmt.Sprintf("context %d%% (%s/%s)",
+			usage.ContextUsed*100/usage.ContextSize,
+			commas(usage.ContextUsed), commas(usage.ContextSize)))
+	}
+	return parts
+}
+
+// commas groups a number in threes, because a token count is read at a glance.
+func commas(n int) string {
+	digits := strconv.Itoa(n)
+	if len(digits) <= 3 {
+		return digits
+	}
+
+	var out strings.Builder
+	for i, digit := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			out.WriteByte(',')
+		}
+		out.WriteRune(digit)
+	}
+	return out.String()
 }
 
 func permissionMessage(ev v1.Event) Message {
@@ -357,7 +460,36 @@ func statusMessage(status *v1.SessionStatusResult) Message {
 	for _, run := range status.Runs {
 		text += fmt.Sprintf("\n• `%s` %s on `%s` — %s", run.RunID, run.AgentID, run.NodeID, run.State)
 	}
+
+	// The statistics a reader asks a status for: which selectors the session
+	// runs with, what it has done, and what the last turn cost.
+	if settings := settingParts(status.Settings); len(settings) > 0 {
+		text += "\n\n*Settings*: " + strings.Join(settings, " · ")
+	}
+	if status.ToolCalls > 0 {
+		text += fmt.Sprintf("\n*Tool calls*: %d", status.ToolCalls)
+	}
+	if status.Usage != nil {
+		if parts := usageParts(*status.Usage); len(parts) > 0 {
+			text += "\n*Tokens*: " + strings.Join(parts, " · ")
+		}
+	}
 	return textMessage(text)
+}
+
+// settingParts renders the selectors a session recorded, in a stable order.
+func settingParts(settings map[string]string) []string {
+	ids := make([]string, 0, len(settings))
+	for id := range settings {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%s `%s`", id, settings[id]))
+	}
+	return parts
 }
 
 // traceMessage renders recent activity so a user can see what happened.

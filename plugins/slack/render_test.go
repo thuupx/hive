@@ -424,3 +424,98 @@ func TestAnEmptyConfigWithoutAnAgent(t *testing.T) {
 		t.Errorf("text = %q", message.Text)
 	}
 }
+
+// What a turn cost is one line, posted after the answer it belongs to.
+func TestRenderUsage(t *testing.T) {
+	payload, err := json.Marshal(v1.Usage{
+		InputTokens: 52854, OutputTokens: 677, TotalTokens: 53531,
+		ContextUsed: 53531, ContextSize: 200000,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	rendered, ok := Renderer{}.RenderEvent(v1.Event{Type: v1.EventUsage, Payload: payload})
+	if !ok {
+		t.Fatal("a reported usage should render")
+	}
+	for _, want := range []string{
+		"53,531 tokens", "in 52,854", "out 677", "context 26%", "53,531/200,000",
+	} {
+		if !strings.Contains(rendered.Message.Text, want) {
+			t.Errorf("the line does not mention %q: %q", want, rendered.Message.Text)
+		}
+	}
+}
+
+// An agent that reported nothing renders nothing: a line of zeroes would be a
+// claim about the agent that is not true.
+func TestRenderUsageWithoutNumbers(t *testing.T) {
+	payload, err := json.Marshal(v1.Usage{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	if _, ok := (Renderer{}).RenderEvent(v1.Event{Type: v1.EventUsage, Payload: payload}); ok {
+		t.Error("an empty usage should not render")
+	}
+}
+
+// A count is read at a glance, so it is grouped.
+func TestCommas(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{1000, "1,000"},
+		{53531, "53,531"},
+		{1234567, "1,234,567"},
+	} {
+		if got := commas(tc.n); got != tc.want {
+			t.Errorf("commas(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+}
+
+// A status read answers what a user asks about a conversation: which agent and
+// settings it runs with, what it has done, and what the last turn cost.
+func TestRenderStatusWithStatistics(t *testing.T) {
+	status := v1.SessionStatusResult{
+		SessionID: "sess_1",
+		State:     "running",
+		Runs:      []v1.RunSummary{{RunID: "run_1", AgentID: "hermes", NodeID: "n1", State: "completed"}},
+		Settings:  map[string]string{"model": "anthropic/claude-opus-4.6", "mode": "code"},
+		ToolCalls: 12,
+		Usage: &v1.Usage{
+			InputTokens: 52854, OutputTokens: 677, TotalTokens: 53531,
+			ContextUsed: 53531, ContextSize: 200000,
+		},
+	}
+
+	message := statusMessage(&status)
+	for _, want := range []string{
+		"hermes",
+		"model `anthropic/claude-opus-4.6`",
+		"mode `code`",
+		"12",
+		"53,531 tokens",
+	} {
+		if !strings.Contains(message.Text, want) {
+			t.Errorf("the status does not mention %q: %q", want, message.Text)
+		}
+	}
+}
+
+// A session with nothing recorded says so by omission rather than by a line of
+// zeroes.
+func TestRenderStatusWithoutStatistics(t *testing.T) {
+	message := statusMessage(&v1.SessionStatusResult{SessionID: "sess_1", State: "idle"})
+
+	for _, unwanted := range []string{"Settings", "Tool calls", "Tokens"} {
+		if strings.Contains(message.Text, unwanted) {
+			t.Errorf("the status claims %q with nothing recorded: %q", unwanted, message.Text)
+		}
+	}
+}

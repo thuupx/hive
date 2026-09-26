@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/thupham/hive/internal/client"
@@ -130,22 +131,60 @@ func RenderSession(w io.Writer, status *v1.SessionStatusResult) {
 	fmt.Fprintln(w, "\nRuns:")
 	if len(status.Runs) == 0 {
 		fmt.Fprintln(w, "  (none)")
+	} else {
+		for _, run := range status.Runs {
+			mark := "○"
+			switch run.State {
+			case "running", "starting":
+				mark = "●"
+			case "completed":
+				mark = "✓"
+			case "failed", "interrupted", "cancelled":
+				mark = "✗"
+			}
+			fmt.Fprintf(w, "  %s %s  agent %s  node %s  state %s  generation %d\n",
+				mark, run.RunID, run.AgentID, run.NodeID, run.State, run.ExecutionGeneration)
+			if run.RuntimeSessionID != "" {
+				fmt.Fprintf(w, "      runtime session %s\n", run.RuntimeSessionID)
+			}
+		}
+	}
+
+	renderStatistics(w, status)
+}
+
+// renderStatistics prints what a session runs with and what it has cost.
+//
+// A session with nothing recorded prints nothing here rather than a line of
+// zeroes: zero tool calls and no report are different facts.
+func renderStatistics(w io.Writer, status *v1.SessionStatusResult) {
+	if len(status.Settings) == 0 && status.ToolCalls == 0 && status.Usage == nil {
 		return
 	}
-	for _, run := range status.Runs {
-		mark := "○"
-		switch run.State {
-		case "running", "starting":
-			mark = "●"
-		case "completed":
-			mark = "✓"
-		case "failed", "interrupted", "cancelled":
-			mark = "✗"
+	fmt.Fprintln(w, "\nStatistics:")
+
+	if len(status.Settings) > 0 {
+		ids := make([]string, 0, len(status.Settings))
+		for id := range status.Settings {
+			ids = append(ids, id)
 		}
-		fmt.Fprintf(w, "  %s %s  agent %s  node %s  state %s  generation %d\n",
-			mark, run.RunID, run.AgentID, run.NodeID, run.State, run.ExecutionGeneration)
-		if run.RuntimeSessionID != "" {
-			fmt.Fprintf(w, "      runtime session %s\n", run.RuntimeSessionID)
+		sort.Strings(ids)
+		for _, id := range ids {
+			fmt.Fprintf(w, "  %s: %s\n", id, status.Settings[id])
+		}
+	}
+	if status.ToolCalls > 0 {
+		fmt.Fprintf(w, "  tool calls: %d\n", status.ToolCalls)
+	}
+	if status.Usage != nil {
+		if turn := status.Usage.Turn(); turn > 0 {
+			fmt.Fprintf(w, "  tokens: %d this turn (in %d, out %d)\n",
+				turn, status.Usage.InputTokens, status.Usage.OutputTokens)
+		}
+		if status.Usage.ContextSize > 0 {
+			fmt.Fprintf(w, "  context: %d%% (%d/%d)\n",
+				status.Usage.ContextUsed*100/status.Usage.ContextSize,
+				status.Usage.ContextUsed, status.Usage.ContextSize)
 		}
 	}
 }

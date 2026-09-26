@@ -28,6 +28,8 @@ const (
 	TypeHandoffCreated      = v1.EventHandoffCreated
 	TypeError               = v1.EventError
 	TypeAgentRaw            = v1.EventAgentRaw
+	TypeTool                = v1.EventTool
+	TypeUsage               = v1.EventUsage
 )
 
 // Event is a durable event on a session stream.

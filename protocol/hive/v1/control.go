@@ -182,6 +182,18 @@ type SessionStatusResult struct {
 	Workspace    string       `json:"workspace,omitempty"`
 	DefaultRunID string       `json:"defaultRunId,omitempty"`
 	Runs         []RunSummary `json:"runs"`
+
+	// Settings are the agent selectors the session recorded, so a reader can see
+	// which model and mode the conversation runs with. Empty means nothing was
+	// chosen, not that the agent offers nothing.
+	Settings map[string]string `json:"settings,omitempty"`
+
+	// Usage is what the last turn cost and how full the context is, as the agent
+	// reported it. Nil means no turn has reported one.
+	Usage *Usage `json:"usage,omitempty"`
+
+	// ToolCalls is how many distinct tool calls the session recorded.
+	ToolCalls int `json:"toolCalls,omitempty"`
 }
 
 // RunSummary is a compact view of an AgentRun.

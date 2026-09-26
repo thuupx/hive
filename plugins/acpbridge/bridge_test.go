@@ -677,6 +677,77 @@ func TestStartCreatesWhenThereIsNothingToRestore(t *testing.T) {
 	}
 }
 
+// What a turn cost is published after the answer it belongs to, so a client can
+// show the number without reading the agent's protocol.
+func TestPromptPublishesTheTurnsUsage(t *testing.T) {
+	_, c, launcher := newBridge(t)
+	ctx := context.Background()
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	launcher.agent.setHandler(func(method string, id json.RawMessage, params json.RawMessage) {
+		if method == "session/prompt" {
+			launcher.agent.reply(id, map[string]any{
+				"stopReason": "end_turn",
+				"usage": map[string]any{
+					"inputTokens": 1200, "outputTokens": 34, "totalTokens": 1234,
+				},
+			})
+			return
+		}
+		launcher.agent.baseHandler(method, id, params)
+	})
+
+	var out map[string]any
+	if err := c.peer.Call(ctx, v1.MethodExecutionPrompt, v1.ExecutionPromptParams{
+		AgentRunID: "run_1", Generation: 1, Text: "hi",
+	}, &out); err != nil {
+		t.Fatalf("execution.prompt: %v", err)
+	}
+
+	var usage *v1.Usage
+	for _, published := range c.publishedSnapshot() {
+		if published.Type != v1.EventUsage {
+			continue
+		}
+		var report v1.Usage
+		if err := json.Unmarshal(published.Payload, &report); err != nil {
+			t.Fatalf("usage payload: %v", err)
+		}
+		usage = &report
+	}
+	if usage == nil {
+		t.Fatal("the turn's usage was not published")
+	}
+	if usage.TotalTokens != 1234 || usage.InputTokens != 1200 || usage.OutputTokens != 34 {
+		t.Fatalf("usage = %+v", usage)
+	}
+}
+
+// An agent that reports nothing publishes nothing: a usage event of zeroes would
+// be a claim about the agent that is not true.
+func TestPromptWithoutUsagePublishesNone(t *testing.T) {
+	_, c, _ := newBridge(t)
+	ctx := context.Background()
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+	if err := c.peer.Call(ctx, v1.MethodExecutionPrompt, v1.ExecutionPromptParams{
+		AgentRunID: "run_1", Generation: 1, Text: "hi",
+	}, &map[string]any{}); err != nil {
+		t.Fatalf("execution.prompt: %v", err)
+	}
+
+	for _, published := range c.publishedSnapshot() {
+		if published.Type == v1.EventUsage {
+			t.Fatalf("published a usage event with no numbers: %s", published.Payload)
+		}
+	}
+}
+
 // An empty value is not a choice, so there is nothing to apply.
 //
 // A session recorded by an older build can carry one, and applying it would fail

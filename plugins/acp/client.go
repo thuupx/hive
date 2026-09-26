@@ -223,9 +223,18 @@ func (c *Client) LoadSession(ctx context.Context, req LoadSessionRequest) error 
 
 // Prompt sends a text prompt and waits for the turn to finish, returning the
 // agent's stop reason.
-func (c *Client) Prompt(ctx context.Context, sessionID string, content []Content) (string, error) {
+// PromptResult is the outcome of one turn.
+type PromptResult struct {
+	// StopReason is why the agent stopped.
+	StopReason string
+
+	// Usage is what the turn cost, when the agent reported it.
+	Usage *Usage
+}
+
+func (c *Client) Prompt(ctx context.Context, sessionID string, content []Content) (*PromptResult, error) {
 	if sessionID == "" {
-		return "", errors.New("acp: session id is required")
+		return nil, errors.New("acp: session id is required")
 	}
 
 	blocks := make([]contentBlock, 0, len(content))
@@ -242,16 +251,16 @@ func (c *Client) Prompt(ctx context.Context, sessionID string, content []Content
 		}
 	}
 	if len(blocks) == 0 {
-		return "", errors.New("acp: a prompt needs at least one content block")
+		return nil, errors.New("acp: a prompt needs at least one content block")
 	}
 
 	req := promptRequest{SessionID: sessionID, Prompt: blocks}
 
 	var resp promptResponse
 	if err := c.call(ctx, methodSessionPrompt, req, &resp); err != nil {
-		return "", err
+		return nil, err
 	}
-	return resp.StopReason, nil
+	return &PromptResult{StopReason: resp.StopReason, Usage: resp.Usage}, nil
 }
 
 // Cancel notifies the agent to cancel the current turn.

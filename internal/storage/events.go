@@ -102,6 +102,48 @@ func (s *Store) EventCount(ctx context.Context, sessionID string) (int64, error)
 	return n, nil
 }
 
+// LatestEventOfType returns the newest event of one type on a session stream, or
+// nil when the stream holds none.
+//
+// A status read wants the last thing of a kind — the newest usage report, say —
+// and reading the whole stream to find it would grow with the conversation.
+func (s *Store) LatestEventOfType(ctx context.Context, sessionID, eventType string) (*event.Event, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, sequence, session_id, run_id, origin_node, timestamp, type, version, protocol, method, payload
+		FROM events
+		WHERE session_id = ? AND type = ?
+		ORDER BY sequence DESC
+		LIMIT 1`, sessionID, eventType)
+	if err != nil {
+		return nil, fmt.Errorf("storage: read the latest %s event for %s: %w", eventType, sessionID, err)
+	}
+
+	found, err := scanEvents(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(found) == 0 {
+		return nil, nil
+	}
+	return found[0], nil
+}
+
+// ToolCallCount returns how many distinct tool calls a session recorded.
+//
+// A call is published once per state change, so counting events would count
+// updates; the agent's own tool-call id is what identifies a call.
+func (s *Store) ToolCallCount(ctx context.Context, sessionID string) (int64, error) {
+	var n int64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT json_extract(payload, '$.toolCallId'))
+		FROM events
+		WHERE session_id = ? AND type = ?`,
+		sessionID, event.TypeTool).Scan(&n); err != nil {
+		return 0, fmt.Errorf("storage: count tool calls for %s: %w", sessionID, err)
+	}
+	return n, nil
+}
+
 // HasEvent reports whether an event id is already durable.
 //
 // This is what makes buffered-event replay idempotent: a node asks about the

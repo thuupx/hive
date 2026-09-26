@@ -23,7 +23,55 @@ const (
 	// tool activity is what makes an agent observable: a user needs to see what it
 	// is doing, and a conversation that shows only the final answer is a black box.
 	EventTool = "tool"
+
+	// EventUsage is what a turn cost, published when the turn ends.
+	//
+	// It is normalized because a user asking what a conversation costs should not
+	// have to read an agent's protocol, and the numbers are the agent's own.
+	EventUsage = "usage"
 )
+
+// Usage is what one turn cost and how full the context is.
+//
+// Every field is optional: an agent reports what it reports, and a zero means it
+// did not report that number rather than that the number was zero.
+type Usage struct {
+	// InputTokens and OutputTokens are this turn's prompt and completion counts.
+	InputTokens  int `json:"inputTokens,omitempty"`
+	OutputTokens int `json:"outputTokens,omitempty"`
+
+	// ThoughtTokens is the part of the output spent reasoning, when the agent
+	// separates it.
+	ThoughtTokens int `json:"thoughtTokens,omitempty"`
+
+	// CachedReadTokens is the part of the input served from a prompt cache, which
+	// is what makes a long conversation affordable.
+	CachedReadTokens int `json:"cachedReadTokens,omitempty"`
+
+	// TotalTokens is the turn's total as the agent counted it. It is used when
+	// the agent reports one, because a provider's total is not always the sum of
+	// its parts.
+	TotalTokens int `json:"totalTokens,omitempty"`
+
+	// ContextUsed and ContextSize are how much of the context window the
+	// conversation now occupies.
+	ContextUsed int `json:"contextUsed,omitempty"`
+	ContextSize int `json:"contextSize,omitempty"`
+}
+
+// Reported reports whether the agent gave any number at all.
+func (u Usage) Reported() bool {
+	return u.InputTokens != 0 || u.OutputTokens != 0 || u.TotalTokens != 0 ||
+		u.ContextUsed != 0 || u.ContextSize != 0
+}
+
+// Turn is the turn's total: the agent's own, or the sum of its parts.
+func (u Usage) Turn() int {
+	if u.TotalTokens != 0 {
+		return u.TotalTokens
+	}
+	return u.InputTokens + u.OutputTokens
+}
 
 // ToolCall is the normalized form of an agent tool call.
 //
