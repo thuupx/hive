@@ -141,3 +141,32 @@ func TestDiscoverWithNothingOnPath(t *testing.T) {
 		}
 	}
 }
+
+// Hive's own adapter is not an agent.
+//
+// Found in a live installation: "hive-plugin-acp" ends in the adapter suffix, and
+// a release install puts it on the PATH — so every fresh `hive init` offered Hive
+// itself as an agent called "hive-plugin", and the daemon spawned it.
+func TestDiscoverIgnoresHivesOwnAdapter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the PATH scan is a unix convention")
+	}
+
+	dir := t.TempDir()
+	makeExecutable(t, dir, "hive-plugin-acp")
+	makeExecutable(t, dir, "myagent-acp")
+	t.Setenv("PATH", dir)
+
+	found := DiscoverAgents()
+
+	var sawReal bool
+	for _, agent := range found {
+		if agent.Name == ownAdapterBase {
+			t.Fatalf("discovered %q, which is Hive's own adapter", agent.Name)
+		}
+		sawReal = sawReal || agent.Name == "myagent"
+	}
+	if !sawReal {
+		t.Fatal("a real adapter beside Hive's own should still be discovered")
+	}
+}

@@ -37,6 +37,14 @@ func (a DiscoveredAgent) NeedsVerification() bool { return a.Source == SourceCon
 // build has never heard of without guessing any invocation.
 const AdapterSuffix = "-acp"
 
+// ownAdapterBase is the base name of Hive's own ACP adapter.
+//
+// "hive-plugin-acp" ends in the adapter suffix, so a PATH scan reads it as an
+// agent called "hive-plugin" — and a release install puts that binary on the
+// PATH, which means every fresh installation would be offered Hive itself as an
+// agent. An agent that launches Hive's own adapter is not an agent.
+const ownAdapterBase = "hive-plugin"
+
 // ACPSubcommand is the convention for a tool that speaks ACP as a mode.
 const ACPSubcommand = "acp"
 
@@ -79,7 +87,7 @@ func DiscoverAgents() []DiscoveredAgent {
 
 			name := entry.Name()
 			base, ok := strings.CutSuffix(name, AdapterSuffix)
-			if !ok || base == "" {
+			if !ok || base == "" || base == ownAdapterBase {
 				continue
 			}
 			if !isExecutable(dir, name) {
