@@ -170,7 +170,7 @@ level=INFO msg="control api listening" socket=/Users/you/.hive/data/hive.sock
 level=INFO msg="coordinator ready" url=... agents=1 control=...
 level=INFO msg="node child started" pid=2685
 level=INFO msg="plugin ready" plugin=claude type=agent instance=claude#1
-level=INFO msg="node connected" node=your-host version=0.1.0-dev generation=1
+level=INFO msg="node connected" node=your-host version=0.0.0-dev generation=1
 ```
 
 ### 4. Use it from another terminal

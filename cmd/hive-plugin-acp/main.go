@@ -29,7 +29,7 @@ func main() {
 func run() error {
 	id := flag.String("id", "acp", "stable plugin identity")
 	agentCommand := flag.String("agent-command", "", "agent invocation, space separated, for example \"devin acp\"")
-	version := flag.String("version", "0.1.0-dev", "plugin version")
+	version := flag.String("version", "0.0.0-dev", "plugin version")
 	authMethod := flag.String("auth-method", "",
 		"which of the agent's advertised ACP auth methods to use; empty uses the first")
 	apiKeyEnv := flag.String("api-key-env", "",

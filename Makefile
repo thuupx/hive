@@ -8,7 +8,7 @@ EXAMPLES := $(BINDIR)/example-client $(BINDIR)/plugin-echo
 
 # VERSION is stamped into the binary as `hive version` reports it. The release
 # workflow passes the tag without its leading v; a local run gets the default.
-VERSION ?= 0.1.0-dev
+VERSION ?= 0.0.0-dev
 
 .PHONY: all build examples test test-race vet fmt tidy run clean ci release dist
 

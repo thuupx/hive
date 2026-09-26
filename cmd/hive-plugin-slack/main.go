@@ -46,7 +46,7 @@ func main() {
 
 func run() error {
 	id := flag.String("id", slack.Name, "stable plugin identity")
-	version := flag.String("version", "0.1.0-dev", "plugin version")
+	version := flag.String("version", "0.0.0-dev", "plugin version")
 	options := optionFlags{}
 	flag.Var(&options, "option", "transport option as key=value; repeatable")
 	flag.Parse()

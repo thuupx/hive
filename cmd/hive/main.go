@@ -43,7 +43,12 @@ import (
 // It is a variable, not a constant, so a release build can set it:
 // `-ldflags "-X main.Version=1.2.3"`. A build from a checkout keeps the
 // development default.
-var Version = "0.1.0-dev"
+//
+// That default is deliberately not a number. A version like "0.1.0-dev" reads as
+// a claim about which release this is near, and it goes stale the moment that
+// release ships — this one said 0.1.0 for the whole of 1.0.0. "0.0.0-dev" says
+// the only thing that is true of a checkout: it is not a release.
+var Version = "0.0.0-dev"
 
 // ChildStopTimeout bounds how long the coordinator waits for its node child.
 const ChildStopTimeout = 5 * time.Second
