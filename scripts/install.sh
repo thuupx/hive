@@ -6,7 +6,7 @@
 # release's checksums.txt, and installs hive together with its plugin binaries
 # side by side — which is where the daemon looks for them.
 #
-#   curl -fsSL https://github.com/thupham/hive/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/thuupx/hive/releases/latest/download/install.sh | sh
 #   ./install.sh --version 0.1.0 --bin-dir "$HOME/.local/bin"
 #
 # The URL above is the copy published with the release, not the one on a branch:
@@ -19,7 +19,7 @@
 #
 set -eu
 
-REPO="thupham/hive"
+REPO="thuupx/hive"
 VERSION="${HIVE_VERSION:-}"
 BIN_DIR="${HIVE_BIN_DIR:-${HOME:-}/.local/bin}"
 

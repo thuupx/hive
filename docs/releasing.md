@@ -25,7 +25,7 @@ from its own directory. A tarball with `hive` alone installs a gateway with no
 agents.
 
 The documented install command points at
-`https://github.com/thupham/hive/releases/latest/download/install.sh`, not at the
+`https://github.com/thuupx/hive/releases/latest/download/install.sh`, not at the
 copy on a branch: a branch is mutable, so a `curl | sh` from one would not be the
 script any release shipped.
 
