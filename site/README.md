@@ -45,7 +45,7 @@ src/
   site.ts              links and the install command, in one place
   styles/global.css    design tokens and base styles
   layouts/Base.astro   the document: meta, OG tags, fonts, skip link
-  components/          one file per section, plus Icon and CommandBar
+  components/          one file per section, plus Icon, CommandBar, Badge
   pages/index.astro    the page, in section order
 public/                favicon, OG image (and its SVG source)
 design-system/         the design system this page was built from
@@ -53,6 +53,32 @@ design-system/         the design system this page was built from
 
 `src/site.ts` exists so the repository URL and the install command cannot
 disagree between the hero, the quick start, and the footer.
+
+`Badge.astro` marks each capability as **In v1**, **Designed**, or **Planned**.
+Keep that honest: anything not shipped gets a badge, and the comparison table
+only compares shipped behaviour. `design-system/MASTER.md` has the rules.
+
+## Editing prose with inline elements
+
+Astro trims whitespace adjacent to a tag across a line break, the way JSX does.
+This:
+
+```astro
+The <a href="…">design document</a>
+is the source of truth.
+```
+
+renders as `Thedesign documentis the source of truth`. Write `{" "}` explicitly
+around an inline element that sits mid-sentence:
+
+```astro
+The{" "}
+<a href="…">design document</a>{" "}
+is the source of truth.
+```
+
+This has caused two bugs on this page already. When adding prose with an inline
+link, check the rendered text, not just the source.
 
 ## Design
 

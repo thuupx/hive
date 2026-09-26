@@ -103,6 +103,29 @@ translate on card hover.
 4. **Two border tiers** were added (`--color-border`, `--color-hairline`)
    because one value could not serve both a card seam and a terminal frame.
 
+## Capability status
+
+The page describes capabilities that are shipped and capabilities that are still
+design, and it must never blur the two. Every such claim carries a badge:
+
+| Badge | Meaning | Style |
+|---|---|---|
+| **In v1** | implemented and usable today | accent border, accent text, accent/10 fill |
+| **Designed** | specified in the design document, not implemented | border, muted fill, muted text |
+| **Planned** | intended, less defined than designed | border, transparent, muted text |
+
+Rules:
+
+- A feature claim with no badge must be shipped. If it is not shipped, it gets a
+  badge.
+- The comparison table may compare a shipped capability only. A designed row is
+  marked `designed *` and explained in a footnote.
+- The roadmap paragraph names what is deferred and links the design document as
+  the source of truth.
+
+This exists because the failure mode of a project page is overclaiming: a reader
+who tries a "Designed" feature and finds it missing stops trusting the rest.
+
 ## Anti-patterns to avoid here
 
 - Light mode as the default.

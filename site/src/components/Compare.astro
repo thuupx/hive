@@ -21,6 +21,10 @@ const rows = [
     values: ["the one host", "the one host", "the vendor", "coordinator + node"],
   },
   {
+    label: "Move a task between machines",
+    values: ["—", "—", "—", "designed *"],
+  },
+  {
     label: "Extend by",
     values: [
       "forking the bot",
@@ -110,5 +114,11 @@ const hive = columns.length - 1;
     want one agent in your chat app by lunchtime, a bridge is the right tool. If
     you want a conversation you can hand between agents and still read in a
     year, the structure is the point.
+  </p>
+
+  <p class="mt-4 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+    <span class="text-foreground">*</span> Designed and not yet shipped. v1 runs
+    the node on the same machine as the coordinator; enrollment is what makes a
+    second machine a node.
   </p>
 </Section>

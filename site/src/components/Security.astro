@@ -1,0 +1,66 @@
+---
+import Badge from "./Badge.astro";
+import Icon from "./Icon.astro";
+import Section from "./Section.astro";
+
+const points = [
+  {
+    icon: "shield",
+    title: "Permissions fail closed",
+    status: "shipped",
+    body: "When an agent asks to run a tool, Hive relays the request and waits. Nothing is approved on your behalf, and a request that cannot be relayed fails closed rather than defaulting to yes.",
+  },
+  {
+    icon: "lock",
+    title: "Deny by default",
+    status: "shipped",
+    body: "A principal must be named before it can act, so an unknown user is refused. A session a principal may not reach is reported as not found rather than unauthorized, so the error leaks nothing.",
+  },
+  {
+    icon: "gateway",
+    title: "Nodes connect outbound",
+    status: "shipped",
+    body: "A node dials the coordinator, so there is no inbound port to open on the machine running your agents. The link is TLS, and a reconnecting node is issued a new connection generation that invalidates the old one.",
+  },
+  {
+    icon: "plug",
+    title: "A node is never trusted for being found",
+    status: "designed",
+    body: "Node identity is a persistent keypair, and discovery is not identity: a discovered node waits for an administrator to approve it before the coordinator accepts a single node operation. Revocation and key rotation live on the same path.",
+  },
+] as const;
+---
+
+<Section
+  id="security"
+  eyebrow="Security"
+  title="Secure by default"
+  lead="Hive secures the boundaries between transports, clients, and nodes. The agent still owns what a tool is allowed to do — Hive relays the question and never answers it for you."
+>
+  <ul class="grid gap-6 sm:grid-cols-2">
+    {
+      points.map((point) => (
+        <li class="card flex gap-4 p-6">
+          <span class="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-accent">
+            <Icon name={point.icon} size={20} />
+          </span>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <h3 class="text-base font-semibold">{point.title}</h3>
+              <Badge status={point.status} />
+            </div>
+            <p class="mt-2 text-sm leading-relaxed text-muted-foreground">
+              {point.body}
+            </p>
+          </div>
+        </li>
+      ))
+    }
+  </ul>
+
+  <p class="mt-8 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+    For a remote node, prefer the LAN or a private overlay. Hive is designed to
+    require an authenticated endpoint, not a particular provider — so the network
+    you already trust is the one to use.
+  </p>
+</Section>

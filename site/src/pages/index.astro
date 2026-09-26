@@ -5,14 +5,16 @@ import Hero from "../components/Hero.astro";
 import Problem from "../components/Problem.astro";
 import Idea from "../components/Idea.astro";
 import Compare from "../components/Compare.astro";
+import Portable from "../components/Portable.astro";
+import Security from "../components/Security.astro";
 import Features from "../components/Features.astro";
 import QuickStart from "../components/QuickStart.astro";
 import Footer from "../components/Footer.astro";
 import { REPO } from "../site";
 
-const title = "Hive — a self-hosted gateway between any messaging app and your coding agents";
+const title = "Hive — the conversation lives in Hive, not in the agent";
 const description =
-  "Hive connects any messaging app to any coding agent that speaks ACP, and keeps the conversation separate from the agent answering it. Hand a session to another agent without starting over. Self-hosted, written in Go.";
+  "A self-hosted gateway between any messaging app and any coding agent that speaks ACP. The conversation lives in Hive, not in the agent, so you can hand a session to another agent without starting over. Written in Go.";
 
 // Structured data, so a search result can say what this is.
 const jsonLd = {
@@ -34,8 +36,10 @@ const jsonLd = {
     <Hero />
     <Problem />
     <Idea />
+    <Portable />
     <Compare />
     <Features />
+    <Security />
     <QuickStart />
   </main>
   <Footer />

@@ -4,19 +4,19 @@ import Section from "./Section.astro";
 
 const features = [
   {
-    icon: "handoff",
-    title: "Handoff",
-    body: "Give a session to a different agent mid-conversation. The context comes with it, the chat thread does not change, and each runtime keeps its own session id.",
-  },
-  {
     icon: "database",
     title: "Durable sessions",
     body: "A session is an event log on disk, not a variable in a bot. Restart the daemon and the history is still there, readable from any client.",
   },
   {
+    icon: "refresh",
+    title: "Resume where you left off",
+    body: "A run restarts the agent's own session where the agent supports it, and falls back to a fresh runtime session seeded from Hive's context where it does not.",
+  },
+  {
     icon: "node",
     title: "Execution where the code lives",
-    body: "Coordinator and node are separate roles speaking a real protocol, even on one machine. Multi-machine is a deployment choice, not a rewrite.",
+    body: "Coordinator and node are separate roles speaking a real protocol, even on one machine. The execution surface names the agent, so a node running several never dispatches to the wrong one.",
   },
   {
     icon: "plug",
@@ -24,9 +24,9 @@ const features = [
     body: "No per-vendor plugin. There is one ACP adapter, and an agent is a name and a command. A new agent works because it speaks ACP.",
   },
   {
-    icon: "shield",
-    title: "Permissions fail closed",
-    body: "When an agent asks to run a tool, Hive relays the request and waits. Nothing is approved on your behalf, and the request expires rather than defaulting to yes.",
+    icon: "repeat",
+    title: "Retry is not do it twice",
+    body: "Every mutating command carries an idempotency key, so trying again resolves to the operation that already ran. A redelivered event consumes no sequence and is not stored twice.",
   },
   {
     icon: "session",

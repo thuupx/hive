@@ -1,0 +1,63 @@
+---
+import Badge from "./Badge.astro";
+import Icon from "./Icon.astro";
+import Section from "./Section.astro";
+import { REPO } from "../site";
+
+const axes = [
+  {
+    icon: "handoff",
+    title: "Across agents",
+    status: "shipped",
+    body: "Hand a conversation to another agent mid-task. Switching from one agent to another no longer means starting over or reconstructing the context by hand. The runtime sessions stay separate — Hive never converts one agent's session into another's.",
+  },
+  {
+    icon: "node",
+    title: "Across machines",
+    status: "designed",
+    body: "The conversation is not tied to the machine running the agent either. With more than one Hive node, a task moves from a laptop to a desktop or a server without losing the conversation. Runs are already addressed by node and a workspace already names one; enrollment is what remains.",
+  },
+  {
+    icon: "gateway",
+    title: "Across networks",
+    status: "planned",
+    body: "The same model is meant to work past the LAN. A remote node connects outbound over a private overlay — Tailscale, WireGuard, or a tunnel — so the core sees an authenticated endpoint rather than depending on a provider.",
+  },
+] as const;
+---
+
+<Section
+  id="portable"
+  eyebrow="Portability"
+  title="The conversation is portable"
+  lead="The conversation lives in Hive, not in the agent. Once that boundary exists, an agent and a machine become execution targets rather than owners — and the conversation can move between them."
+>
+  <ul class="grid gap-6 md:grid-cols-3">
+    {
+      axes.map((axis) => (
+        <li class="card card-hover flex flex-col p-6">
+          <div class="flex items-center justify-between gap-3">
+            <span class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-accent">
+              <Icon name={axis.icon} size={20} />
+            </span>
+            <Badge status={axis.status} />
+          </div>
+          <h3 class="mt-4 text-lg font-semibold">{axis.title}</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted-foreground">{axis.body}</p>
+        </li>
+      ))
+    }
+  </ul>
+
+  <p class="mt-8 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+    <span class="font-medium text-foreground">Roadmap.</span> Node enrollment and
+    discovery (mDNS <span class="code-pill">_hive._tcp.local</span>), remote
+    nodes, and coordinator failover are designed and not yet shipped.{" "}
+    <a
+      href={`${REPO}/blob/main/docs/hive-solution-design.md`}
+      class="text-accent underline decoration-accent/40 underline-offset-4 transition-colors duration-200 hover:decoration-accent"
+      >The design document</a
+    >{" "}
+    is the source of truth for what is promised.
+  </p>
+</Section>

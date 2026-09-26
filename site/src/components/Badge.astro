@@ -1,0 +1,33 @@
+---
+/**
+ * The status of a capability. The page states plainly which of these ship today
+ * and which are still design, because a landing page that blurs the two is a
+ * landing page that lies.
+ */
+interface Props {
+  status: "shipped" | "designed" | "planned";
+}
+
+const { status } = Astro.props;
+
+const labels = {
+  shipped: "In v1",
+  designed: "Designed",
+  planned: "Planned",
+} as const;
+
+const styles = {
+  shipped: "border-accent/40 bg-accent/10 text-accent",
+  designed: "border-border bg-muted text-muted-foreground",
+  planned: "border-border bg-transparent text-muted-foreground",
+} as const;
+---
+
+<span
+  class:list={[
+    "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-[0.6875rem] font-medium uppercase tracking-wider",
+    styles[status],
+  ]}
+>
+  {labels[status]}
+</span>
