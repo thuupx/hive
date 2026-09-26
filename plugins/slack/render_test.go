@@ -515,6 +515,33 @@ func TestAnEmptyConfigWithoutAnAgent(t *testing.T) {
 	}
 }
 
+// A prompt that had to wait says so, rather than looking like it is already
+// working.
+func TestRenderQueuedPrompt(t *testing.T) {
+	result, err := json.Marshal(v1.SessionPromptResult{CommandID: "cmd_1", Queued: true})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	message := RenderOutcome(v1.TransportOutcome{Method: v1.MethodSessionPrompt, Result: result})
+	if !strings.Contains(message.Text, "Queued") {
+		t.Fatalf("text = %q, want the prompt to say it is queued", message.Text)
+	}
+}
+
+// A prompt that ran immediately is unchanged.
+func TestRenderPromptThatRan(t *testing.T) {
+	result, err := json.Marshal(v1.SessionPromptResult{CommandID: "cmd_1", RunID: "run_1"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	message := RenderOutcome(v1.TransportOutcome{Method: v1.MethodSessionPrompt, Result: result})
+	if !strings.Contains(message.Text, "Working on it") {
+		t.Fatalf("text = %q", message.Text)
+	}
+}
+
 // What a turn cost is not a message of its own.
 //
 // One line per turn is noise in a busy conversation, and the status command

@@ -79,6 +79,10 @@ func runTestAgent() {
 		responded = map[string]bool{}
 	)
 
+	// released is signalled when a permission is answered. Holding a turn open on
+	// its permission request is what lets a test prompt again while it runs.
+	released := make(chan struct{}, 1)
+
 	host.Handle(v1.MethodExecutionStart, func(ctx context.Context, params json.RawMessage) (any, error) {
 		var req v1.ExecutionStartParams
 		if err := json.Unmarshal(params, &req); err != nil {
@@ -145,6 +149,15 @@ func runTestAgent() {
 				Payload: json.RawMessage(
 					`{"toolCall":{"title":"Run rm -rf"},"options":[{"optionId":"allow","name":"Allow"}]}`),
 			}, nil)
+
+			// A turn that asked and moved on is not a turn in flight. Holding it
+			// here is what lets a test prompt again while it runs.
+			if os.Getenv("HIVE_TEST_AGENT_BLOCK_ON_PERMISSION") != "" {
+				select {
+				case <-released:
+				case <-time.After(10 * time.Second):
+				}
+			}
 		}
 
 		// The run is no longer held once its turn ends, so a run left in a working
@@ -211,6 +224,11 @@ func runTestAgent() {
 		mu.Lock()
 		responded[req.AgentRequestID] = req.Approved
 		mu.Unlock()
+
+		select {
+		case released <- struct{}{}:
+		default:
+		}
 		return map[string]any{"ok": true}, nil
 	})
 

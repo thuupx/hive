@@ -127,6 +127,12 @@ func RenderOutcome(outcome v1.TransportOutcome) Message {
 		return textMessage("New chat created.")
 
 	case v1.MethodSessionPrompt:
+		var accepted v1.SessionPromptResult
+		if err := json.Unmarshal(outcome.Result, &accepted); err == nil && accepted.Queued {
+			// The turn in front of it is still running, so this one waits. Saying
+			// so is what stops a user sending it again.
+			return textMessage(":hourglass_flowing_sand: Queued — it runs when the current turn finishes.")
+		}
 		return textMessage("Working on it.")
 
 	case v1.MethodSessionCancel:

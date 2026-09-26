@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/thupham/hive/internal/agent"
@@ -47,6 +48,13 @@ type Service struct {
 	policy       Policy
 	agents       []string
 	defaultAgent string
+
+	// turnsMu guards turns.
+	turnsMu sync.Mutex
+
+	// turns holds, per session, the turn that is running and the prompts waiting
+	// behind it. A session has one turn at a time; see turns.go.
+	turns map[string]*turnQueue
 }
 
 // New returns a Control API service.
@@ -70,6 +78,7 @@ func New(opts Options) (*Service, error) {
 		policy:       NewPolicy(opts.AllowedUsers, opts.Plugins),
 		agents:       opts.Agents,
 		defaultAgent: opts.DefaultAgent,
+		turns:        make(map[string]*turnQueue),
 	}, nil
 }
 
@@ -183,7 +192,11 @@ func (s *Service) CreateSession(ctx context.Context, principal Principal, params
 	return result, nil
 }
 
-// Prompt sends a prompt to an AgentRun, creating one when routing requires it.
+// Prompt sends a prompt to a session, creating an AgentRun when routing requires
+// it.
+//
+// A session has one turn at a time. A prompt that arrives while one is running is
+// queued behind it and runs when that turn ends; the result says so.
 func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.SessionPromptParams) (*v1.SessionPromptResult, error) {
 	if err := s.policy.Authorize(principal, v1.MethodSessionPrompt); err != nil {
 		return nil, err
@@ -215,6 +228,26 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 		return nil, domainError(err)
 	}
 
+	if running, position := s.claimTurn(sess.ID, principal, params); !running {
+		s.log.Info("a turn was queued behind the one running",
+			"session", sess.ID, "command", params.CommandID, "position", position)
+		return &v1.SessionPromptResult{CommandID: params.CommandID, Queued: true}, nil
+	}
+
+	result, err := s.startTurn(ctx, sess, principal, params)
+	if err != nil {
+		// The slot was claimed and no turn was started, so the prompt waiting
+		// behind it can have the slot.
+		s.drainTurn(sess.ID)
+		return nil, err
+	}
+	return result, nil
+}
+
+// startTurn accepts a prompt and runs it as the session's current turn.
+//
+// The caller holds the session's turn slot.
+func (s *Service) startTurn(ctx context.Context, sess *session.Session, principal Principal, params v1.SessionPromptParams) (*v1.SessionPromptResult, error) {
 	cmd := command.New(params.CommandID, string(principal), v1.MethodSessionPrompt)
 	cmd.SourceID = params.SourceID
 	cmd.Target = params.SessionID
@@ -312,7 +345,7 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 	// and holding the request open would tie the operation to a connection that
 	// may go away. The caller follows the operation through command.get, which is
 	// what the durable command record is for.
-	go s.runTurn(stored.ID, runID, params)
+	go s.runTurn(sess.ID, stored.ID, runID, params)
 
 	return result, nil
 }
@@ -323,22 +356,21 @@ func (s *Service) Prompt(ctx context.Context, principal Principal, params v1.Ses
 // for a while. It exists so a wedged agent cannot pin a run forever.
 const TurnTimeout = 30 * time.Minute
 
-// runTurn dispatches a prompt and records the outcome.
-func (s *Service) runTurn(commandID, runID string, params v1.SessionPromptParams) {
+// runTurn dispatches a prompt and records the outcome, then runs whatever was
+// queued behind it.
+func (s *Service) runTurn(sessionID, commandID, runID string, params v1.SessionPromptParams) {
 	ctx, cancel := context.WithTimeout(context.Background(), TurnTimeout)
 	defer cancel()
 
 	if err := s.dispatchPrompt(ctx, runID, params); err != nil {
 		s.log.Warn("turn could not be dispatched", "run", runID, "error", err)
 		_ = s.failCommand(ctx, commandID, err)
-		return
-	}
-
-	// The turn ended, so the command is complete. The agent's answer travels as
-	// an event, which is what a client reads.
-	if err := s.completeCommand(ctx, commandID, map[string]any{"runId": runID}); err != nil {
+	} else if err := s.completeCommand(ctx, commandID, map[string]any{"runId": runID}); err != nil {
 		s.log.Warn("command result could not be recorded", "command", commandID, "error", err)
 	}
+
+	// The session's turn is over, so the next prompt taken while it ran can go.
+	s.drainTurn(sessionID)
 }
 
 // Cancel cancels the current turn of an AgentRun.

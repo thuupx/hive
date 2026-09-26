@@ -233,6 +233,12 @@ hive session handoff <session-id> <agent-id> [-summary <text>]
 hive session events <session-id> [-from <sequence>] [-limit <n>] [-all] [-type <t>] [-json]
 ```
 
+A session runs **one turn at a time**. A prompt that arrives while a turn is
+running is queued behind it and runs when that turn ends, and the result says
+`queued` rather than naming a run. The alternative — racing two prompts into one
+agent session — is answered by the agent twice at once, and the two answers
+interleave into one.
+
 ### Permissions
 
 An agent may ask before running a tool. The request reaches Hive and **fails

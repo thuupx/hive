@@ -126,6 +126,10 @@ type SessionPromptResult struct {
 
 	// CreatedRun reports that routing had to create a new AgentRun.
 	CreatedRun bool `json:"createdRun"`
+
+	// Queued reports that a turn was already running for this session, so the
+	// prompt waits behind it. RunID is empty until it runs.
+	Queued bool `json:"queued,omitempty"`
 }
 
 // SessionHandoffParams transfers a session to another agent.
