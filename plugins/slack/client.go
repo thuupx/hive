@@ -32,7 +32,15 @@ type Client interface {
 	// UpdateMessage replaces the content of a message already posted.
 	//
 	// It is what keeps a tool call to one message instead of one per update.
+	//
+	// An update is capped far lower than a post — Slack refuses a text over
+	// 4,000 characters here and truncates a post at 40,000 — so anything that may
+	// be long is posted rather than edited. See MaxUpdateChars.
 	UpdateMessage(ctx context.Context, req UpdateMessageRequest) error
+
+	// DeleteMessage removes a message. It is how the typing indicator goes away
+	// once the turn it stood for has an answer.
+	DeleteMessage(ctx context.Context, channel, timestamp string) error
 
 	// AddReaction adds a reaction to a message. It is best-effort: a failure must
 	// not fail the underlying Hive operation.
@@ -296,6 +304,14 @@ func (c *SocketClient) PostMessage(ctx context.Context, req PostMessageRequest) 
 func (c *SocketClient) UpdateMessage(ctx context.Context, req UpdateMessageRequest) error {
 	if _, _, _, err := c.api.UpdateMessageContext(ctx, req.Channel, req.Timestamp, messageOptions(req.Message)...); err != nil {
 		return fmt.Errorf("slack: chat.update: %w", err)
+	}
+	return nil
+}
+
+// DeleteMessage removes a message through the Web API.
+func (c *SocketClient) DeleteMessage(ctx context.Context, channel, timestamp string) error {
+	if _, _, err := c.api.DeleteMessageContext(ctx, channel, timestamp); err != nil {
+		return fmt.Errorf("slack: chat.delete: %w", err)
 	}
 	return nil
 }

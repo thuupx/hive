@@ -59,13 +59,44 @@ func (s *Service) RespondToPermission(ctx context.Context, principal Principal, 
 
 	// Only the first valid terminal transition wins, so a repeated response
 	// observes the resolved state instead of authorizing twice.
-	state := permission.StateDenied
-	if params.Approved {
-		state = permission.StateApproved
-	}
-
-	_, _, err = s.store.ResolvePermissionRequest(ctx, request.ID, state)
+	_, _, err = s.store.ResolvePermissionRequest(ctx, request.ID, decisionState(request, params))
 	return err
+}
+
+// decisionState is how a decision is recorded.
+//
+// An agent's option ids and kinds are its own: "allow_once" is an approval even
+// though it is not called "allow", and recording a denial for it would make the
+// audit trail say the opposite of what the user chose. So when the response names
+// one of the agent's options, the state follows that option's kind, and the
+// transport's approval flag is used only when there is no option to read.
+func decisionState(request *permission.Request, params v1.PermissionRespondParams) permission.State {
+	if params.Approved {
+		return permission.StateApproved
+	}
+	if params.OptionID != "" && strings.HasPrefix(optionKind(request.Payload, params.OptionID), "allow") {
+		return permission.StateApproved
+	}
+	return permission.StateDenied
+}
+
+// optionKind is the kind of the option an agent offered, found by its id.
+func optionKind(payload json.RawMessage, optionID string) string {
+	var request struct {
+		Options []struct {
+			OptionID string `json:"optionId"`
+			Kind     string `json:"kind"`
+		} `json:"options"`
+	}
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return ""
+	}
+	for _, option := range request.Options {
+		if option.OptionID == optionID {
+			return option.Kind
+		}
+	}
+	return ""
 }
 
 // findOpenPermission locates a pending request by the agent's own request id.

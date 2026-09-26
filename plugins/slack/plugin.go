@@ -365,13 +365,11 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 	if err != nil {
 		p.log.Warn("inbound delivery failed", "error", err)
 
-		// The indicator is replaced rather than left behind: a clock that keeps
+		// The indicator goes rather than being left behind: a clock that keeps
 		// ticking says the turn is still working, and it is not. Saying what
 		// happened is the honest end to it.
-		failure := textMessage(fmt.Sprintf(":warning: %s", err.Error()))
-		if !p.replaceTyping(ctx, d.conversationID, failure) {
-			p.post(ctx, d.conversationID, d.thread, failure)
-		}
+		p.stopTyping(ctx, d.conversationID)
+		p.post(ctx, d.conversationID, d.thread, textMessage(fmt.Sprintf(":warning: %s", err.Error())))
 		return
 	}
 
@@ -414,30 +412,25 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Inbound) {
 		return
 	}
 
-	// The outcome replaces the indicator when this delivery is the turn the
-	// indicator belongs to: the message that started it, or the cancel that ended
-	// it.
+	// The outcome is its own message. The indicator goes when this delivery is the
+	// turn the indicator belongs to — the message that started it, or the cancel
+	// that ended it — and stays while a turn is still working.
 	//
-	// Any other command is its own message. A status answer that took the
-	// "working" signal away would read as an agent that had stopped, and the turn
-	// would still be running.
-	message := RenderOutcome(outcome)
-	if replacesIndicator(d, outcome) {
-		if p.replaceTyping(ctx, d.conversationID, message) {
-			return
-		}
+	// A status answer that took the "working" signal away would read as an agent
+	// that had stopped, and the turn would still be running.
+	if endsTurn(d, outcome) {
+		p.stopTyping(ctx, d.conversationID)
 	}
-	p.post(ctx, d.conversationID, d.thread, message)
+	p.post(ctx, d.conversationID, d.thread, RenderOutcome(outcome))
 }
 
-// replacesIndicator reports whether a delivery's outcome should take the turn's
-// indicator rather than be posted beside it.
+// endsTurn reports whether a delivery's outcome ends the turn its indicator
+// stood for.
 //
-// A message is the turn: its answer replaces the indicator, and a failure means
-// there is no turn, so the indicator must go too. A cancel ends the turn it was
-// shown for, so it takes the indicator with it. Everything else — a status read,
-// a settings change — is a message of its own while the turn keeps working.
-func replacesIndicator(d delivery, outcome v1.TransportOutcome) bool {
+// A message is the turn: its answer ends it, and a failure means there was no
+// turn, so the indicator must go too. A cancel ends the turn it was shown for.
+// Everything else — a status read, a settings change — leaves the turn working.
+func endsTurn(d delivery, outcome v1.TransportOutcome) bool {
 	if d.envelope.Kind == v1.EnvelopeMessage {
 		return true
 	}
@@ -700,14 +693,17 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 			renderer := Renderer{SessionID: delivered.Event.SessionID}
 			rendered, ok := renderer.RenderEvent(delivered.Event)
 
-			// The answer takes the place of the indicator, so the turn ends with one
-			// message where the indicator was.
+			// The answer is a message of its own, and the indicator that said the
+			// turn was working goes away with it.
+			//
+			// It is not edited into the indicator's place: that would put the
+			// answer above the turn's own tool list, out of order, and Slack
+			// refuses an edited text over 4,000 characters while a posted one may
+			// be far larger. A long answer that could never be posted that way is
+			// exactly what a user reports as a bot that stopped answering.
 			if ok && isAnswer(delivered.Event) {
 				for _, conversation := range conversations {
-					if p.replaceTyping(ctx, conversation, rendered.Message) {
-						ok = false
-						break
-					}
+					p.stopTyping(ctx, conversation)
 				}
 			}
 

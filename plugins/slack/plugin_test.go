@@ -125,7 +125,7 @@ func TestASettleWithoutAMessageDoesNothing(t *testing.T) {
 // Found in a live conversation: a /status sent mid-turn replaced the "working"
 // message, so the agent looked like it had stopped. It had not — it was waiting
 // on a permission request whose card Slack had refused.
-func TestACommandDoesNotTakeTheTurnsIndicator(t *testing.T) {
+func TestACommandDoesNotEndTheTurn(t *testing.T) {
 	message := delivery{envelope: v1.Envelope{Kind: v1.EnvelopeMessage}}
 	command := delivery{envelope: v1.Envelope{Kind: v1.EnvelopeCommand}}
 
@@ -149,8 +149,8 @@ func TestACommandDoesNotTakeTheTurnsIndicator(t *testing.T) {
 			v1.TransportOutcome{Method: v1.MethodSessionCancel, Error: v1.Conflict("nothing to cancel")}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := replacesIndicator(tc.d, tc.outcome); got != tc.want {
-				t.Errorf("replacesIndicator = %v, want %v", got, tc.want)
+			if got := endsTurn(tc.d, tc.outcome); got != tc.want {
+				t.Errorf("endsTurn = %v, want %v", got, tc.want)
 			}
 		})
 	}

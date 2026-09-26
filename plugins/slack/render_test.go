@@ -586,6 +586,102 @@ func TestRenderPromptThatRan(t *testing.T) {
 	}
 }
 
+// A turn's tool list stays inside the edit limit.
+//
+// Found in a live conversation: the list is edited as calls arrive, and
+// chat.update refuses a text over 4,000 characters while chat.postMessage
+// accepts far more. A busy turn's list therefore stopped updating, silently, and
+// the reader saw a turn that had quietly stopped reporting.
+func TestATurnsToolListStaysInsideTheEditLimit(t *testing.T) {
+	calls := make([]v1.ToolCall, 0, 400)
+	for i := range 400 {
+		calls = append(calls, v1.ToolCall{
+			ToolCallID: fmt.Sprintf("call_%d", i),
+			Status:     v1.ToolCompleted,
+			Title:      "Ran a command with a title long enough to fill the list",
+		})
+	}
+
+	message := toolRunMessage(calls)
+
+	if len(message.Text) > MaxUpdateChars {
+		t.Fatalf("text is %d characters, over the edit limit of %d", len(message.Text), MaxUpdateChars)
+	}
+	for i, block := range message.Blocks {
+		if text := sectionText(t, block); len(text) > MaxSectionChars {
+			t.Errorf("block %d is %d characters, over the section limit", i, len(text))
+		}
+	}
+	if !strings.Contains(message.Text, "more") {
+		t.Error("a truncated list should say how many calls it left out")
+	}
+}
+
+// A short list is rendered whole.
+func TestAShortToolListIsNotTruncated(t *testing.T) {
+	message := toolRunMessage([]v1.ToolCall{
+		{ToolCallID: "c1", Status: v1.ToolCompleted, Title: "Ran pwd"},
+		{ToolCallID: "c2", Status: v1.ToolFailed, Title: "Ran rtk"},
+	})
+
+	if strings.Contains(message.Text, "more") {
+		t.Errorf("a two-call list should not be truncated: %q", message.Text)
+	}
+	if !strings.Contains(message.Text, "2 tool calls") {
+		t.Errorf("text = %q, want the count", message.Text)
+	}
+}
+
+// An agent's kinds are its own: "allow_once" is an approval.
+//
+// Found in a live conversation: the transport read the kind against "allow", so
+// every approval carried approved=false — and the recorded decision said the
+// opposite of what the user chose.
+func TestAnAgentsAllowOptionCountsAsAnApproval(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		want bool
+	}{
+		{"allow", true},
+		{"allow_once", true},
+		{"allow_always", true},
+		{"deny", false},
+		{"reject_once", false},
+		{"switch_bypass", false},
+		{"", false},
+	} {
+		if got := allows(tc.kind); got != tc.want {
+			t.Errorf("allows(%q) = %v, want %v", tc.kind, got, tc.want)
+		}
+	}
+
+	ev := v1.Event{
+		Type:      v1.EventPermissionRequested,
+		SessionID: "sess_1",
+		Payload: json.RawMessage(`{
+			"agentRequestId": "e1bf",
+			"toolCall": {"title": "Run git"},
+			"options": [{"optionId": "allow_once", "name": "Allow", "kind": "allow_once"}]
+		}`),
+	}
+
+	rendered, ok := Renderer{}.RenderEvent(ev)
+	if !ok {
+		t.Fatal("a permission request must be rendered")
+	}
+
+	var value struct {
+		Approved bool `json:"approved"`
+	}
+	cards := buttons(t, actionsBlock(t, rendered.Message))
+	if err := json.Unmarshal([]byte(cards[0].Value), &value); err != nil {
+		t.Fatalf("value is not valid json: %v", err)
+	}
+	if !value.Approved {
+		t.Error("an allow option must carry an approval, or a reader falls back to denying it")
+	}
+}
+
 // What a turn cost is not a message of its own.
 //
 // One line per turn is noise in a busy conversation, and the status command

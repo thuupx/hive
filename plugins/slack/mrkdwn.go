@@ -19,8 +19,23 @@ const (
 	// MaxBlocks is how many blocks one message may carry.
 	MaxBlocks = 50
 
-	// MaxMessageChars is the limit for a message's fallback text.
+	// MaxBlocksText is the cumulative text Slack accepts across a message's
+	// blocks. It is enforced server-side and is much lower than MaxBlocks times
+	// MaxSectionChars would allow, which is why a long answer is truncated rather
+	// than trusted to the per-block limit.
+	MaxBlocksText = 11000
+
+	// MaxMessageChars is the limit for a posted message's fallback text. Slack
+	// truncates a post beyond it.
 	MaxMessageChars = 40000
+
+	// MaxUpdateChars is the limit for an edited message.
+	//
+	// It is far lower than a post's: chat.update refuses a text over 4,000
+	// characters outright ("The text field cannot exceed 4,000 characters") while
+	// chat.postMessage accepts far more. Anything that may be long is therefore
+	// posted, and anything that is edited is kept inside this.
+	MaxUpdateChars = 4000
 )
 
 // mrkdwn converts what an agent writes into what Slack renders.
@@ -252,23 +267,51 @@ func splitForBlocks(text string) []string {
 	}
 	flush()
 
-	// Slack takes a bounded number of blocks, so a very long answer is truncated
-	// rather than refused. Saying so is better than a message that never arrives.
-	if len(chunks) > MaxBlocks {
+	// Slack takes a bounded number of blocks *and* a bounded amount of text across
+	// them, so a very long answer is truncated rather than refused whole. Saying so
+	// is better than a message that never arrives: the cumulative limit is
+	// undocumented and enforced server-side, which is why it is not left to the
+	// per-block limit to imply.
+	truncated := len(chunks) > MaxBlocks
+	if truncated {
 		chunks = chunks[:MaxBlocks]
-		chunks[MaxBlocks-1] = strings.TrimRight(chunks[MaxBlocks-1], "\n") +
-			"\n… the answer was longer than Slack accepts in one message."
+	}
+	total := 0
+	for i, chunk := range chunks {
+		// The first chunk is always kept: the per-block split guarantees it fits on
+		// its own, and an answer that is truncated to nothing says less than one
+		// that is truncated to something.
+		if i > 0 && total+len(chunk) > MaxBlocksText {
+			chunks = chunks[:i]
+			truncated = true
+			break
+		}
+		total += len(chunk)
+	}
+	if truncated {
+		// The note has to fit in the block it is added to, or the truncation
+		// itself would put the message over the section limit.
+		last := len(chunks) - 1
+		chunk := strings.TrimRight(chunks[last], "\n")
+		if room := MaxSectionChars - len(truncationNote); len(chunk) > room {
+			chunk = chunk[:room]
+		}
+		chunks[last] = chunk + truncationNote
 	}
 	return chunks
 }
 
+// truncationNote is what a shortened answer says about itself.
+const truncationNote = "\n… the answer was longer than Slack accepts in one message."
+
 // fallbackText is the plain-text form Slack shows in a notification.
 //
-// It has its own limit, and a message with no text is not searchable.
-func fallbackText(text string) string {
+// It has its own limit, which differs by method, and a message with no text is
+// not searchable.
+func fallbackText(text string, limit int) string {
 	flat := strings.Join(strings.Fields(text), " ")
-	if len(flat) > MaxMessageChars {
-		flat = flat[:MaxMessageChars]
+	if len(flat) > limit {
+		flat = flat[:limit]
 	}
 	if flat == "" {
 		return " "

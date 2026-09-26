@@ -110,6 +110,18 @@ func TestAVeryLongAnswerIsTruncatedNotRefused(t *testing.T) {
 	if len(blocks) > MaxBlocks {
 		t.Fatalf("blocks = %d, over the limit of %d", len(blocks), MaxBlocks)
 	}
+
+	// Slack refuses a whole message whose blocks carry too much text, and that
+	// cumulative limit is far below the per-block limit times the block count — so
+	// respecting only the per-block limit still loses the answer.
+	total := 0
+	for _, block := range blocks {
+		total += len(sectionText(t, block))
+	}
+	if total > MaxBlocksText+len(truncationNote) {
+		t.Fatalf("blocks carry %d characters, over the cumulative limit of %d", total, MaxBlocksText)
+	}
+
 	last := sectionText(t, blocks[len(blocks)-1])
 	if !strings.Contains(last, "longer than Slack accepts") {
 		t.Error("a truncated answer should say so")
@@ -119,10 +131,10 @@ func TestAVeryLongAnswerIsTruncatedNotRefused(t *testing.T) {
 // A message needs fallback text: it is what a notification shows and what a
 // search matches.
 func TestFallbackTextIsNeverEmpty(t *testing.T) {
-	if got := fallbackText(""); got == "" {
+	if got := fallbackText("", MaxMessageChars); got == "" {
 		t.Error("fallback text must not be empty")
 	}
-	if got := fallbackText("  \n \n"); got == "" {
+	if got := fallbackText("  \n \n", MaxMessageChars); got == "" {
 		t.Error("fallback text must not be empty for whitespace")
 	}
 }

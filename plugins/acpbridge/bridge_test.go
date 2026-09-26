@@ -192,10 +192,12 @@ func (a *fakeAgent) loop() {
 			return
 		}
 		if msg.Method == "" {
-			var outcome acp.PermissionOutcome
-			if err := json.Unmarshal(msg.Result, &outcome); err == nil {
+			// The decision is nested, as ACP defines it: a flat outcome is what an
+			// agent rejects.
+			var response acp.PermissionResponse
+			if err := json.Unmarshal(msg.Result, &response); err == nil {
 				a.mu.Lock()
-				a.outcomes = append(a.outcomes, outcome)
+				a.outcomes = append(a.outcomes, response.Outcome)
 				a.mu.Unlock()
 			}
 			continue

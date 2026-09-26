@@ -442,13 +442,49 @@ func TestPermissionRequestIsDeliveredAndAnswered(t *testing.T) {
 	if seen.Error != nil {
 		t.Fatalf("agent received an error: %v", seen.Error)
 	}
-	var got PermissionOutcome
-	if err := json.Unmarshal(seen.Result, &got); err != nil {
-		t.Fatalf("decode outcome: %v", err)
-	}
+	got := decodePermissionResponse(t, seen.Result)
 	if got.Outcome != outcomeSelected || got.OptionID != "a1" {
 		t.Fatalf("outcome = %+v", got)
 	}
+}
+
+// The response is the shape ACP defines, not a flat near-miss.
+//
+// Found in a live conversation: the decision was sent as
+// `{"outcome": "selected"}`, which an agent cannot decode — it reported the
+// permission request as failed and rejected the tool the user had just allowed,
+// every time.
+func TestPermissionResponseIsNested(t *testing.T) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(`{"outcome":{"outcome":"selected","optionId":"a1"}}`), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(raw) != 1 {
+		t.Fatalf("a permission response carries one field, got %v", raw)
+	}
+	if _, ok := raw["outcome"]; !ok {
+		t.Fatalf("the field must be outcome, got %v", raw)
+	}
+	if got := decodePermissionResponse(t, []byte(`{"outcome":{"outcome":"selected","optionId":"a1"}}`)); got.OptionID != "a1" {
+		t.Fatalf("outcome = %+v", got)
+	}
+
+	// A flat response must not decode: that is what the agent was rejecting.
+	var flat PermissionResponse
+	if err := json.Unmarshal([]byte(`{"outcome":"selected","optionId":"a1"}`), &flat); err == nil {
+		t.Fatal("a flat outcome should not decode into a nested response")
+	}
+}
+
+// decodePermissionResponse reads the decision out of a response result.
+func decodePermissionResponse(t *testing.T, result json.RawMessage) PermissionOutcome {
+	t.Helper()
+
+	var response PermissionResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		t.Fatalf("decode permission response: %v", err)
+	}
+	return response.Outcome
 }
 
 // Hive must never answer a permission request with an approval it did not
@@ -478,10 +514,7 @@ func TestPermissionRequestIsCancelledWhenItCannotBeDelivered(t *testing.T) {
 		}
 	}
 
-	var got PermissionOutcome
-	if err := json.Unmarshal(cancelled.Result, &got); err != nil {
-		t.Fatalf("decode outcome: %v", err)
-	}
+	got := decodePermissionResponse(t, cancelled.Result)
 	if got.Outcome != outcomeCancelled {
 		t.Fatalf("outcome = %+v, want cancelled", got)
 	}

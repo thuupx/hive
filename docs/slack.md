@@ -359,7 +359,7 @@ pretended away.
 ### While a turn is working
 
 Slack has no typing indicator a bot can send, so a turn shows one by animating a
-message: a clock that ticks.
+message: a clock that ticks. It is removed when the turn has something to say.
 
 ```
 #team
@@ -369,16 +369,20 @@ message: a clock that ticks.
               Hive: :clock2:
               Hive: :wrench: Listed ./
               Hive: :white_check_mark: Listed ./
-              Hive: the test was failing because ...   ← replaces the clock
+              Hive: the test was failing because ...   ← its own message
 ```
 
-The indicator is **the message the answer replaces**, so a turn leaves one message
-per thing it has to say instead of an acknowledgement followed by an answer that
-repeats it. A tool card is a step, not the answer, so it lands after the indicator
-rather than in place of it.
+The answer is **posted as its own message**, and the clock goes away with it.
 
-The clock stops when the answer arrives. A turn that ends without one stops
-ticking after 30 minutes, because a clock that ticks forever is a lie.
+It is deliberately not written into the clock's place, for two reasons: that would
+put the answer *above* the turn's own tool list, out of order, and Slack refuses
+an edited message over 4,000 characters while a posted one may be far larger — so
+a long answer could never appear at all. A tool card is a step, not the answer, so
+it lands after the clock.
+
+The clock goes when the turn ends — an answer, a failure, or a cancel. A turn that
+never ends stops ticking after 30 minutes, because a clock that ticks forever is a
+lie.
 
 ```toml
 [transport.slack.options]

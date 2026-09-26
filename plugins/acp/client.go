@@ -278,6 +278,10 @@ func (c *Client) Cancel(sessionID string) error {
 // RespondToPermission answers a permission request.
 //
 // requestID is the raw id from the PermissionRequest, echoed unchanged.
+//
+// The decision is nested, because that is the shape ACP defines: a flat
+// `{"outcome": "selected"}` is not decodable by the agent, which then reports the
+// request as failed and rejects the tool the user just allowed.
 func (c *Client) RespondToPermission(requestID json.RawMessage, outcome PermissionOutcome) error {
 	if len(requestID) == 0 {
 		return errors.New("acp: permission request id is required")
@@ -285,7 +289,7 @@ func (c *Client) RespondToPermission(requestID json.RawMessage, outcome Permissi
 	return c.write(rpcMessage{
 		JSONRPC: jsonrpcVersion,
 		ID:      requestID,
-		Result:  encode(outcome),
+		Result:  encode(PermissionResponse{Outcome: outcome}),
 	})
 }
 
@@ -407,7 +411,7 @@ func (c *Client) handleRequest(msg rpcMessage) {
 		_ = c.write(rpcMessage{
 			JSONRPC: jsonrpcVersion,
 			ID:      msg.ID,
-			Result:  encode(PermissionOutcome{Outcome: outcomeCancelled}),
+			Result:  encode(PermissionResponse{Outcome: PermissionOutcome{Outcome: outcomeCancelled}}),
 		})
 	}
 }
