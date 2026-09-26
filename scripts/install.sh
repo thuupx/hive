@@ -6,8 +6,12 @@
 # release's checksums.txt, and installs hive together with its plugin binaries
 # side by side — which is where the daemon looks for them.
 #
-#   curl -fsSL https://raw.githubusercontent.com/thupham/hive/main/scripts/install.sh | sh
+#   curl -fsSL https://github.com/thupham/hive/releases/latest/download/install.sh | sh
 #   ./install.sh --version 0.1.0 --bin-dir "$HOME/.local/bin"
+#
+# The URL above is the copy published with the release, not the one on a branch:
+# a branch is mutable, so what you pipe to sh would not be what any release
+# shipped.
 #
 # Environment:
 #   HIVE_VERSION   the release to install, without the leading v (default: latest)
@@ -50,7 +54,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	--version)
 		[ $# -ge 2 ] || die "--version needs a value"
-		VERSION="${2#v}"
+		VERSION="$2"
 		shift 2
 		;;
 	--bin-dir)
@@ -68,9 +72,16 @@ done
 
 [ -n "${HOME:-}" ] || die "HOME is not set, so there is nowhere to install; pass --bin-dir"
 
+# The tag carries a "v" and the asset name does not, so it is stripped once, here,
+# whichever way the version arrived — the flag and the environment variable behave
+# the same.
+VERSION="${VERSION#v}"
+
 # The downloader and the checksum tool are the only two external programs this
 # script needs, and both have a portable spelling on macOS and Linux.
+HAVE_CURL=""
 if command -v curl >/dev/null 2>&1; then
+	HAVE_CURL=1
 	download() { curl -fsSL "$1" -o "$2"; }
 	fetch() { curl -fsSL "$1"; }
 elif command -v wget >/dev/null 2>&1; then
@@ -89,11 +100,18 @@ else
 fi
 
 install_bin() {
-	if command -v install >/dev/null 2>&1; then
-		install -m 0755 "$1" "$2"
-	else
-		cp "$1" "$2" && chmod 0755 "$2"
-	fi
+	target_dir=$(dirname "$2")
+	target_name=$(basename "$2")
+
+	# The copy is staged beside its target, not in $tmp, because a rename is only
+	# atomic within one filesystem. Staging and renaming is what lets an upgrade
+	# replace a binary the daemon is running: writing over it in place does not
+	# work, and Linux refuses it with "Text file busy".
+	staged="${target_dir}/.${target_name}.new.$$"
+	cp "$1" "$staged"
+	chmod 0755 "$staged"
+	mv -f "$staged" "$2"
+	staged=""
 }
 
 # Which platform this is. The names are Go's, because that is what the release
@@ -119,11 +137,31 @@ if [ "$os" = darwin ] && [ "$arch" = amd64 ]; then
 	die "darwin/amd64 is not published; build from source on this machine with 'make build'"
 fi
 
+# latest_version resolves the newest release tag, without its leading "v".
+#
+# The redirect on /releases/latest names the tag, which is used when curl is
+# available. The API is rate-limited per address, so a shared network could fail
+# on the one request this script makes; it stays as the portable fallback,
+# because wget prints a redirect in a shape that varies between builds.
+latest_version() {
+	if [ -n "$HAVE_CURL" ]; then
+		url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+			"https://github.com/${REPO}/releases/latest" 2>/dev/null) || url=""
+		tag="${url##*/}"
+		if [ -n "$tag" ] && [ "$tag" != latest ]; then
+			printf '%s\n' "${tag#v}"
+			return
+		fi
+	fi
+
+	fetch "https://api.github.com/repos/${REPO}/releases/latest" |
+		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1
+}
+
 if [ -z "$VERSION" ]; then
 	# The asset name carries the version, so the version has to be resolved
 	# before anything can be downloaded.
-	VERSION=$(fetch "https://api.github.com/repos/${REPO}/releases/latest" |
-		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1)
+	VERSION=$(latest_version)
 	[ -n "$VERSION" ] || die "could not resolve the latest release; pass --version"
 fi
 
@@ -131,7 +169,17 @@ asset="hive_${VERSION}_${os}_${arch}.tar.gz"
 base="https://github.com/${REPO}/releases/download/v${VERSION}"
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT INT TERM
+
+# A staged binary is removed too: an install that stops between staging and
+# renaming must not leave a hidden half-copy beside the real one.
+staged=""
+cleanup() {
+	if [ -n "$staged" ]; then
+		rm -f "$staged"
+	fi
+	rm -rf "$tmp"
+}
+trap cleanup EXIT INT TERM
 
 note "downloading $asset"
 download "${base}/${asset}" "${tmp}/${asset}" ||
@@ -142,11 +190,13 @@ download "${base}/checksums.txt" "${tmp}/checksums.txt" ||
 # The checksum is verified before the archive is opened. An archive that is
 # never extracted cannot do anything, whatever is in it.
 #
-# The name is compared without the "./" a shell glob may have left on it, and
-# without the "*" a checksum tool may prefix in binary mode.
+# The name is compared without the "./" a shell glob may have left on it, without
+# the "*" a checksum tool may prefix in binary mode, and without a carriage return
+# a file written on Windows would leave on it.
 expected=$(awk -v a="$asset" '
 	{
 		n = $2
+		sub(/\r$/, "", n)
 		sub(/^\*/, "", n)
 		sub(/^\.\//, "", n)
 		if (n == a) { print $1; exit }
@@ -168,6 +218,7 @@ mkdir -p "$BIN_DIR"
 # be found the same way.
 for name in hive hive-plugin-acp hive-plugin-slack; do
 	[ -f "${tmp}/extract/${name}" ] || die "${asset} does not contain ${name}"
+	[ ! -L "${tmp}/extract/${name}" ] || die "${asset} has a symlink where ${name} should be"
 	install_bin "${tmp}/extract/${name}" "${BIN_DIR}/${name}"
 done
 
@@ -178,4 +229,23 @@ case ":${PATH}:" in
 *) note "add ${BIN_DIR} to PATH: export PATH=\"${BIN_DIR}:\$PATH\"" ;;
 esac
 
-printf '\nNext:\n  hive init     # find your ACP agents and write ~/.hive/config.toml\n  hive serve    # run the coordinator, a node, and your agents\n'
+# A running daemon keeps the binary it was started from: replacing the file does
+# not replace the process. An upgrade is therefore finished with a restart, and
+# saying so here is the difference between "the new build works" and "the upgrade
+# did nothing".
+service_installed() {
+	[ -f "${HOME}/Library/LaunchAgents/ai.hive.daemon.plist" ] ||
+		[ -f "${HOME}/.config/systemd/user/ai.hive.daemon.service" ]
+}
+
+printf '\nNext:\n'
+if [ -f "${HOME}/.hive/config.toml" ]; then
+	if service_installed; then
+		printf '  hive service restart   # run the new build; the daemon still has the old one\n'
+	else
+		printf '  hive serve             # run the coordinator, a node, and your agents\n'
+	fi
+else
+	printf '  hive init              # find your ACP agents and write ~/.hive/config.toml\n'
+	printf '  hive serve             # run the coordinator, a node, and your agents\n'
+fi

@@ -78,7 +78,7 @@ between agents and still read in a year, the structure is the point.
 Install a release (linux/darwin, amd64/arm64):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/thupham/hive/main/scripts/install.sh | sh
+curl -fsSL https://github.com/thupham/hive/releases/latest/download/install.sh | sh
 hive init      # finds your agents, writes ~/.hive/config.toml
 hive serve     # runs the coordinator, a node, and your agents
 ```

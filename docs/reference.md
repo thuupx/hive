@@ -30,7 +30,7 @@ configured agent plugins.
 No toolchain needed if a release has a build for your platform:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/thupham/hive/main/scripts/install.sh | sh
+curl -fsSL https://github.com/thupham/hive/releases/latest/download/install.sh | sh
 ```
 
 The script resolves the latest release, downloads the tarball for this platform,
