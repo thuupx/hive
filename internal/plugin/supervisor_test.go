@@ -1,12 +1,16 @@
 package plugin_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -74,6 +78,13 @@ func runHelperPlugin() {
 		os.Exit(3)
 	}
 
+	if mode == "dies-saying-why" {
+		// A plugin that explains itself and exits, the way a transport with no
+		// credentials does: the handshake succeeds, and then it dies.
+		fmt.Fprintln(os.Stderr, "slack: an app token is required for Socket Mode")
+		os.Exit(1)
+	}
+
 	host.Handle(v1.MethodPluginHealth, func(context.Context, json.RawMessage) (any, error) {
 		return map[string]any{"status": "ok"}, nil
 	})
@@ -120,6 +131,53 @@ func writeResult(err error) {
 		msg = err.Error()
 	}
 	_ = os.WriteFile(path, []byte(msg), 0o600)
+}
+
+// syncBuffer is a log destination a test can read while a plugin writes to it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// A plugin's reason for dying is reported where the exit is.
+//
+// Found in a live installation: a transport with no credentials exited, and the
+// log said only `plugin exited error="exit status 1"` — while the plugin itself
+// had said exactly what was missing, on stderr, which went to the daemon's
+// stderr. A reader looking at the exit never saw the reason.
+func TestAPluginsExitSaysWhatItSaid(t *testing.T) {
+	logged := &syncBuffer{}
+	s := plugin.NewSupervisor(slog.New(slog.NewTextHandler(logged, nil)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	// The plugin may die before or after the handshake; either way its reason has
+	// to be reported.
+	if _, err := s.Start(ctx, helperSpec("dies-saying-why", 0)); err != nil {
+		t.Logf("Start: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(logged.String(), "an app token is required") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("the exit does not say why:\n%s", logged.String())
 }
 
 func helperSpec(mode string, maxRestarts int) plugin.Spec {

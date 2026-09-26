@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,6 +107,10 @@ type Supervisor struct {
 type managed struct {
 	spec Spec
 
+	// stderr collects what the plugin writes to standard error, so the line that
+	// reports its exit can say why.
+	stderr *pluginStderr
+
 	mu          sync.Mutex
 	instance    *Instance
 	generations int64
@@ -112,6 +118,66 @@ type managed struct {
 	stopped     bool
 	cmd         *exec.Cmd
 	procDone    chan struct{}
+}
+
+// pluginStderr collects what a plugin says on standard error.
+//
+// A plugin explains itself there — "slack: an app token is required for Socket
+// Mode" — and that explanation is the whole answer to why it exited. Inheriting
+// the daemon's stderr puts it where a reader of the log will not look, while the
+// line that reports the exit names only an exit status, so it is logged as it
+// arrives and kept, to be quoted by the exit.
+type pluginStderr struct {
+	log    *slog.Logger
+	plugin string
+
+	mu    sync.Mutex
+	lines []string
+	buf   []byte
+}
+
+// maxStderrLines bounds what is remembered to explain an exit.
+const maxStderrLines = 4
+
+func (w *pluginStderr) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.buf = append(w.buf, p...)
+	for {
+		line, rest, ok := bytes.Cut(w.buf, []byte("\n"))
+		if !ok {
+			break
+		}
+		w.buf = rest
+
+		text := strings.TrimSpace(string(line))
+		if text == "" {
+			continue
+		}
+		w.log.Debug("plugin stderr", "plugin", w.plugin, "message", text)
+
+		w.lines = append(w.lines, text)
+		if len(w.lines) > maxStderrLines {
+			w.lines = w.lines[len(w.lines)-maxStderrLines:]
+		}
+	}
+	return len(p), nil
+}
+
+// last is what the plugin said before it exited, empty when it said nothing.
+//
+// A line without a trailing newline is included: a plugin that dies mid-write is
+// exactly the case this exists for.
+func (w *pluginStderr) last() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	lines := w.lines
+	if text := strings.TrimSpace(string(w.buf)); text != "" {
+		lines = append(append([]string(nil), lines...), text)
+	}
+	return strings.Join(lines, " | ")
 }
 
 // NewSupervisor returns a supervisor. A nil logger discards output.
@@ -139,7 +205,7 @@ func (s *Supervisor) Start(ctx context.Context, spec Spec) (*Instance, error) {
 		return nil, err
 	}
 
-	m := &managed{spec: spec}
+	m := &managed{spec: spec, stderr: &pluginStderr{log: s.log, plugin: spec.ID}}
 
 	s.mu.Lock()
 	if _, exists := s.managed[spec.ID]; exists {
@@ -282,7 +348,7 @@ func (s *Supervisor) launch(ctx context.Context, m *managed) (*Instance, error) 
 	if err != nil {
 		return nil, fmt.Errorf("plugin: %s: stdout: %w", m.spec.ID, err)
 	}
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = m.stderr
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("plugin: %s: start: %w", m.spec.ID, err)
@@ -471,7 +537,13 @@ func (s *Supervisor) watch(m *managed, cmd *exec.Cmd, procDone chan struct{}) {
 		return
 	}
 
-	s.log.Warn("plugin exited", "plugin", m.spec.ID, "error", err)
+	// What the plugin said is the answer to why it exited; the exit status on its
+	// own is not.
+	exited := []any{"plugin", m.spec.ID, "error", err}
+	if said := m.stderr.last(); said != "" {
+		exited = append(exited, "said", said)
+	}
+	s.log.Warn("plugin exited", exited...)
 
 	if restarts >= m.spec.MaxRestarts {
 		s.log.Error("plugin will not be restarted",
