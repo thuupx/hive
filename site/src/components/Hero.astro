@@ -1,0 +1,99 @@
+---
+import CommandBar from "./CommandBar.astro";
+import Icon from "./Icon.astro";
+import { DOCS, INSTALL_COMMAND, REPO } from "../site";
+---
+
+<section id="top" class="relative overflow-hidden">
+  <!-- A faint grid and one green glow. Decoration only, so it is behind
+       everything and ignores the pointer. -->
+  <div
+    class="pointer-events-none absolute inset-0 -z-10 opacity-[0.35]"
+    style="background-image:linear-gradient(to right,#1e293b 1px,transparent 1px),linear-gradient(to bottom,#1e293b 1px,transparent 1px);background-size:64px 64px;mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 40%,transparent 100%)"
+    aria-hidden="true"
+  >
+  </div>
+  <div
+    class="pointer-events-none absolute left-1/2 top-0 -z-10 h-[28rem] w-[48rem] -translate-x-1/2 rounded-full opacity-[0.16] blur-3xl"
+    style="background:radial-gradient(circle,#22c55e 0%,transparent 70%)"
+    aria-hidden="true"
+  >
+  </div>
+
+  <div class="container-page grid gap-14 py-20 lg:grid-cols-2 lg:items-center lg:py-28">
+    <div>
+      <p
+        class="mb-5 inline-flex items-center gap-2 rounded-full border border-hairline bg-card/60 px-3 py-1 text-xs font-medium tracking-wide text-muted-foreground"
+      >
+        <span class="h-1.5 w-1.5 rounded-full bg-accent"></span>
+        Self-hosted · speaks ACP · written in Go
+      </p>
+
+      <h1
+        class="text-balance text-4xl font-bold leading-[1.1] tracking-tight sm:text-5xl"
+      >
+        Your agents, in the chat{" "}
+        <span class="text-accent">you already use.</span>
+      </h1>
+
+      <p class="mt-6 max-w-xl text-pretty text-lg leading-relaxed text-muted-foreground">
+        Hive is a self-hosted gateway between any messaging app and any coding
+        agent that speaks ACP. It keeps the conversation — not the tool — at the
+        center, so you can hand a session to a different agent without starting
+        over.
+      </p>
+
+      <div class="mt-8 max-w-xl">
+        <CommandBar command={INSTALL_COMMAND} />
+      </div>
+
+      <div class="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
+        <a
+          href={REPO}
+          class="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2 font-semibold text-on-accent transition-opacity duration-200 hover:opacity-90"
+        >
+          <Icon name="github" size={16} />
+          View on GitHub
+        </a>
+        <a
+          href={`${DOCS}/reference.md`}
+          class="inline-flex items-center gap-1.5 text-muted-foreground transition-colors duration-200 hover:text-foreground"
+        >
+          Read the reference
+          <Icon name="arrow" size={15} />
+        </a>
+      </div>
+
+      <p class="mt-6 text-sm text-muted-foreground">
+        Linux and macOS, amd64 and arm64. No account, no hosted service, no data
+        leaving your machine.
+      </p>
+    </div>
+
+    <!-- The whole product in five commands, which is the fastest way to say
+         what "handoff" means. -->
+    <div class="terminal overflow-hidden shadow-2xl shadow-black/40">
+      <div class="flex items-center gap-1.5 border-b border-border px-4 py-3">
+        <span class="h-2.5 w-2.5 rounded-full bg-destructive/70"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-muted"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-accent/70"></span>
+        <span class="ml-3 text-xs text-muted-foreground">hive</span>
+      </div>
+      <pre
+        class="overflow-x-auto p-4 text-[0.8125rem] leading-relaxed"><code><span
+          class="text-muted-foreground">$ </span>hive session create
+session: <span class="text-accent">sess_b1d8d6dd8a860f4b</span>
+run:     run_305870203fb38fd5
+agent:   claude
+
+<span class="text-muted-foreground">$ </span>hive session prompt sess_b1d8… "explain this repo"
+<span class="text-muted-foreground">accepted</span>
+<span class="text-muted-foreground">completed</span>
+This repository is a self-hosted agent gateway…
+
+<span class="text-muted-foreground">$ </span>hive session handoff sess_b1d8… hermes
+handed off — the context came with it
+</code></pre>
+    </div>
+  </div>
+</section>

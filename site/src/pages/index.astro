@@ -1,0 +1,43 @@
+---
+import Base from "../layouts/Base.astro";
+import Nav from "../components/Nav.astro";
+import Hero from "../components/Hero.astro";
+import Problem from "../components/Problem.astro";
+import Idea from "../components/Idea.astro";
+import Compare from "../components/Compare.astro";
+import Features from "../components/Features.astro";
+import QuickStart from "../components/QuickStart.astro";
+import Footer from "../components/Footer.astro";
+import { REPO } from "../site";
+
+const title = "Hive — a self-hosted gateway between any messaging app and your coding agents";
+const description =
+  "Hive connects any messaging app to any coding agent that speaks ACP, and keeps the conversation separate from the agent answering it. Hand a session to another agent without starting over. Self-hosted, written in Go.";
+
+// Structured data, so a search result can say what this is.
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Hive",
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "Linux, macOS",
+  description,
+  url: REPO,
+  license: `${REPO}/blob/main/LICENSE`,
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+};
+---
+
+<Base title={title} description={description}>
+  <Nav />
+  <main id="main">
+    <Hero />
+    <Problem />
+    <Idea />
+    <Compare />
+    <Features />
+    <QuickStart />
+  </main>
+  <Footer />
+  <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+</Base>

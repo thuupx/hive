@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="0%" r="70%">
+      <stop offset="0%" stop-color="#22C55E" stop-opacity="0.22" />
+      <stop offset="100%" stop-color="#22C55E" stop-opacity="0" />
+    </radialGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" fill="none" stroke="#1E293B" stroke-width="1" />
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="630" fill="#0F172A" />
+  <rect width="1200" height="630" fill="url(#grid)" opacity="0.5" />
+  <rect width="1200" height="630" fill="url(#glow)" />
+
+  <g transform="translate(80, 72)">
+    <path
+      d="M24 0 46 12.7v25.4L24 51 2 38.1V12.7z"
+      fill="none"
+      stroke="#F8FAFC"
+      stroke-width="3"
+      stroke-linejoin="round"
+      transform="scale(1.05)"
+    />
+    <circle cx="24" cy="25.5" r="7.5" fill="#22C55E" />
+    <text
+      x="72"
+      y="36"
+      font-family="Inter, Helvetica, Arial, sans-serif"
+      font-size="34"
+      font-weight="600"
+      fill="#F8FAFC"
+    >
+      Hive
+    </text>
+  </g>
+
+  <text
+    x="80"
+    y="300"
+    font-family="Inter, Helvetica, Arial, sans-serif"
+    font-size="72"
+    font-weight="700"
+    fill="#F8FAFC"
+  >
+    Your agents, in the chat
+  </text>
+  <text
+    x="80"
+    y="384"
+    font-family="Inter, Helvetica, Arial, sans-serif"
+    font-size="72"
+    font-weight="700"
+    fill="#22C55E"
+  >
+    you already use.
+  </text>
+
+  <text
+    x="80"
+    y="470"
+    font-family="Inter, Helvetica, Arial, sans-serif"
+    font-size="28"
+    fill="#94A3B8"
+  >
+    A self-hosted gateway between any messaging app and any coding agent that speaks ACP.
+  </text>
+
+  <text
+    x="80"
+    y="546"
+    font-family="ui-monospace, Menlo, Consolas, monospace"
+    font-size="24"
+    fill="#64748B"
+  >
+    self-hosted · ACP · Go · handoff between agents
+  </text>
+</svg>

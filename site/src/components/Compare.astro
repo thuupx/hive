@@ -1,0 +1,114 @@
+---
+import Section from "./Section.astro";
+
+const columns = ["Slack-as-ACP bridge", "OpenACP", "Vendor client", "Hive"] as const;
+
+const rows = [
+  {
+    label: "Talks to",
+    values: ["one agent", "many agents", "one agent", "many agents, one session"],
+  },
+  {
+    label: "The conversation lives in",
+    values: ["the thread", "the thread", "the vendor", "Hive, durably"],
+  },
+  {
+    label: "Switch agent mid-conversation",
+    values: ["start over", "start over", "n/a", "handoff"],
+  },
+  {
+    label: "Where execution runs",
+    values: ["the one host", "the one host", "the vendor", "coordinator + node"],
+  },
+  {
+    label: "Extend by",
+    values: [
+      "forking the bot",
+      "npm channel adapter",
+      "—",
+      "process-isolated plugins",
+    ],
+  },
+  {
+    label: "Your data",
+    values: ["your machine", "your machine", "theirs", "your machine"],
+  },
+  {
+    label: "Readable history",
+    values: ["the thread", "the thread", "the app", "a queryable event log"],
+  },
+] as const;
+
+// The last column is the one this page is about.
+const hive = columns.length - 1;
+---
+
+<Section
+  id="compare"
+  eyebrow="Compare"
+  title="How Hive is different"
+  lead="The tools that exist are good, and Hive learned from them. They also share a ceiling: transport, conversation, and execution are the same object."
+>
+  <div class="-mx-6 overflow-x-auto px-6">
+    <table class="w-full min-w-[54rem] border-collapse text-left text-sm">
+      <caption class="sr-only">
+        Hive compared with Slack-as-ACP bridges, OpenACP, and vendor clients
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col" class="p-3 font-medium text-muted-foreground">
+            <span class="sr-only">Aspect</span>
+          </th>
+          {
+            columns.map((column, index) => (
+              <th
+                scope="col"
+                class:list={[
+                  "p-3 text-sm font-semibold",
+                  index === hive
+                    ? "rounded-t-lg border-x border-t border-accent/40 bg-accent/5 text-accent"
+                    : "text-foreground",
+                ]}
+              >
+                {column}
+              </th>
+            ))
+          }
+        </tr>
+      </thead>
+      <tbody>
+        {
+          rows.map((row, rowIndex) => (
+            <tr class="border-t border-hairline">
+              <th scope="row" class="p-3 pr-6 font-normal text-muted-foreground">
+                {row.label}
+              </th>
+              {row.values.map((value, index) => (
+                <td
+                  class:list={[
+                    "p-3",
+                    index === hive
+                      ? "border-x border-accent/40 bg-accent/5 font-medium text-foreground"
+                      : "text-muted-foreground",
+                    rowIndex === rows.length - 1 && index === hive
+                      ? "rounded-b-lg border-b"
+                      : "",
+                  ]}
+                >
+                  {value}
+                </td>
+              ))}
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <p class="mt-8 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+    Hive is more machinery than a bridge, and that is the honest trade. If you
+    want one agent in your chat app by lunchtime, a bridge is the right tool. If
+    you want a conversation you can hand between agents and still read in a
+    year, the structure is the point.
+  </p>
+</Section>

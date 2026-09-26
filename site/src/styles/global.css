@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+/* Design tokens.
+ *
+ * The palette is the "Developer Tool / IDE" set: code dark, run green. It is
+ * dark-only by design, so every value here is the value for the one theme.
+ *
+ * --color-ring is the exception to the palette as generated: the source value
+ * (#1E293B) is almost the background, and a focus ring nobody can see is not a
+ * focus ring. It is the accent instead.
+ */
+@theme {
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --color-background: #0f172a;
+  --color-foreground: #f8fafc;
+
+  --color-card: #1b2336;
+  --color-muted: #272f42;
+  --color-muted-foreground: #94a3b8;
+
+  --color-border: #475569;
+  --color-hairline: #27324a;
+
+  --color-primary: #1e293b;
+  --color-secondary: #334155;
+
+  --color-accent: #22c55e;
+  --color-on-accent: #0f172a;
+
+  --color-destructive: #ef4444;
+  --color-ring: #22c55e;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    /* The sticky nav would otherwise cover the heading a #link lands on. */
+    scroll-padding-top: 5.5rem;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* A visible focus ring on every interactive element, keyboard only. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-accent) 30%, transparent);
+  }
+
+  /* Motion is decoration here, so it is the first thing to go. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* One measure for the page, so every section lines up. */
+  .container-page {
+    width: 100%;
+    max-width: 72rem;
+    margin-inline: auto;
+    padding-inline: 1.5rem;
+  }
+
+  /* The hairline rule under the nav and above the footer. */
+  .rule {
+    border-top: 1px solid var(--color-hairline);
+  }
+
+  /* A card: a surface that is clearly above the background, without a heavy
+   * border. The border is the palette's, at a lower opacity, so it reads as a
+   * seam rather than a frame. */
+  .card {
+    background-color: var(--color-card);
+    border: 1px solid color-mix(in oklab, var(--color-border) 45%, transparent);
+    border-radius: 0.75rem;
+  }
+
+  .card-hover {
+    transition:
+      border-color 200ms ease,
+      transform 200ms ease;
+  }
+
+  .card-hover:hover {
+    border-color: color-mix(in oklab, var(--color-accent) 50%, transparent);
+    transform: translateY(-2px);
+  }
+
+  /* A pill of monospace text, for an identifier or a path. */
+  .code-pill {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    background-color: var(--color-muted);
+    border: 1px solid var(--color-hairline);
+    border-radius: 0.375rem;
+    padding: 0.125rem 0.4375rem;
+    white-space: nowrap;
+  }
+
+  /* The terminal surface: the one place a heavier border is right, because the
+   * content is a window, not a card. */
+  .terminal {
+    background-color: #0b1120;
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.75;
+  }
+}

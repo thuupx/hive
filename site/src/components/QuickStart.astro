@@ -1,0 +1,96 @@
+---
+import CommandBar from "./CommandBar.astro";
+import Icon from "./Icon.astro";
+import Section from "./Section.astro";
+import { DOCS, INSTALL_COMMAND } from "../site";
+
+const steps = [
+  {
+    title: "Install",
+    body: "One script, no toolchain. It verifies the checksum before it extracts anything.",
+  },
+  {
+    title: "Find your agents",
+    body: "hive init scans your PATH for ACP agents and writes ~/.hive/config.toml naming what it found.",
+    code: "hive init",
+  },
+  {
+    title: "Run the daemon",
+    body: "One command brings up the coordinator, a node child process, and your agent plugins.",
+    code: "hive serve",
+  },
+  {
+    title: "Use it",
+    body: "The CLI talks to the running daemon over an owner-only unix socket. Sessions survive the command that started them.",
+    code: `hive session create
+hive session prompt <session-id> "explain this repository"
+hive session handoff <session-id> <agent-id>`,
+  },
+] as const;
+---
+
+<Section
+  id="start"
+  eyebrow="Get started"
+  title="Running in about a minute"
+  lead="Hive ships no agent of its own. It speaks ACP to whatever you already have installed."
+>
+  <div class="grid gap-10 lg:grid-cols-[1.5fr_1fr] lg:gap-14">
+    <ol class="space-y-8">
+      {
+        steps.map((step, index) => (
+          <li class="flex gap-4">
+            <span class="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border font-mono text-xs text-muted-foreground">
+              {index + 1}
+            </span>
+            <div class="min-w-0 flex-1">
+              <h3 class="text-base font-semibold">{step.title}</h3>
+              <p class="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+                {step.body}
+              </p>
+              {index === 0 ? (
+                <div class="mt-3">
+                  <CommandBar command={INSTALL_COMMAND} />
+                </div>
+              ) : (
+                <pre class="terminal mt-3 overflow-x-auto p-3.5"><code>{step.code}</code></pre>
+              )}
+            </div>
+          </li>
+        ))
+      }
+    </ol>
+
+    <aside class="card h-fit p-6">
+      <h3 class="text-base font-semibold">Requirements</h3>
+      <ul class="mt-4 space-y-3 text-sm text-muted-foreground">
+        <li class="flex gap-2.5">
+          <Icon name="check" size={16} class="mt-0.5 shrink-0 text-accent" />
+          <span>Linux or macOS, on amd64 or arm64. Windows is not supported.</span>
+        </li>
+        <li class="flex gap-2.5">
+          <Icon name="check" size={16} class="mt-0.5 shrink-0 text-accent" />
+          <span>An agent that speaks ACP over stdio, on your PATH.</span>
+        </li>
+        <li class="flex gap-2.5">
+          <Icon name="check" size={16} class="mt-0.5 shrink-0 text-accent" />
+          <span>Building from source needs Go 1.27+ with CGO and a C toolchain.</span>
+        </li>
+      </ul>
+
+      <div class="mt-6 border-t border-hairline pt-5">
+        <a
+          href={`${DOCS}/reference.md`}
+          class="inline-flex items-center gap-1.5 text-sm font-medium text-accent transition-opacity duration-200 hover:opacity-80"
+        >
+          Full setup and every command
+          <Icon name="arrow" size={15} />
+        </a>
+        <p class="mt-3 text-sm text-muted-foreground">
+          Connecting a messaging app — the app manifest, the commands, and the
+          permission buttons — is in the reference.
+        </p>
+      </div>
+    </aside>
+  </div>
+</Section>

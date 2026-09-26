@@ -1,0 +1,58 @@
+---
+import Icon from "./Icon.astro";
+import Section from "./Section.astro";
+
+const features = [
+  {
+    icon: "handoff",
+    title: "Handoff",
+    body: "Give a session to a different agent mid-conversation. The context comes with it, the chat thread does not change, and each runtime keeps its own session id.",
+  },
+  {
+    icon: "database",
+    title: "Durable sessions",
+    body: "A session is an event log on disk, not a variable in a bot. Restart the daemon and the history is still there, readable from any client.",
+  },
+  {
+    icon: "node",
+    title: "Execution where the code lives",
+    body: "Coordinator and node are separate roles speaking a real protocol, even on one machine. Multi-machine is a deployment choice, not a rewrite.",
+  },
+  {
+    icon: "plug",
+    title: "Agents as configuration",
+    body: "No per-vendor plugin. There is one ACP adapter, and an agent is a name and a command. A new agent works because it speaks ACP.",
+  },
+  {
+    icon: "shield",
+    title: "Permissions fail closed",
+    body: "When an agent asks to run a tool, Hive relays the request and waits. Nothing is approved on your behalf, and the request expires rather than defaulting to yes.",
+  },
+  {
+    icon: "session",
+    title: "Transport-agnostic",
+    body: "Hive core contains no platform command registry. A transport resolves its own aliases and speaks for its own platform, so the next chat app is a plugin rather than a rewrite. Slack is the one that ships in v1.",
+  },
+] as const;
+---
+
+<Section
+  id="features"
+  eyebrow="What you get"
+  title="A switchboard, not a bot for one agent"
+  lead="Each of these falls out of keeping the conversation separate from the agent answering it."
+>
+  <ul class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+    {
+      features.map((feature) => (
+        <li class="card card-hover p-6">
+          <span class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-accent">
+            <Icon name={feature.icon} size={20} />
+          </span>
+          <h3 class="mt-4 text-base font-semibold">{feature.title}</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted-foreground">{feature.body}</p>
+        </li>
+      ))
+    }
+  </ul>
+</Section>

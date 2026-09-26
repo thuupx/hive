@@ -1,0 +1,82 @@
+---
+import Icon from "./Icon.astro";
+import { DOC_LINKS, REPO } from "../site";
+
+const projectLinks = [
+  { href: `${REPO}/blob/main/hive-solution-design-v6.md`, label: "Architecture" },
+  { href: `${REPO}/blob/main/hive-v1-implementation-plan.md`, label: "v1 plan" },
+  { href: `${REPO}/blob/main/AGENTS.md`, label: "Conventions" },
+];
+---
+
+<footer class="rule">
+  <div class="container-page py-14">
+    <div class="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="lg:col-span-2">
+        <div class="flex items-center gap-2.5 text-base font-semibold tracking-tight">
+          <svg viewBox="0 0 24 24" class="h-6 w-6" aria-hidden="true">
+            <path
+              d="M12 2.5 20.3 7.3v9.4L12 21.5 3.7 16.7V7.3z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linejoin="round"></path>
+            <circle cx="12" cy="12" r="2.75" fill="#22c55e"></circle>
+          </svg>
+          Hive
+        </div>
+        <p class="mt-4 max-w-sm text-sm leading-relaxed text-muted-foreground">
+          A self-hosted gateway between the places you talk and the agents that do
+          the work. Your machine, your data, your conversation.
+        </p>
+        <a
+          href={REPO}
+          class="mt-5 inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors duration-200 hover:text-accent"
+        >
+          <Icon name="github" size={16} />
+          github.com/thuupx/hive
+        </a>
+      </div>
+
+      <nav aria-labelledby="footer-docs">
+        <h2 id="footer-docs" class="text-sm font-semibold">Documentation</h2>
+        <ul class="mt-4 space-y-2.5">
+          {
+            DOC_LINKS.map((link) => (
+              <li>
+                <a
+                  href={link.href}
+                  class="text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground"
+                >
+                  {link.label}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </nav>
+
+      <nav aria-labelledby="footer-project">
+        <h2 id="footer-project" class="text-sm font-semibold">Project</h2>
+        <ul class="mt-4 space-y-2.5">
+          {
+            projectLinks.map((link) => (
+              <li>
+                <a
+                  href={link.href}
+                  class="text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground"
+                >
+                  {link.label}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </nav>
+    </div>
+
+    <div class="mt-12 border-t border-hairline pt-6 text-sm text-muted-foreground">
+      <p>Self-hosted. No account, no hosted service, no telemetry.</p>
+    </div>
+  </div>
+</footer>

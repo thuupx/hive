@@ -1,0 +1,43 @@
+---
+import Icon from "./Icon.astro";
+import Section from "./Section.astro";
+
+const pains = [
+  {
+    icon: "node",
+    title: "The agent is not where you are",
+    body: "It runs where the code is, which is rarely where you are. So you SSH in, or open a tunnel, or wait until you are back at your desk.",
+  },
+  {
+    icon: "session",
+    title: "The conversation is trapped in the tool",
+    body: "You had a good thread with one agent. Now you want a second opinion, or a cheaper model for the cleanup pass. You start over, and the context dies with the session.",
+  },
+  {
+    icon: "database",
+    title: "It is not really yours",
+    body: "Session state lives inside the agent, or inside the chat app, or inside a glue script. When it breaks you cannot see why, and when you want to audit it you cannot.",
+  },
+] as const;
+---
+
+<Section
+  id="problem"
+  eyebrow="The problem"
+  title="Coding agents got good. Talking to them did not."
+  lead="Every agent ships its own CLI, its own session, and its own idea of what the conversation is. Three separate problems end up looking like one."
+>
+  <ul class="grid gap-6 md:grid-cols-3">
+    {
+      pains.map((pain) => (
+        <li class="card card-hover p-6">
+          <span class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-accent">
+            <Icon name={pain.icon} size={20} />
+          </span>
+          <h3 class="mt-4 text-lg font-semibold">{pain.title}</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted-foreground">{pain.body}</p>
+        </li>
+      ))
+    }
+  </ul>
+</Section>
