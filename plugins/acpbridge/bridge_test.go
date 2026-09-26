@@ -420,6 +420,80 @@ func TestStartReportsAbsentWhenTheAgentCannotStart(t *testing.T) {
 	}
 }
 
+// An update that arrives between turns is history, not this turn's answer.
+//
+// Found in a live conversation: an agent replays its conversation when a session
+// is loaded, and the replay was collected into the next turn's answer — so a
+// message began with three thousand characters of the previous answer, verbatim,
+// before it said anything about the question that was actually asked.
+func TestAReplayBetweenTurnsIsNotCollectedIntoTheNextAnswer(t *testing.T) {
+	_, c, launcher := newBridge(t)
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	// The agent replays its previous answer while no turn is running, which is
+	// what loading a session does.
+	launcher.agent.notify("session/update", map[string]any{
+		"sessionId": "agent-sess-1",
+		"update": map[string]any{
+			"sessionUpdate": "agent_message_chunk",
+			"content":       map[string]any{"type": "text", "text": "the previous answer"},
+		},
+	})
+
+	// Give the replay time to reach the collector, so the test fails if it is
+	// collected rather than dropped.
+	time.Sleep(50 * time.Millisecond)
+
+	launcher.agent.setHandler(func(method string, id json.RawMessage, params json.RawMessage) {
+		if method == "session/prompt" {
+			launcher.agent.notify("session/update", map[string]any{
+				"sessionId": "agent-sess-1",
+				"update": map[string]any{
+					"sessionUpdate": "agent_message_chunk",
+					"content":       map[string]any{"type": "text", "text": "the new answer"},
+				},
+			})
+		}
+		launcher.agent.baseHandler(method, id, params)
+	})
+
+	if err := c.peer.Call(context.Background(), v1.MethodExecutionPrompt, v1.ExecutionPromptParams{
+		AgentRunID: "run_1", Generation: 1, Text: "and now this",
+	}, &map[string]any{}); err != nil {
+		t.Fatalf("execution.prompt: %v", err)
+	}
+
+	waitFor(t, "the answer", func() bool {
+		for _, published := range c.publishedSnapshot() {
+			if published.Type == v1.EventMessage {
+				return true
+			}
+		}
+		return false
+	})
+
+	for _, published := range c.publishedSnapshot() {
+		if published.Type != v1.EventMessage {
+			continue
+		}
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(published.Payload, &payload); err != nil {
+			t.Fatalf("answer payload: %v", err)
+		}
+		if strings.Contains(payload.Text, "the previous answer") {
+			t.Fatalf("the answer carries the replayed history: %q", payload.Text)
+		}
+		if !strings.Contains(payload.Text, "the new answer") {
+			t.Fatalf("answer = %q, want this turn's text", payload.Text)
+		}
+	}
+}
+
 func TestPromptForwardsUpdatesAndReportsTerminal(t *testing.T) {
 	_, c, launcher := newBridge(t)
 
