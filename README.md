@@ -124,7 +124,6 @@ more transports, and a web UI are designed but not shipped.
 - [docs/security.md](docs/security.md) — identity, authorization, permissions
 - [docs/configuration.md](docs/configuration.md) — every config key
 - [docs/failure-semantics.md](docs/failure-semantics.md) — what is and is not claimed
-- [hive-solution-design-v6.md](hive-solution-design-v6.md) — the architecture
-- [hive-v1-implementation-plan.md](hive-v1-implementation-plan.md) — v1 cut line
+- [docs/hive-solution-design.md](docs/hive-solution-design.md) — the architecture
 - [docs/releasing.md](docs/releasing.md) — how a release is built and published
 - [AGENTS.md](AGENTS.md) — conventions for changing the code

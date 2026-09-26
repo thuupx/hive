@@ -3671,8 +3671,8 @@ The important changes are:
    missing)
 ```
 
-The v1 cut line, resolved decisions, and milestone tracking live in
-hive-v1-implementation-plan.md.
+The v1 cut line and the resolved decisions are recorded in `AGENTS.md`, under
+"Decisions already made".
 
 ## v6 design updates
 

@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-23
-- Decision: D3 in `hive-v1-implementation-plan.md`
+- Decision: D3 — see "Decisions already made" in `AGENTS.md`
 
 ## Context
 

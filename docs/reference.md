@@ -436,8 +436,6 @@ More:
 - `configuration.md` — every configuration key
 - `failure-semantics.md` — what is guaranteed, what is best-effort, what is
   explicitly not claimed
-- `../hive-v1-implementation-plan.md` — milestones and what each one deliberately
-  leaves out
 - `../AGENTS.md` — conventions for changing this codebase
 
 ---

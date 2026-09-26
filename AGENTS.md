@@ -206,8 +206,8 @@ resolve; nothing else depends on the path.
 
 ## Decisions already made
 
-Do not relitigate these without reason; see
-`hive-v1-implementation-plan.md` §2–§3.
+Do not relitigate these without reason; they are listed here so that they do not
+have to be rediscovered.
 
 - Single-machine v1: `hive` spawns the node as a child process and speaks
   the real node protocol over loopback TLS.
