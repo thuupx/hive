@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/thupham/hive/internal/event"
+	"github.com/thuupx/hive/internal/event"
 )
 
 // AppendEvents makes events durable on their session stream.

@@ -12,8 +12,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/thupham/hive/internal/client"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/client"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // Overview is a management plane snapshot.

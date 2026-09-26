@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/internal/event"
-	"github.com/thupham/hive/internal/eventbus"
+	"github.com/thuupx/hive/internal/event"
+	"github.com/thuupx/hive/internal/eventbus"
 )
 
 func newEvent(id string) *event.Event {

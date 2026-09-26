@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/thupham/hive/internal/config"
+	"github.com/thuupx/hive/internal/config"
 )
 
 // A workspace inside a folder macOS guards is reported, because the dialog that

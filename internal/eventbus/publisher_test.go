@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/internal/event"
-	"github.com/thupham/hive/internal/eventbus"
+	"github.com/thuupx/hive/internal/event"
+	"github.com/thuupx/hive/internal/eventbus"
 )
 
 // fakeOutbox models the durable outbox: an event stays pending until it is

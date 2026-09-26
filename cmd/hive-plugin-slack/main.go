@@ -19,10 +19,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/thupham/hive/internal/logging"
-	"github.com/thupham/hive/plugins/sdk"
-	"github.com/thupham/hive/plugins/slack"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/logging"
+	"github.com/thuupx/hive/plugins/sdk"
+	"github.com/thuupx/hive/plugins/slack"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // Capabilities the transport needs. It cannot grant itself more: the core

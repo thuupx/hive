@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thupham/hive/internal/config"
+	"github.com/thuupx/hive/internal/config"
 )
 
 // Windows resolves an executable by its extension, so an alias must carry one

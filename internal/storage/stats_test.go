@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/thupham/hive/internal/event"
+	"github.com/thuupx/hive/internal/event"
 )
 
 // The newest report of a kind is what a status read wants, without reading the

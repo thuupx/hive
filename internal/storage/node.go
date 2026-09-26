@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/thupham/hive/internal/event"
+	"github.com/thuupx/hive/internal/event"
 )
 
 // NodeExecution is the node's record of one execution generation.

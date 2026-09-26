@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thupham/hive/internal/client"
-	"github.com/thupham/hive/internal/config"
-	"github.com/thupham/hive/internal/storage"
+	"github.com/thuupx/hive/internal/client"
+	"github.com/thuupx/hive/internal/config"
+	"github.com/thuupx/hive/internal/storage"
 )
 
 // finding is one thing doctor looked at.

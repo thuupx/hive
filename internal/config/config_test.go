@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thupham/hive/internal/config"
+	"github.com/thuupx/hive/internal/config"
 )
 
 func TestDefaultIsValid(t *testing.T) {

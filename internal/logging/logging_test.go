@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thupham/hive/internal/logging"
+	"github.com/thuupx/hive/internal/logging"
 )
 
 func TestParseLevel(t *testing.T) {

@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thupham/hive/internal/agent"
-	"github.com/thupham/hive/internal/daemon"
-	"github.com/thupham/hive/internal/node"
-	"github.com/thupham/hive/internal/plugin"
-	"github.com/thupham/hive/internal/storage"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/agent"
+	"github.com/thuupx/hive/internal/daemon"
+	"github.com/thuupx/hive/internal/node"
+	"github.com/thuupx/hive/internal/plugin"
+	"github.com/thuupx/hive/internal/storage"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // startStack brings up a coordinator with a Control API socket and a node with

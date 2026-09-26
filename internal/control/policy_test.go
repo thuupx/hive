@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 func TestPolicyAllowsOwnerAndConfiguredUsers(t *testing.T) {

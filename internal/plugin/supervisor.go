@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // DefaultHandshakeTimeout bounds how long a plugin has to say hello.

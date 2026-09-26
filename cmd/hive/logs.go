@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thupham/hive/internal/config"
-	"github.com/thupham/hive/internal/logging"
+	"github.com/thuupx/hive/internal/config"
+	"github.com/thuupx/hive/internal/logging"
 )
 
 // daemonLogger is where the daemon writes.

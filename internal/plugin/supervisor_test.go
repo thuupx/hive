@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/internal/event"
-	"github.com/thupham/hive/internal/eventbus"
-	"github.com/thupham/hive/internal/plugin"
-	"github.com/thupham/hive/plugins/sdk"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/event"
+	"github.com/thuupx/hive/internal/eventbus"
+	"github.com/thuupx/hive/internal/plugin"
+	"github.com/thuupx/hive/plugins/sdk"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // The test binary doubles as a plugin process. Re-executing it keeps the test

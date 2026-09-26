@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/thupham/hive/internal/agent"
+	"github.com/thuupx/hive/internal/agent"
 )
 
 // InsertAgentRun stores a new AgentRun.

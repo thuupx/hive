@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/slack-go/slack/slackevents"
-	"github.com/thupham/hive/plugins/sdk"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/plugins/sdk"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // Options configures the Slack plugin.

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thupham/hive/internal/session"
+	"github.com/thuupx/hive/internal/session"
 )
 
 // InsertSession stores a new session. Inserting an existing id is an error;

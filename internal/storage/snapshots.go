@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/thupham/hive/internal/session"
+	"github.com/thuupx/hive/internal/session"
 )
 
 // PutSnapshot stores a context snapshot.

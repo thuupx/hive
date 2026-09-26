@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thupham/hive/internal/workspace"
+	"github.com/thuupx/hive/internal/workspace"
 )
 
 // A run works where the coordinator said, then where the configuration said.

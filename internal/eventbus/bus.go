@@ -10,7 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/thupham/hive/internal/event"
+	"github.com/thuupx/hive/internal/event"
 )
 
 // DefaultCapacity is the per-subscriber queue depth.

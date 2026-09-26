@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/internal/agent"
-	"github.com/thupham/hive/internal/client"
-	"github.com/thupham/hive/internal/storage"
-	"github.com/thupham/hive/internal/tui"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/agent"
+	"github.com/thuupx/hive/internal/client"
+	"github.com/thuupx/hive/internal/storage"
+	"github.com/thuupx/hive/internal/tui"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // TestClientDrivesTheControlAPI exercises the whole client surface the CLI and the

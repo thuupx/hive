@@ -3,9 +3,9 @@ package control
 import (
 	"context"
 
-	"github.com/thupham/hive/internal/agent"
-	"github.com/thupham/hive/internal/session"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/agent"
+	"github.com/thuupx/hive/internal/session"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // SessionConfig reads or changes a session's agent selectors.

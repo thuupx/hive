@@ -39,7 +39,7 @@ func TestLinePassesFiltersByLevel(t *testing.T) {
 // A line with no level of its own belongs to a record, and dropping it would
 // split one record in half.
 func TestLinePassesKeepsALineWithNoLevel(t *testing.T) {
-	continuation := "  at github.com/thupham/hive/internal/control/service.go:123"
+	continuation := "  at github.com/thuupx/hive/internal/control/service.go:123"
 
 	if !linePasses(continuation, "error", "") {
 		t.Fatal("a continuation line should survive a level filter")

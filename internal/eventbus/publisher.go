@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/thupham/hive/internal/event"
+	"github.com/thuupx/hive/internal/event"
 )
 
 // Outbox supplies durable events that have not reached the bus yet.

@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thupham/hive/plugins/acp"
-	"github.com/thupham/hive/plugins/sdk"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/plugins/acp"
+	"github.com/thuupx/hive/plugins/sdk"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // Launcher starts an ACP agent and returns a connected, initialized client.

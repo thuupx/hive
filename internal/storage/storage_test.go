@@ -10,11 +10,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/thupham/hive/internal/agent"
-	"github.com/thupham/hive/internal/command"
-	"github.com/thupham/hive/internal/event"
-	"github.com/thupham/hive/internal/session"
-	"github.com/thupham/hive/internal/storage"
+	"github.com/thuupx/hive/internal/agent"
+	"github.com/thuupx/hive/internal/command"
+	"github.com/thuupx/hive/internal/event"
+	"github.com/thuupx/hive/internal/session"
+	"github.com/thuupx/hive/internal/storage"
 )
 
 const testSession = "sess_1"

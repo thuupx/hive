@@ -12,8 +12,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/thupham/hive/internal/event"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/event"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // DialTimeout bounds how long a connection attempt may take.

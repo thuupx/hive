@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thupham/hive/internal/daemon"
-	"github.com/thupham/hive/internal/permission"
-	"github.com/thupham/hive/internal/plugin"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/daemon"
+	"github.com/thuupx/hive/internal/permission"
+	"github.com/thuupx/hive/internal/plugin"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // A prompt that arrives while a turn is running waits behind it.

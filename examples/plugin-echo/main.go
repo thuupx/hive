@@ -17,8 +17,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/thupham/hive/plugins/sdk"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/plugins/sdk"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // capabilities are what this plugin asks for. The core intersects the request with

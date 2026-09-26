@@ -1,4 +1,4 @@
-module github.com/thupham/hive
+module github.com/thuupx/hive
 
 go 1.27.1
 

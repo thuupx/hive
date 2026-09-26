@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/thupham/hive/internal/config"
+	"github.com/thuupx/hive/internal/config"
 )
 
 // Process names.

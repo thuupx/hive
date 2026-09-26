@@ -8,8 +8,8 @@ package apierr
 import (
 	"errors"
 
-	"github.com/thupham/hive/internal/storage"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/storage"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // From maps an error onto a protocol error.

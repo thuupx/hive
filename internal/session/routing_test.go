@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thupham/hive/internal/agent"
+	"github.com/thuupx/hive/internal/agent"
 )
 
 func lookupOf(runs ...*agent.AgentRun) func(string) (*agent.AgentRun, bool) {

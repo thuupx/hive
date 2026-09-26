@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/plugins/sdk"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/plugins/sdk"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // TestNoCoreDependency enforces the plugin boundary: the plugin SDK is part of

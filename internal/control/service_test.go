@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/internal/command"
-	"github.com/thupham/hive/internal/event"
-	"github.com/thupham/hive/internal/node"
-	"github.com/thupham/hive/internal/session"
-	"github.com/thupham/hive/internal/storage"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/command"
+	"github.com/thuupx/hive/internal/event"
+	"github.com/thuupx/hive/internal/node"
+	"github.com/thuupx/hive/internal/session"
+	"github.com/thuupx/hive/internal/storage"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 func newService(t *testing.T, allowedUsers ...string) (*Service, *storage.Store) {

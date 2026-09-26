@@ -11,13 +11,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/thupham/hive/internal/event"
-	"github.com/thupham/hive/internal/ids"
-	"github.com/thupham/hive/internal/node"
-	"github.com/thupham/hive/internal/plugin"
-	"github.com/thupham/hive/internal/storage"
-	"github.com/thupham/hive/internal/workspace"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/event"
+	"github.com/thuupx/hive/internal/ids"
+	"github.com/thuupx/hive/internal/node"
+	"github.com/thuupx/hive/internal/plugin"
+	"github.com/thuupx/hive/internal/storage"
+	"github.com/thuupx/hive/internal/workspace"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // UploadTimeout bounds one upload to the coordinator.

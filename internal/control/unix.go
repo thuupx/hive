@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // SocketFile is the Control API socket name inside the data directory.

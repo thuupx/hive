@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/thupham/hive/internal/agent"
+	"github.com/thuupx/hive/internal/agent"
 )
 
 // Errors returned by prompt routing.

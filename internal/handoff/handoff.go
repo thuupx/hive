@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/thupham/hive/internal/event"
+	"github.com/thuupx/hive/internal/event"
 )
 
 // State is the lifecycle state of a handoff.

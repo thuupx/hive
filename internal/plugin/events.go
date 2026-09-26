@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/thupham/hive/internal/event"
-	"github.com/thupham/hive/internal/eventbus"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/event"
+	"github.com/thuupx/hive/internal/eventbus"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // EventBuffer is the bus subscription depth used for plugin delivery.

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	slackgo "github.com/slack-go/slack"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 func TestRenderPermissionRequestOffersButtons(t *testing.T) {

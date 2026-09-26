@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/internal/daemon"
-	"github.com/thupham/hive/internal/node"
-	"github.com/thupham/hive/internal/plugin"
-	"github.com/thupham/hive/internal/storage"
-	"github.com/thupham/hive/plugins/sdk"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/daemon"
+	"github.com/thuupx/hive/internal/node"
+	"github.com/thuupx/hive/internal/plugin"
+	"github.com/thuupx/hive/internal/storage"
+	"github.com/thuupx/hive/plugins/sdk"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // runTestTransport delivers one normalized inbound delivery and reports the

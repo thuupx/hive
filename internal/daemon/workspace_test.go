@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/thupham/hive/internal/agent"
-	"github.com/thupham/hive/internal/client"
-	"github.com/thupham/hive/internal/session"
-	"github.com/thupham/hive/internal/storage"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/agent"
+	"github.com/thuupx/hive/internal/client"
+	"github.com/thuupx/hive/internal/session"
+	"github.com/thuupx/hive/internal/storage"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // A workspace is identity plus a node-local location, and naming one on a session

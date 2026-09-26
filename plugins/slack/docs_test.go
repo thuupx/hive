@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thupham/hive/plugins/slack"
+	"github.com/thuupx/hive/plugins/slack"
 )
 
 // The documented command table must match the transport's own catalog.

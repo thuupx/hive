@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/plugins/acp"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/plugins/acp"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // The answer to a prompt must be readable. Without this normalization the agent's

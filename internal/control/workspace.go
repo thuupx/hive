@@ -3,11 +3,11 @@ package control
 import (
 	"context"
 
-	"github.com/thupham/hive/internal/command"
-	"github.com/thupham/hive/internal/ids"
-	"github.com/thupham/hive/internal/storage"
-	"github.com/thupham/hive/internal/workspace"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/command"
+	"github.com/thuupx/hive/internal/ids"
+	"github.com/thuupx/hive/internal/storage"
+	"github.com/thuupx/hive/internal/workspace"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // CreateWorkspace registers a workspace and its node-local locations.

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thupham/hive/internal/event"
+	"github.com/thuupx/hive/internal/event"
 )
 
 func TestNewStartsRequested(t *testing.T) {

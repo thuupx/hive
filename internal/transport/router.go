@@ -20,13 +20,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thupham/hive/internal/apierr"
-	"github.com/thupham/hive/internal/control"
-	"github.com/thupham/hive/internal/ids"
-	"github.com/thupham/hive/internal/node"
-	"github.com/thupham/hive/internal/permission"
-	"github.com/thupham/hive/internal/storage"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/apierr"
+	"github.com/thuupx/hive/internal/control"
+	"github.com/thuupx/hive/internal/ids"
+	"github.com/thuupx/hive/internal/node"
+	"github.com/thuupx/hive/internal/permission"
+	"github.com/thuupx/hive/internal/storage"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // Router turns transport envelopes into Control API operations.

@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/thupham/hive/internal/command"
-	"github.com/thupham/hive/internal/event"
+	"github.com/thuupx/hive/internal/command"
+	"github.com/thuupx/hive/internal/event"
 )
 
 // EnsureCommand inserts cmd when its id is new and otherwise returns the

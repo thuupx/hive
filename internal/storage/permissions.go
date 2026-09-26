@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/thupham/hive/internal/permission"
+	"github.com/thuupx/hive/internal/permission"
 )
 
 // InsertPermissionRequest stores a new permission request.

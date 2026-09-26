@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thupham/hive/internal/config"
+	"github.com/thuupx/hive/internal/config"
 )
 
 // The service label is how the supervisor knows the daemon. It is reverse-DNS so

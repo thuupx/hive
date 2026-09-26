@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/internal/agent"
-	"github.com/thupham/hive/internal/daemon"
-	"github.com/thupham/hive/internal/handoff"
-	"github.com/thupham/hive/internal/node"
-	"github.com/thupham/hive/internal/plugin"
-	"github.com/thupham/hive/internal/session"
-	"github.com/thupham/hive/internal/storage"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/agent"
+	"github.com/thuupx/hive/internal/daemon"
+	"github.com/thuupx/hive/internal/handoff"
+	"github.com/thuupx/hive/internal/node"
+	"github.com/thuupx/hive/internal/plugin"
+	"github.com/thuupx/hive/internal/session"
+	"github.com/thuupx/hive/internal/storage"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 const targetAgent = "other-agent"

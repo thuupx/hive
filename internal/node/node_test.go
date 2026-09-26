@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/internal/event"
-	"github.com/thupham/hive/internal/node"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/event"
+	"github.com/thuupx/hive/internal/node"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 type fakeExecutor struct {

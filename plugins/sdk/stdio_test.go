@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // A plugin that stops for its own reason must still be able to exit.

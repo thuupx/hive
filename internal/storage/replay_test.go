@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/internal/event"
-	"github.com/thupham/hive/internal/session"
-	"github.com/thupham/hive/internal/storage"
+	"github.com/thuupx/hive/internal/event"
+	"github.com/thuupx/hive/internal/session"
+	"github.com/thuupx/hive/internal/storage"
 )
 
 func TestEarliestSequence(t *testing.T) {

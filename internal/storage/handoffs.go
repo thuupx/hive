@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/thupham/hive/internal/handoff"
+	"github.com/thuupx/hive/internal/handoff"
 )
 
 // InsertHandoff stores a new handoff record.

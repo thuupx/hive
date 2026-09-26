@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/plugins/acp"
-	"github.com/thupham/hive/plugins/acpbridge"
-	"github.com/thupham/hive/plugins/sdk"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/plugins/acp"
+	"github.com/thuupx/hive/plugins/acpbridge"
+	"github.com/thuupx/hive/plugins/sdk"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // --- fake core -------------------------------------------------------------

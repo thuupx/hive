@@ -3,7 +3,7 @@ package control
 import (
 	"testing"
 
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // A session has one turn at a time: a second prompt waits behind the first.

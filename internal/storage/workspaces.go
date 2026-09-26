@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/thupham/hive/internal/agent"
-	"github.com/thupham/hive/internal/workspace"
+	"github.com/thuupx/hive/internal/agent"
+	"github.com/thuupx/hive/internal/workspace"
 )
 
 // InsertWorkspace stores a new workspace.

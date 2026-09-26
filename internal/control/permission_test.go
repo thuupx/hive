@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/thupham/hive/internal/permission"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/permission"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // The recorded decision follows the option the user chose, not a flag the

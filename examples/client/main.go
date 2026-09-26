@@ -13,11 +13,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/thupham/hive/internal/client"
-	"github.com/thupham/hive/internal/config"
-	"github.com/thupham/hive/internal/control"
-	"github.com/thupham/hive/internal/ids"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/client"
+	"github.com/thuupx/hive/internal/config"
+	"github.com/thuupx/hive/internal/control"
+	"github.com/thuupx/hive/internal/ids"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 func main() {

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thupham/hive/internal/permission"
-	"github.com/thupham/hive/internal/storage"
+	"github.com/thuupx/hive/internal/permission"
+	"github.com/thuupx/hive/internal/storage"
 )
 
 func insertPermission(t *testing.T, s *storage.Store, req *permission.Request) {

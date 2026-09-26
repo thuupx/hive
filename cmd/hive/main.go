@@ -29,13 +29,13 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/thupham/hive/internal/config"
-	"github.com/thupham/hive/internal/control"
-	"github.com/thupham/hive/internal/daemon"
-	"github.com/thupham/hive/internal/node"
-	"github.com/thupham/hive/internal/plugin"
-	"github.com/thupham/hive/internal/storage"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/config"
+	"github.com/thuupx/hive/internal/control"
+	"github.com/thuupx/hive/internal/daemon"
+	"github.com/thuupx/hive/internal/node"
+	"github.com/thuupx/hive/internal/plugin"
+	"github.com/thuupx/hive/internal/storage"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // Version is the Hive build version.

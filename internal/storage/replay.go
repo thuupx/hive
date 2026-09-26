@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thupham/hive/internal/event"
+	"github.com/thuupx/hive/internal/event"
 )
 
 // ReplayResult is the outcome of a cursor replay request.

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/thupham/hive/internal/permission"
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	"github.com/thuupx/hive/internal/permission"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // RespondToPermission relays a permission decision to the agent, then records it.

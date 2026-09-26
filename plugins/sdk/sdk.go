@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	v1 "github.com/thupham/hive/protocol/hive/v1"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // HandshakeTimeout bounds how long the core gets to accept a plugin.

@@ -200,8 +200,9 @@ Plugins depend on this package without linking the core.
 
 ### Module path
 
-The module is `github.com/thupham/hive`. Change it everywhere before the
-first push if the repository will live elsewhere.
+The module is `github.com/thuupx/hive`, which is where the repository lives. The
+two have to agree for `go install github.com/thuupx/hive/cmd/hive@v1.0.0` to
+resolve; nothing else depends on the path.
 
 ## Decisions already made
 

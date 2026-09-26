@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thupham/hive/internal/logging"
+	"github.com/thuupx/hive/internal/logging"
 )
 
 // A daemon meant to run for months cannot write to one file forever.
