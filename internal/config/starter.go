@@ -20,6 +20,11 @@ type StarterOptions struct {
 
 	// DefaultAgent is the agent a session uses when it does not choose one.
 	DefaultAgent string
+
+	// WorkspaceDir is where a run works when its workspace names no location. It
+	// is written into the file because a run with no workspace is refused, and a
+	// starter that cannot run an agent is not a starter.
+	WorkspaceDir string
 }
 
 // RenderStarter renders a starter configuration.
@@ -40,10 +45,12 @@ func RenderStarter(opts StarterOptions) string {
 	fmt.Fprintf(&b, "data_dir = %q\n", cfg.DataDir)
 	b.WriteString("#   ^ empty uses ~/.hive/data\n\n")
 
-	fmt.Fprintf(&b, "workspace_dir = %q\n", cfg.WorkspaceDir)
+	fmt.Fprintf(&b, "workspace_dir = %q\n", opts.WorkspaceDir)
 	b.WriteString("#   ^ where a run works when its workspace names no location for the node.\n")
-	b.WriteString("#     Empty uses the node's working directory. A run must have one: an\n")
-	b.WriteString("#     agent that writes files needs to know where.\n\n")
+	b.WriteString("#     A run must have one: an agent that writes files needs to know where.\n")
+	b.WriteString("#     Empty uses ~/.hive/workspace, a directory Hive owns, so an installation\n")
+	b.WriteString("#     never works in the daemon's own directory — which for a service is the\n")
+	b.WriteString("#     filesystem root.\n\n")
 
 	fmt.Fprintf(&b, "default_agent = %q\n", opts.DefaultAgent)
 	b.WriteString("#   ^ the agent a session uses when it does not choose one\n\n")

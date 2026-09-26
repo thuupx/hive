@@ -140,8 +140,17 @@ also the plugin identity, so it is what you pass to `-agent` and what a node
 declares it can run.
 
 A run also needs a working directory: agents write files, and ACP requires a
-`cwd` to create a session. `workspace_dir` sets it. Empty means the directory the
-node was started in, which is usually what you want.
+`cwd` to create a session. `workspace_dir` sets it.
+
+**It is never the daemon's own directory.** A daemon started by the system runs
+in the filesystem root, and an agent told to work there can read and write every
+file its user can. An empty `workspace_dir` therefore means `~/.hive/workspace`,
+a directory Hive owns and creates — bounded, and out of the way. `hive init`
+writes the directory you ran it in, so the usual case points at your project, and
+`hive config` and `hive doctor` both print which directory is in effect.
+
+A session can also name a registered workspace (`hive workspace create`), and
+that location wins over `workspace_dir`.
 
 > **This is the step people miss.** Without an `[agents.*]` section, Hive starts
 > and serves status, but it cannot create a session, and it will not start a node

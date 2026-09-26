@@ -184,9 +184,11 @@ func startStackWithTransportAck(t *testing.T, params v1.TransportInboundParams, 
 
 	nodeStore := openNodeStore(t)
 	executionNode, err := daemon.NewNode(daemon.NodeOptions{
-		Store:          nodeStore,
-		NodeID:         testNodeID,
-		Version:        "test",
+		Store:   nodeStore,
+		NodeID:  testNodeID,
+		Version: "test",
+		// A run must have a workspace, so the tests give it one.
+		WorkspaceDir:   t.TempDir(),
 		LeaseSeconds:   30,
 		CoordinatorURL: coordinator.URL(),
 		TLSConfig:      node.ClientTLSConfig(cert),

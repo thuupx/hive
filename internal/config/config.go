@@ -37,10 +37,13 @@ type Config struct {
 	DataDir string `toml:"data_dir"`
 
 	// WorkspaceDir is where a run works when its workspace names no location for
-	// the node. Empty uses the node process's working directory.
+	// the node. Empty uses the default workspace directory, ~/.hive/workspace.
 	//
 	// A run must have a working directory: an agent that writes files needs to
-	// know where, and ACP requires one to create a session.
+	// know where, and ACP requires one to create a session. The default is a
+	// directory Hive owns, so an installation that was never pointed at a project
+	// runs in a bounded place rather than in the daemon's own directory — which
+	// for a service is the filesystem root.
 	WorkspaceDir string                     `toml:"workspace_dir"`
 	Cluster      ClusterConfig              `toml:"cluster"`
 	Log          LogConfig                  `toml:"log"`
@@ -297,6 +300,22 @@ func (c Config) Validate() error {
 		return errors.New("event_store.retention_days: must not be negative")
 	}
 
+	// A workspace of "/" is not a workspace. It is every file the user can reach,
+	// and an agent told to work there can rewrite any of them. Catching it here
+	// says so at startup instead of at the first run.
+	if c.WorkspaceDir != "" {
+		dir, err := c.EffectiveWorkspaceDir()
+		if err != nil {
+			return fmt.Errorf("workspace_dir: %w", err)
+		}
+		if !filepath.IsAbs(dir) {
+			return fmt.Errorf("workspace_dir: %q is not an absolute path", c.WorkspaceDir)
+		}
+		if filepath.Clean(dir) == string(filepath.Separator) {
+			return errors.New("workspace_dir: / is the whole filesystem, not a workspace")
+		}
+	}
+
 	for name, a := range c.Agents {
 		if name == "" {
 			return errors.New("agents: empty agent name")
@@ -401,6 +420,30 @@ func (c Config) EffectiveDataDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, "data"), nil
+}
+
+// EffectiveWorkspaceDir resolves the directory a run works in.
+//
+// An empty workspace_dir is not an error: it means the installation was never
+// pointed at a project, so runs work in the default directory, which Hive owns.
+func (c Config) EffectiveWorkspaceDir() (string, error) {
+	if c.WorkspaceDir != "" {
+		return expandHome(c.WorkspaceDir)
+	}
+	return DefaultWorkspaceDir()
+}
+
+// DefaultWorkspaceDir is where a run works when no workspace is configured.
+//
+// It is a directory Hive owns, so a fresh installation can run an agent without
+// being pointed anywhere, and it is deliberately not the home directory or the
+// documents folder: an agent can reach only what is inside it.
+func DefaultWorkspaceDir() (string, error) {
+	home, err := HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "workspace"), nil
 }
 
 func expandHome(p string) (string, error) {

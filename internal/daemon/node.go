@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/thupham/hive/internal/node"
 	"github.com/thupham/hive/internal/plugin"
 	"github.com/thupham/hive/internal/storage"
+	"github.com/thupham/hive/internal/workspace"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
 )
 
@@ -337,20 +337,19 @@ type pluginExecutor struct {
 // resolveWorkspace returns the working directory for an execution.
 //
 // A run must have one: an agent that writes files needs to know where, and ACP
-// requires a cwd to create a session. An explicit location wins; otherwise the
-// node's own working directory is the honest default, because that is where the
-// node was started.
-func (e *pluginExecutor) resolveWorkspace(requested string) string {
-	if requested != "" {
-		return requested
+// requires a cwd to create a session. A location the coordinator named wins, then
+// the configured workspace.
+//
+// It never falls back to the process's own directory. A daemon started by the
+// system runs in the filesystem root, and an agent told to work there can read
+// and write everything its user can — that is not a working directory, it is the
+// whole machine. Refusing is the honest answer: the error says what to fix.
+func (e *pluginExecutor) resolveWorkspace(requested string) (string, error) {
+	dir, err := workspace.Directory(requested, e.workspaceDir)
+	if err != nil {
+		return "", v1.InvalidRequest("%s", err.Error())
 	}
-	if e.workspaceDir != "" {
-		return e.workspaceDir
-	}
-	if dir, err := os.Getwd(); err == nil {
-		return dir
-	}
-	return ""
+	return dir, nil
 }
 
 // instanceFor picks the plugin that runs a given agent.
@@ -373,7 +372,11 @@ func (e *pluginExecutor) Start(ctx context.Context, req v1.ExecutionStartParams)
 	if err != nil {
 		return "", err
 	}
-	req.WorkspacePath = e.resolveWorkspace(req.WorkspacePath)
+	workspace, err := e.resolveWorkspace(req.WorkspacePath)
+	if err != nil {
+		return "", err
+	}
+	req.WorkspacePath = workspace
 
 	var out struct {
 		RuntimeSessionID string `json:"runtimeSessionId"`

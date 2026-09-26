@@ -110,6 +110,8 @@ func TestValidateRejectsBadValues(t *testing.T) {
 		{"agent target", "[agents.x]\nprotocol = \"acp\"\n", "agents.x"},
 		{"agent both", "[agents.x]\nprotocol = \"acp\"\ncommand = [\"a\"]\nendpoint = \"wss://x\"\n", "mutually exclusive"},
 		{"ack mode", "[transport.slack.acknowledgement]\nenabled = true\nmode = \"sparkle\"\n", "acknowledgement.mode"},
+		{"workspace root", "workspace_dir = \"/\"\n", "workspace_dir"},
+		{"workspace relative", "workspace_dir = \"relative/path\"\n", "workspace_dir"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,6 +127,38 @@ func TestValidateRejectsBadValues(t *testing.T) {
 				t.Errorf("error = %v, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// An installation that was never pointed at a project still has a workspace: a
+// directory Hive owns, so a run cannot fall back to wherever the daemon happens
+// to be.
+func TestEffectiveWorkspaceDir(t *testing.T) {
+	cfg, err := config.Load(writeConfig(t, ""))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("home: %v", err)
+	}
+
+	dir, err := cfg.EffectiveWorkspaceDir()
+	if err != nil {
+		t.Fatalf("EffectiveWorkspaceDir: %v", err)
+	}
+	if want := filepath.Join(home, ".hive", "workspace"); dir != want {
+		t.Fatalf("default workspace = %q, want %q", dir, want)
+	}
+
+	cfg.WorkspaceDir = "~/repos"
+	dir, err = cfg.EffectiveWorkspaceDir()
+	if err != nil {
+		t.Fatalf("EffectiveWorkspaceDir: %v", err)
+	}
+	if want := filepath.Join(home, "repos"); dir != want {
+		t.Fatalf("workspace = %q, want %q", dir, want)
 	}
 }
 

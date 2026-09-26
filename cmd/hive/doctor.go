@@ -43,6 +43,7 @@ func runDoctor(f flags) error {
 
 	var findings []finding
 	findings = append(findings, checkConfig(cfg)...)
+	findings = append(findings, checkWorkspace(cfg)...)
 	findings = append(findings, checkDataDir(cfg)...)
 	findings = append(findings, checkAgents(cfg)...)
 	findings = append(findings, checkTransports(cfg)...)
@@ -123,6 +124,52 @@ func checkConfig(cfg config.Config) []finding {
 	}
 
 	return out
+}
+
+// checkWorkspace reports where an agent would work.
+//
+// It is the root an agent can read and write, so it is worth saying out loud —
+// including when it is the default, because a user who expects their repository
+// wants to know the agent is somewhere else. The check exists because the answer
+// used to be the daemon's own directory, which for a service is the filesystem
+// root.
+func checkWorkspace(cfg config.Config) []finding {
+	dir, err := cfg.EffectiveWorkspaceDir()
+	if err != nil {
+		return []finding{{
+			level:  "fail",
+			what:   "the workspace could not be resolved",
+			detail: err.Error(),
+			fix:    "set workspace_dir to an absolute path you own",
+		}}
+	}
+
+	if filepath.Clean(dir) == string(filepath.Separator) {
+		return []finding{{
+			level:  "fail",
+			what:   "the workspace is the filesystem root",
+			detail: "/ is every file you can reach, not a project.",
+			fix:    "set workspace_dir to the project directory the agent should work in",
+		}}
+	}
+
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return []finding{{
+			level:  "fail",
+			what:   "the workspace is not a directory",
+			detail: dir,
+			fix:    "create it, or set workspace_dir to one that exists",
+		}}
+	}
+
+	if cfg.WorkspaceDir == "" {
+		return []finding{{
+			level:  "ok",
+			what:   "workspace is the default",
+			detail: dir + " (set workspace_dir to work in a project)",
+		}}
+	}
+	return []finding{{level: "ok", what: "workspace", detail: dir}}
 }
 
 // checkDataDir reports whether Hive can write where it needs to.

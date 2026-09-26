@@ -344,9 +344,11 @@ func TestCoordinatorNodeAgentEndToEnd(t *testing.T) {
 	// The node, with its agent plugin.
 	nodeStore := openNodeStore(t)
 	executionNode, err := daemon.NewNode(daemon.NodeOptions{
-		Store:          nodeStore,
-		NodeID:         testNodeID,
-		Version:        "test",
+		Store:   nodeStore,
+		NodeID:  testNodeID,
+		Version: "test",
+		// A run must have a workspace, so the tests give it one.
+		WorkspaceDir:   t.TempDir(),
 		LeaseSeconds:   30,
 		CoordinatorURL: coordinator.URL(),
 		TLSConfig:      node.ClientTLSConfig(cert),
@@ -466,9 +468,11 @@ func TestNodeBuffersEventsWhileDisconnected(t *testing.T) {
 
 	nodeStore := openNodeStore(t)
 	executionNode, err := daemon.NewNode(daemon.NodeOptions{
-		Store:          nodeStore,
-		NodeID:         testNodeID,
-		Version:        "test",
+		Store:   nodeStore,
+		NodeID:  testNodeID,
+		Version: "test",
+		// A run must have a workspace, so the tests give it one.
+		WorkspaceDir:   t.TempDir(),
 		LeaseSeconds:   30,
 		CoordinatorURL: "wss://127.0.0.1:1/node",
 		TLSConfig:      node.ClientTLSConfig(cert),
@@ -533,9 +537,11 @@ func TestEventForAnUnknownSessionStaysBuffered(t *testing.T) {
 
 	nodeStore := openNodeStore(t)
 	executionNode, err := daemon.NewNode(daemon.NodeOptions{
-		Store:          nodeStore,
-		NodeID:         testNodeID,
-		Version:        "test",
+		Store:   nodeStore,
+		NodeID:  testNodeID,
+		Version: "test",
+		// A run must have a workspace, so the tests give it one.
+		WorkspaceDir:   t.TempDir(),
 		LeaseSeconds:   30,
 		CoordinatorURL: coordinator.URL(),
 		TLSConfig:      node.ClientTLSConfig(cert),

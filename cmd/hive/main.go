@@ -23,8 +23,9 @@ import (
 	"strings"
 	"syscall"
 
-	"golang.org/x/term"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -291,9 +292,11 @@ func runInit(f flags, args []string) error {
 		return err
 	}
 
+	workspace := initWorkspaceDir()
 	content := config.RenderStarter(config.StarterOptions{
 		Agents:       agents,
 		DefaultAgent: defaultAgent,
+		WorkspaceDir: workspace,
 	})
 
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
@@ -307,8 +310,51 @@ func runInit(f flags, args []string) error {
 	if defaultAgent != "" {
 		fmt.Printf("default agent: %s\n", defaultAgent)
 	}
+	if workspace != "" {
+		fmt.Printf("workspace:     %s\n", workspace)
+	} else if def, err := config.DefaultWorkspaceDir(); err == nil {
+		fmt.Printf("workspace:     %s (default)\n", def)
+		fmt.Println("  this directory is not a project; set workspace_dir to work in one")
+	}
 	fmt.Println("\nNext: `hive serve`, then `hive agent list` in another terminal.")
 	return nil
+}
+
+// nodeChildDir is the working directory the node child is started in.
+//
+// The configured workspace is the right directory, because it is where the agents
+// work. The data directory is the safe neutral answer when there is none: a
+// service's own directory is the filesystem root, and a process started there
+// gives every file it launches the same root.
+func nodeChildDir(cfg config.Config, dataDir string) string {
+	if workspace, err := cfg.EffectiveWorkspaceDir(); err == nil && workspace != "" {
+		return workspace
+	}
+	return dataDir
+}
+
+// initWorkspaceDir is the workspace a starter file names.
+//
+// It is the directory `hive init` was run in, which is the project the user
+// means — the same convention as `git init`, `npm init`, and opening a folder in
+// an editor.
+//
+// The filesystem root and the home directory are refused, because neither is a
+// project. A starter that pointed an agent at every file its user owns would be
+// worse than one that points nowhere and says so.
+func initWorkspaceDir() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	cleaned := filepath.Clean(dir)
+	if cleaned == string(filepath.Separator) {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil && cleaned == filepath.Clean(home) {
+		return ""
+	}
+	return dir
 }
 
 // reportDiscovery prints what was found, and is explicit about what is a guess.
@@ -445,6 +491,19 @@ func runConfig(f flags) error {
 	fmt.Printf("data dir:    %s\n", dataDir)
 	fmt.Printf("role:        %s\n", cfg.EffectiveRole())
 
+	// The workspace is worth printing even when it is the default: it is the root
+	// an agent can read and write, and "why can it not see my repository" is
+	// answered here.
+	workspace, err := cfg.EffectiveWorkspaceDir()
+	if err != nil {
+		return err
+	}
+	if cfg.WorkspaceDir == "" {
+		fmt.Printf("workspace:   %s (default; set workspace_dir to work in a project)\n", workspace)
+	} else {
+		fmt.Printf("workspace:   %s\n", workspace)
+	}
+
 	if nodeID, err := cfg.EffectiveNodeID(); err == nil {
 		fmt.Printf("node id:     %s\n", nodeID)
 	}
@@ -492,6 +551,21 @@ func runServe(f flags) error {
 	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
 		log.Warn("no configuration file; Hive cannot run an agent",
 			"path", cfgPath, "create_it_with", "hive init")
+	}
+
+	// A run must have a working directory, and the default is a directory Hive
+	// owns. Creating it here means the node child can be started in it and an
+	// agent always has somewhere to work.
+	workspaceDir, err := cfg.EffectiveWorkspaceDir()
+	if err != nil {
+		return fmt.Errorf("resolve the workspace directory: %w", err)
+	}
+	if err := os.MkdirAll(workspaceDir, 0o700); err != nil {
+		log.Warn("the workspace directory could not be created; runs will fail",
+			"workspace", workspaceDir, "error", err)
+	} else if cfg.WorkspaceDir == "" {
+		log.Info("runs work in the default workspace; set workspace_dir to work in a project",
+			"workspace", workspaceDir)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -577,7 +651,7 @@ func serveCoordinator(ctx context.Context, cfgPath string, cfg config.Config, lo
 		log.Warn("no node child started: no agents are configured",
 			"fix", "add an [agents.<name>] section to "+cfgPath, "see", "docs/reference.md")
 	default:
-		child, err := spawnNodeChild(cfgPath, coordinator.URL(), log)
+		child, err := spawnNodeChild(cfgPath, coordinator.URL(), nodeChildDir(cfg, dataDir), log)
 		if err != nil {
 			return err
 		}
@@ -589,7 +663,7 @@ func serveCoordinator(ctx context.Context, cfgPath string, cfg config.Config, lo
 	return nil
 }
 
-func spawnNodeChild(cfgPath, coordinatorURL string, log *slog.Logger) (*exec.Cmd, error) {
+func spawnNodeChild(cfgPath, coordinatorURL, dir string, log *slog.Logger) (*exec.Cmd, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("resolve the hive executable: %w", err)
@@ -605,6 +679,10 @@ func spawnNodeChild(cfgPath, coordinatorURL string, log *slog.Logger) (*exec.Cmd
 		"-role", string(config.RoleNode),
 		"-coordinator-url", coordinatorURL,
 	)
+	// The child's directory is the directory its agents get. A service starts in
+	// the filesystem root, and a process started there hands every file it
+	// launches the same root.
+	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), nodeChildEnv+"=1")

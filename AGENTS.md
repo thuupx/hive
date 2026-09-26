@@ -4,12 +4,8 @@ Project conventions for the Hive repository.
 
 ## Source of truth
 
-- `hive-solution-design-v6.md` — architecture and semantics.
-- `hive-v1-implementation-plan.md` — v1 cut line, resolved decisions
-  (D1–D9, O1–O7), and milestone tracking.
+See `/docs` for the design.
 
-When semantics are unclear, the design document wins. When sequencing is
-unclear, the implementation plan wins.
 
 ## Commands
 
@@ -103,6 +99,16 @@ is an example of the internal form.
   start the alias: the LaunchAgent and the systemd unit run `hive-coordinator`
   (or `hive-node` for a standalone node). `hive service restart` rewrites the
   definition so a name or role change takes effect without touching secrets.
+
+### Workspaces
+
+- A run must have a working directory, and it is never the process's own: a
+  service starts in the filesystem root, so falling back to it hands the agent
+  every file the user can reach. An empty `workspace_dir` means
+  `~/.hive/workspace`, which Hive owns and creates. `workspace.Directory` owns
+  the rule and refuses when there is nothing to resolve.
+- `hive init` writes the directory it was run in, and refuses the root and the
+  home directory, because neither is a project.
 
 ### Event ownership
 
