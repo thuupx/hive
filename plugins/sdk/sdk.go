@@ -66,7 +66,20 @@ type Host struct {
 }
 
 // Stdio returns a stream over the process's standard input and output.
-func Stdio() *v1.Stream { return v1.NewStream(os.Stdin, os.Stdout) }
+func Stdio() *v1.Stream { return stdioStream(os.Stdin, os.Stdout) }
+
+// stdioStream builds the stream a plugin talks to the core over.
+//
+// The standard streams are passed as closers because Close is how a plugin ends
+// its read loop: Peer.Close closes the stream and then waits for the read loop
+// to stop. A plugin that stops for its own reason — a transport whose
+// connection dropped, say — returns from Run while the core is still connected,
+// so nothing but closing the reader ends that read. Without it the process
+// never exits and the supervisor, which restarts a plugin only on exit, never
+// restarts it.
+func stdioStream(r, w *os.File) *v1.Stream {
+	return v1.NewStream(r, w, r, w)
+}
 
 // Connect performs the plugin handshake on stream.
 func Connect(ctx context.Context, stream *v1.Stream, opts Options) (*Host, error) {

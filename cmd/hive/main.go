@@ -512,6 +512,10 @@ func serveCoordinator(ctx context.Context, cfgPath string, cfg config.Config, lo
 		return fmt.Errorf("create data directory: %w", err)
 	}
 
+	// The aliases are named before the node child and the transports are
+	// started, because both are run through them.
+	nameRoles(cfg, log)
+
 	store, err := storage.Open(ctx, filepath.Join(dataDir, "coordinator.db"))
 	if err != nil {
 		return err
@@ -587,7 +591,11 @@ func spawnNodeChild(cfgPath, coordinatorURL string, log *slog.Logger) (*exec.Cmd
 		return nil, fmt.Errorf("resolve the hive executable: %w", err)
 	}
 
-	cmd := exec.Command(self,
+	// The alias is what makes the child a node in a process listing rather than
+	// a second process named hive.
+	command := roleExecutable(filepath.Dir(self), aliasNode, self)
+
+	cmd := exec.Command(command,
 		"-config", cfgPath,
 		"serve",
 		"-role", string(config.RoleNode),
@@ -630,6 +638,9 @@ func serveNode(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
 	}
+
+	// The agent plugins are started through their aliases below.
+	nameRoles(cfg, log)
 
 	store, err := storage.OpenNode(ctx, filepath.Join(dataDir, "node.db"))
 	if err != nil {
@@ -702,12 +713,16 @@ func agentPluginSpecs(cfg config.Config) ([]plugin.Spec, error) {
 			return nil, fmt.Errorf("agents.%s: command is required", name)
 		}
 
+		// One adapter serves every ACP agent, so the alias is what tells the
+		// agent processes apart in a process listing.
+		acp := roleExecutable(dir, aliasAgentPrefix+name, filepath.Join(dir, "hive-plugin-acp"))
+
 		specs = append(specs, plugin.Spec{
 			ID:      name,
 			Type:    v1.PluginTypeAgent,
 			Version: Version,
 			Command: []string{
-				filepath.Join(dir, "hive-plugin-acp"),
+				acp,
 				"-id", name,
 				"-version", Version,
 				"-agent-command", strings.Join(agentCfg.Command, " "),
@@ -727,14 +742,7 @@ func agentPluginSpecs(cfg config.Config) ([]plugin.Spec, error) {
 // configuration fields: a transport plugin decides what its own options mean.
 func transportPluginSpecs(cfg config.Config) []plugin.Spec {
 	dir := pluginDir()
-
-	names := make([]string, 0, len(cfg.Transports))
-	for name, transport := range cfg.Transports {
-		if transport.Enabled {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
+	names := enabledTransportNames(cfg)
 
 	specs := make([]plugin.Spec, 0, len(names))
 	for _, name := range names {
@@ -750,8 +758,9 @@ func transportPluginSpecs(cfg config.Config) []plugin.Spec {
 		options["acknowledgement_mode"] = transport.Acknowledgement.ModeOr()
 		options["acknowledgement_reaction"] = transport.Acknowledgement.ReactionOr()
 
+		pluginBinary := filepath.Join(dir, "hive-plugin-"+name)
 		command := []string{
-			filepath.Join(dir, "hive-plugin-"+name),
+			roleExecutable(dir, aliasTransportPrefix+name, pluginBinary),
 			"-id", name,
 			"-version", Version,
 		}
@@ -771,6 +780,19 @@ func transportPluginSpecs(cfg config.Config) []plugin.Spec {
 		})
 	}
 	return specs
+}
+
+// enabledTransportNames lists the transports a configuration turns on, sorted
+// so a run is reproducible.
+func enabledTransportNames(cfg config.Config) []string {
+	names := make([]string, 0, len(cfg.Transports))
+	for name, transport := range cfg.Transports {
+		if transport.Enabled {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func sortedKeys(values map[string]string) []string {

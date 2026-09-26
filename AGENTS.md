@@ -72,6 +72,22 @@ is an example of the internal form.
 - Plugin binaries ship next to the `hive` binary. `HIVE_PLUGIN_DIR` overrides
   the lookup directory, which is what makes `go run` and tests workable.
 
+### Process names
+
+- Every role runs the same binary, so an operating system reports them all by
+  the executable's name. A role-named alias next to the binary is what tells
+  them apart: `hive-coordinator`, `hive-node`, `hive-transport-<name>`,
+  `hive-agent-<name>`. `cmd/hive/procname.go` owns this.
+- The alias is a hard link, so it reads as the role from the executable path,
+  the command name, and the command line alike; a symbolic link does not,
+  because a process monitor resolves it back to the real binary. A hard link
+  needs no privilege on any platform, and a platform that refuses it is not an
+  error: the process keeps the real binary's name.
+- A process name is fixed when the process starts, so the supervisor has to
+  start the alias: the LaunchAgent and the systemd unit run `hive-coordinator`
+  (or `hive-node` for a standalone node). `hive service restart` rewrites the
+  definition so a name or role change takes effect without touching secrets.
+
 ### Event ownership
 
 - The **node** owns the event buffer and the durable upload, so the node assigns

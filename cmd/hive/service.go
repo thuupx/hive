@@ -86,11 +86,21 @@ func installService(f flags) error {
 		return err
 	}
 
+	// The supervisor starts a role-named alias, so the process reads as a
+	// coordinator or a node in a process listing rather than as a second
+	// process named hive.
+	run, err := serviceRunPath(binary, cfg)
+	if err != nil {
+		// A name is a convenience: an installation that cannot be aliased still
+		// runs, under the real binary's name.
+		fmt.Fprintf(os.Stderr, "hive: could not name the role processes: %v\n", err)
+	}
+
 	switch runtime.GOOS {
 	case "darwin":
-		err = installLaunchAgent(binary, dir)
+		err = installLaunchAgent(run, dir)
 	case "linux":
-		err = installSystemdUnit(binary, dir)
+		err = installSystemdUnit(run, dir)
 	default:
 		return fmt.Errorf("hive: %s is not supported for service install", runtime.GOOS)
 	}
@@ -98,7 +108,7 @@ func installService(f flags) error {
 		return err
 	}
 
-	fmt.Printf("hive: the daemon will start at login\n  binary: %s\n  data:   %s\n", binary, dir)
+	fmt.Printf("hive: the daemon will start at login\n  binary: %s\n  data:   %s\n", run, dir)
 	if len(secrets) > 0 {
 		fmt.Printf("  secrets: %s (%#o)\n", filepath.Join(dir, serviceEnvFile), serviceEnvMode)
 	}
@@ -315,11 +325,21 @@ func installLaunchAgent(binary, dir string) error {
 	// Reload so the change takes effect without a logout.
 	//
 	// Installing over a service that is already loaded is the normal case: it is
-	// how a new build is picked up. bootout is asynchronous, so bootstrapping
-	// immediately after it can fail for no reason other than timing, which is why
-	// this retries rather than reporting the race to the user.
+	// how a new build is picked up. The old definition has to be gone before the
+	// new one is loaded. bootout returns before the label is unloaded, and a
+	// bootstrap that races it fails; restarting the label instead runs the
+	// definition launchd already had, so a change to the definition would
+	// silently do nothing.
 	domain := launchDomain()
-	_ = exec.Command("launchctl", "bootout", domain+"/"+serviceLabel).Run()
+	label := domain + "/" + serviceLabel
+
+	_ = exec.Command("launchctl", "bootout", label).Run()
+	for attempt := 0; attempt < 50; attempt++ {
+		if _, err := exec.Command("launchctl", "print", label).Output(); err != nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 
 	var lastErr error
 	for attempt := 0; attempt < 5; attempt++ {
@@ -331,17 +351,7 @@ func installLaunchAgent(binary, dir string) error {
 			lastErr = fmt.Errorf("launchctl bootstrap: %s: %w", strings.TrimSpace(string(out)), err)
 		}
 
-		// A loaded label is restarted instead, which is what the user meant by
-		// installing again.
-		if _, err := exec.Command("launchctl", "print", domain+"/"+serviceLabel).Output(); err == nil {
-			if out, err := exec.Command("launchctl", "kickstart", "-k", domain+"/"+serviceLabel).CombinedOutput(); err == nil {
-				return nil
-			} else {
-				lastErr = fmt.Errorf("launchctl kickstart: %s: %w", strings.TrimSpace(string(out)), err)
-			}
-		}
-
-		_ = exec.Command("launchctl", "bootout", domain+"/"+serviceLabel).Run()
+		_ = exec.Command("launchctl", "bootout", label).Run()
 	}
 
 	return fmt.Errorf("hive: the service could not be loaded: %w", lastErr)
@@ -463,21 +473,30 @@ func restartService(f flags) error {
 	// The binaries are copied at install, so the copy is refreshed first: the
 	// service runs the copy, and a restart that ran the old one would look like a
 	// new build that changed nothing.
-	if _, err := installBinary(dir); err != nil {
+	binary, err := installBinary(dir)
+	if err != nil {
 		return err
 	}
 
+	run, err := serviceRunPath(binary, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hive: could not name the role processes: %v\n", err)
+	}
+
+	// The definition is rewritten, not only the process restarted: the role and
+	// the process name are read from it, so a restart that kept the old one
+	// would not apply a configuration change.
 	switch runtime.GOOS {
 	case "darwin":
 		if _, err := exec.Command("launchctl", "print", launchDomain()+"/"+serviceLabel).Output(); err != nil {
 			return errors.New("hive: the service is not loaded; run `hive service install`")
 		}
-		if out, err := exec.Command("launchctl", "kickstart", "-k", launchDomain()+"/"+serviceLabel).CombinedOutput(); err != nil {
-			return fmt.Errorf("hive: launchctl kickstart: %s: %w", strings.TrimSpace(string(out)), err)
+		if err := installLaunchAgent(run, dir); err != nil {
+			return err
 		}
 	case "linux":
-		if out, err := exec.Command("systemctl", "--user", "restart", serviceLabel+".service").CombinedOutput(); err != nil {
-			return fmt.Errorf("hive: systemctl restart: %s: %w", strings.TrimSpace(string(out)), err)
+		if err := installSystemdUnit(run, dir); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("hive: %s is not supported for service restart", runtime.GOOS)
