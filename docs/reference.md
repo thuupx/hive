@@ -473,6 +473,13 @@ A typo. The message names the unrecognized top-level keys.
 The key is nested inside a section rather than at the top level. Compare against
 `configuration.md`.
 
+**macOS asks "Hive wants to access Documents" when an agent reads a file.**
+Expected, and explained in [macos-permissions.md](macos-permissions.md): macOS
+attributes the access to the *responsible process*, which for a daemon is Hive.
+Grant the daemon Full Disk Access once, or set `workspace_dir` outside
+`Desktop`, `Documents` and `Downloads`. `hive doctor` warns when the workspace is
+inside one of them.
+
 **`slack: an app token is required for Socket Mode`.**
 `SLACK_APP_TOKEN` is not exported in the environment of the daemon process.
 

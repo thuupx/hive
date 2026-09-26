@@ -436,6 +436,27 @@ session keeps its runs and its history.
 - A finished run does not end the session. The next message continues it, with
   the same agent, as a new AgentRun.
 
+### Where the agent works
+
+A session the transport creates names no workspace, so its runs work in
+`workspace_dir` from the configuration — the default is `~/.hive/workspace`.
+
+That is deliberate: the workspace is the root an agent can read and write, so
+which directories are reachable is the machine owner's decision, not something a
+chat message can set. Point it at a project by setting `workspace_dir`, or create
+the session from the CLI with a registered workspace:
+
+```sh
+hive workspace create bsci -path ~/Documents/Workspace/BSCI
+hive session create -workspace bsci
+```
+
+`hive config` and `hive doctor` both print which directory is in effect.
+
+On macOS, a workspace inside `~/Desktop`, `~/Documents` or `~/Downloads` makes
+the system ask for permission, and the dialog names Hive rather than the agent —
+see [macos-permissions.md](macos-permissions.md).
+
 ### Redelivery and repeats
 
 Slack may redeliver an event. Hive derives the command id from the Slack event id,

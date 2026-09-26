@@ -2,8 +2,10 @@ package daemon_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/thupham/hive/internal/daemon"
 	"github.com/thupham/hive/internal/permission"
 	"github.com/thupham/hive/internal/plugin"
 	v1 "github.com/thupham/hive/protocol/hive/v1"
@@ -73,6 +75,27 @@ func TestAPromptWhileATurnRunsIsQueued(t *testing.T) {
 		runs, err := store.ListAgentRuns(ctx, created.SessionID)
 		return err == nil && len(runs) == 2
 	})
+}
+
+// A node that runs agents must know where they work.
+//
+// Found by wiring the raw configuration value instead of the resolved one: an
+// empty workspace_dir means the default directory, and handing the node the empty
+// string made every run fail with "no workspace" at the first prompt instead of
+// at startup.
+func TestANodeWithoutAWorkspaceIsRefusedAtConstruction(t *testing.T) {
+	_, err := daemon.NewNode(daemon.NodeOptions{
+		Store:          openNodeStore(t),
+		CoordinatorURL: "wss://127.0.0.1:1/node",
+		AgentPluginID:  testAgent,
+		AgentPlugins:   []plugin.Spec{testAgentSpec()},
+	})
+	if err == nil {
+		t.Fatal("a node with no workspace should be refused")
+	}
+	if !strings.Contains(err.Error(), "workspace") {
+		t.Fatalf("error = %v, want it to name the workspace", err)
+	}
 }
 
 // A session with nothing running takes the prompt immediately.

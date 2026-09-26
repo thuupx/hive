@@ -44,6 +44,7 @@ func runDoctor(f flags) error {
 	var findings []finding
 	findings = append(findings, checkConfig(cfg)...)
 	findings = append(findings, checkWorkspace(cfg)...)
+	findings = append(findings, checkGuardedFolder(cfg)...)
 	findings = append(findings, checkDataDir(cfg)...)
 	findings = append(findings, checkAgents(cfg)...)
 	findings = append(findings, checkTransports(cfg)...)
@@ -170,6 +171,63 @@ func checkWorkspace(cfg config.Config) []finding {
 		}}
 	}
 	return []finding{{level: "ok", what: "workspace", detail: dir}}
+}
+
+// guardedFolders are the user directories macOS protects with TCC.
+//
+// Reading one is a consent decision the user makes for the whole process tree,
+// so an agent that works inside one produces a dialog.
+var guardedFolders = []string{"Desktop", "Documents", "Downloads"}
+
+// checkGuardedFolder reports when the workspace is somewhere macOS will prompt
+// for.
+//
+// The prompt is expected rather than a fault: the access is attributed to the
+// responsible process, and for a daemon that is Hive. Saying so here is what
+// turns a surprising dialog into a known one; the remedy is one grant, or a
+// workspace somewhere else.
+func checkGuardedFolder(cfg config.Config) []finding {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+
+	dir, err := cfg.EffectiveWorkspaceDir()
+	if err != nil {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+
+	guarded := append([]string{filepath.Join(home, "Library", "Mobile Documents")}, guardedFolders...)
+	for _, name := range guarded {
+		folder := name
+		if !filepath.IsAbs(folder) {
+			folder = filepath.Join(home, name)
+		}
+		if !within(dir, folder) {
+			continue
+		}
+		return []finding{{
+			level: "warn",
+			what:  "the workspace is in a folder macOS guards",
+			detail: fmt.Sprintf(
+				"%s: macOS asks before an agent reads it, and the dialog names Hive because a daemon is the responsible process for everything it launches.",
+				dir),
+			fix: "grant Hive Full Disk Access once (System Settings > Privacy & Security > Full Disk Access), or set workspace_dir outside Desktop, Documents and Downloads",
+		}}
+	}
+	return nil
+}
+
+// within reports whether path is folder itself or inside it.
+func within(path, folder string) bool {
+	rel, err := filepath.Rel(folder, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || !strings.HasPrefix(rel, "..")
 }
 
 // checkDataDir reports whether Hive can write where it needs to.

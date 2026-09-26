@@ -750,6 +750,15 @@ func serveNode(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		return err
 	}
 
+	// The node runs the agents, so it is the node that needs the directory they
+	// work in. It is resolved here rather than passed raw, because an empty
+	// workspace_dir means the default directory, and handing the node the empty
+	// string would make it refuse every run.
+	workspaceDir, err := cfg.EffectiveWorkspaceDir()
+	if err != nil {
+		return fmt.Errorf("resolve the workspace directory: %w", err)
+	}
+
 	n, err := daemon.NewNode(daemon.NodeOptions{
 		Store:          store,
 		Log:            log,
@@ -757,7 +766,7 @@ func serveNode(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Version:        Version,
 		LeaseSeconds:   cfg.Cluster.LeaseSeconds,
 		CoordinatorURL: cfg.Cluster.CoordinatorURL,
-		WorkspaceDir:   cfg.WorkspaceDir,
+		WorkspaceDir:   workspaceDir,
 		TLSConfig:      node.ClientTLSConfig(cert),
 		AgentPlugins:   specs,
 		AgentPluginID:  agentName,
@@ -771,6 +780,7 @@ func serveNode(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		"coordinator", cfg.Cluster.CoordinatorURL,
 		"agent", agentName,
 		"plugins", len(specs),
+		"workspace", workspaceDir,
 	)
 	return n.Run(ctx)
 }

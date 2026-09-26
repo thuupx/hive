@@ -39,7 +39,11 @@ type NodeOptions struct {
 	TLSConfig      *tls.Config
 
 	// WorkspaceDir is where a run works when the coordinator names no location.
-	// Empty uses the node process's working directory.
+	//
+	// It is required, and it is the resolved directory. An empty workspace_dir in
+	// the configuration means the default directory, so the caller resolves that
+	// before constructing a node; passing the raw configuration value would leave
+	// the node with nothing and every run refused.
 	WorkspaceDir string
 
 	// AgentPlugins are the agent plugins this node runs.
@@ -71,6 +75,11 @@ func NewNode(opts NodeOptions) (*Node, error) {
 		return nil, errors.New("daemon: node requires a coordinator url")
 	case opts.AgentPluginID == "":
 		return nil, errors.New("daemon: node requires an agent plugin id")
+	case opts.WorkspaceDir == "":
+		// A node that runs agents must know where they work. Refusing here rather
+		// than at the first prompt turns a misconfiguration into a startup failure
+		// that says what to fix, instead of every run failing later.
+		return nil, errors.New("daemon: node requires a workspace directory")
 	}
 
 	log := opts.Log
