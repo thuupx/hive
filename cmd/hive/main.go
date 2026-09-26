@@ -38,7 +38,11 @@ import (
 )
 
 // Version is the Hive build version.
-const Version = "0.1.0-dev"
+//
+// It is a variable, not a constant, so a release build can set it:
+// `-ldflags "-X main.Version=1.2.3"`. A build from a checkout keeps the
+// development default.
+var Version = "0.1.0-dev"
 
 // ChildStopTimeout bounds how long the coordinator waits for its node child.
 const ChildStopTimeout = 5 * time.Second

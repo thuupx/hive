@@ -21,6 +21,7 @@ make fmt     # go fmt ./...
 make tidy    # go mod tidy
 make run     # build, then run the daemon
 make ci      # vet + test + build
+make dist    # package this host's binaries as a release tarball
 ```
 
 Go is at `/usr/local/go/bin/go` and may not be on `PATH` in a
@@ -49,6 +50,21 @@ is an example of the internal form.
   unexported code untestable and breaks per-package test runs. Reserve a
   separate directory for integration tests, and give those files a
   `//go:build integration` tag so `go test ./...` stays fast.
+
+### Releases
+
+- A release is a tag: pushing `v*` runs `.github/workflows/release.yml`. The
+  process, and what is deliberately not done yet, is in `docs/releasing.md`.
+- CGO cannot be cross-compiled, so each platform is built on a native runner.
+  The release matrix mirrors `ci.yml`; keep the two in step.
+- `make dist` packages exactly what a runner uploads. Its `VERSION` is stamped
+  in with `-ldflags "-X main.Version=..."`, which is why `Version` in
+  `cmd/hive/main.go` is a variable rather than a constant.
+- A tarball holds `hive` and both plugins. The daemon resolves plugins from its
+  own directory, so a tarball with `hive` alone is a gateway with no agents.
+- `checksums.txt` is written once, by the release job, after every artifact is
+  downloaded. Do not compute it per runner: one file assembled from several
+  sources is one that can disagree with itself.
 
 ### Events
 

@@ -1,11 +1,16 @@
 GO ?= go
 BINDIR := bin
+DISTDIR := dist
 HIVE := $(BINDIR)/hive
 PLUGIN_ACP := $(BINDIR)/hive-plugin-acp
 PLUGIN_SLACK := $(BINDIR)/hive-plugin-slack
 EXAMPLES := $(BINDIR)/example-client $(BINDIR)/plugin-echo
 
-.PHONY: all build examples test test-race vet fmt tidy run clean ci release
+# VERSION is stamped into the binary as `hive version` reports it. The release
+# workflow passes the tag without its leading v; a local run gets the default.
+VERSION ?= 0.1.0-dev
+
+.PHONY: all build examples test test-race vet fmt tidy run clean ci release dist
 
 all: build
 
@@ -39,7 +44,7 @@ run: build
 	$(HIVE) serve
 
 clean:
-	rm -rf $(BINDIR)
+	rm -rf $(BINDIR) $(DISTDIR)
 
 # Release builds every binary on the host it runs on.
 #
@@ -49,5 +54,21 @@ clean:
 # See docs/adr/0001-storage-libsql.md.
 release: build examples
 	@echo "built for $$(go env GOOS)/$$(go env GOARCH) with CGO_ENABLED=$$(go env CGO_ENABLED)"
+
+# dist packages this host's binaries as a release publishes them: one tarball
+# per platform, holding hive and both plugins side by side, which is where the
+# daemon looks for them.
+#
+# It is the same layout the install script expects, so `make dist` and a real
+# release can be tested the same way. Run it on a native runner per target; see
+# .github/workflows/release.yml.
+dist:
+	@mkdir -p $(DISTDIR)
+	$(GO) build -ldflags "-X main.Version=$(VERSION)" -o $(HIVE) ./cmd/hive
+	$(GO) build -o $(PLUGIN_ACP) ./cmd/hive-plugin-acp
+	$(GO) build -o $(PLUGIN_SLACK) ./cmd/hive-plugin-slack
+	tar -czf $(DISTDIR)/hive_$(VERSION)_$$($(GO) env GOOS)_$$($(GO) env GOARCH).tar.gz \
+		-C $(BINDIR) hive hive-plugin-acp hive-plugin-slack
+	@echo "$(DISTDIR)/hive_$(VERSION)_$$($(GO) env GOOS)_$$($(GO) env GOARCH).tar.gz"
 
 ci: vet test build examples

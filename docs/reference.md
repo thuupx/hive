@@ -25,6 +25,28 @@ configured agent plugins.
 
 ---
 
+## Install a release
+
+No toolchain needed if a release has a build for your platform:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/thupham/hive/main/scripts/install.sh | sh
+```
+
+The script resolves the latest release, downloads the tarball for this platform,
+verifies its SHA-256 against the release's `checksums.txt`, and installs `hive`
+and both plugin binaries side by side into `$HOME/.local/bin`. An archive that
+does not match its checksum is not extracted.
+
+```sh
+install.sh --version 0.1.0            # a specific release
+install.sh --bin-dir /usr/local/bin   # somewhere else
+```
+
+**darwin/amd64 has no release build.** GitHub retired the amd64 macOS runner, so
+there is no native host to build it on; the script says so and stops. Build from
+source there instead.
+
 ## Requirements
 
 | | |
@@ -45,6 +67,7 @@ make build          # bin/hive, bin/hive-plugin-acp, bin/hive-plugin-slack
 make examples       # bin/example-client, bin/plugin-echo
 make test           # the whole suite
 make ci             # vet, test, build
+make dist           # package this host's binaries as a release tarball
 ```
 
 `make build` writes every binary into `bin/`. They ship next to each other,

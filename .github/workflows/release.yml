@@ -1,0 +1,85 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CGO_ENABLED: "1"
+
+jobs:
+  # One runner per target, because CGO cannot be cross-compiled and the libSQL
+  # driver ships prebuilt native libraries for these platforms only. The matrix
+  # is the same one ci.yml uses, so a platform that cannot build fails before a
+  # tag is cut rather than after.
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest # linux/amd64
+            goos: linux
+            goarch: amd64
+          - runner: ubuntu-24.04-arm # linux/arm64; needs GitHub arm64 hosted runners
+            goos: linux
+            goarch: arm64
+          - runner: macos-latest # darwin/arm64
+            goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      - name: build and package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        # The tag is vX.Y.Z; the binary reports X.Y.Z.
+        run: make dist VERSION="${GITHUB_REF_NAME#v}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hive-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # Checksums are computed here, in one place, rather than per runner: one
+  # checksums.txt that covers every artifact is what the install script verifies
+  # against, and a file assembled from several sources is one that can disagree
+  # with itself.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: checksums
+        working-directory: dist
+        # No "./" prefix: the names in checksums.txt are the asset names, and the
+        # install script matches them as written.
+        run: sha256sum *.tar.gz > checksums.txt
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*.tar.gz \
+            dist/checksums.txt \
+            scripts/install.sh

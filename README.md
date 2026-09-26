@@ -75,12 +75,21 @@ between agents and still read in a year, the structure is the point.
 
 ## Quick start
 
-Needs Go 1.27+ with CGO, a C toolchain, and an ACP agent on your `PATH`.
+Install a release (linux/darwin, amd64/arm64):
 
 ```sh
-make build                 # bin/hive, hive-plugin-acp, hive-plugin-slack
-./bin/hive init            # finds your agents, writes ~/.hive/config.toml
-./bin/hive serve           # runs the coordinator, a node, and your agents
+curl -fsSL https://raw.githubusercontent.com/thupham/hive/main/scripts/install.sh | sh
+hive init      # finds your agents, writes ~/.hive/config.toml
+hive serve     # runs the coordinator, a node, and your agents
+```
+
+Or build from source — needs Go 1.27+ with CGO, a C toolchain, and an ACP agent
+on your `PATH`:
+
+```sh
+make build
+./bin/hive init
+./bin/hive serve
 ```
 
 Then, from another terminal:
@@ -117,4 +126,5 @@ more transports, and a web UI are designed but not shipped.
 - [docs/failure-semantics.md](docs/failure-semantics.md) — what is and is not claimed
 - [hive-solution-design-v6.md](hive-solution-design-v6.md) — the architecture
 - [hive-v1-implementation-plan.md](hive-v1-implementation-plan.md) — v1 cut line
+- [docs/releasing.md](docs/releasing.md) — how a release is built and published
 - [AGENTS.md](AGENTS.md) — conventions for changing the code
