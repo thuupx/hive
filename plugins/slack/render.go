@@ -302,7 +302,7 @@ func textMessage(text string) Message {
 // knowing what a model is.
 func configMessage(config v1.SessionConfigResult) Message {
 	if len(config.Options) == 0 {
-		return textMessage("This agent offers no settings.")
+		return textMessage(noSettingsText(config.AgentID))
 	}
 
 	text := fmt.Sprintf("*%s settings*", config.AgentID)
@@ -327,6 +327,29 @@ func configMessage(config v1.SessionConfigResult) Message {
 		}
 	}
 	return textMessage(text)
+}
+
+// noSettingsText explains a declaration that is empty.
+//
+// "No settings" on its own reads like a Hive failure and sends the reader looking
+// for a bug. It is not one: Hive renders the settings an agent declares for a
+// session, and this agent declared none. An agent whose model picker is exposed
+// only through the legacy ACP `models`/`modes` fields declares nothing here,
+// because Hive reads `configOptions`, the surface that supersedes them.
+func noSettingsText(agentID string) string {
+	who := "This agent"
+	if agentID != "" {
+		who = "*" + agentID + "*"
+	}
+	return fmt.Sprintf(
+		"%s declares no session settings over ACP.\n\n"+
+			"Hive renders the settings an agent declares for a session. An agent that "+
+			"exposes its model picker only through the legacy ACP `models`/`modes` fields "+
+			"declares nothing here: Hive reads `configOptions`, the surface that supersedes "+
+			"them.\n\n"+
+			"Change the model with the agent's own command, or hand off to an agent that "+
+			"declares settings.",
+		who)
 }
 
 func statusMessage(status *v1.SessionStatusResult) Message {

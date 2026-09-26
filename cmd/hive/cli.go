@@ -330,7 +330,14 @@ func sessionConfig(f flags, args []string) error {
 	}
 
 	if len(result.Options) == 0 {
-		fmt.Printf("%s offers no settings\n", result.AgentID)
+		agent := result.AgentID
+		if agent == "" {
+			agent = "this agent"
+		}
+		fmt.Printf("%s declares no session settings over ACP\n", agent)
+		fmt.Println("Hive renders the settings an agent declares for a session. An agent that")
+		fmt.Println("exposes its model picker only through the legacy ACP models/modes fields")
+		fmt.Println("declares nothing here: Hive reads configOptions, which supersedes them.")
 		return nil
 	}
 

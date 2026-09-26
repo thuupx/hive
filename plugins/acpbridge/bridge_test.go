@@ -256,6 +256,16 @@ func (a *fakeAgent) baseHandler(method string, id json.RawMessage, params json.R
 	case "session/new":
 		a.reply(id, map[string]any{"sessionId": "agent-sess-1"})
 	case "session/set_config_option":
+		// A real agent refuses a value it does not offer, and an empty value is
+		// not one of them.
+		var req struct {
+			Value any `json:"value"`
+		}
+		_ = json.Unmarshal(params, &req)
+		if value, ok := req.Value.(string); ok && value == "" {
+			a.replyError(id, -32602, "Invalid params")
+			return
+		}
 		a.mu.Lock()
 		a.setOpts = append(a.setOpts, string(params))
 		a.mu.Unlock()
@@ -691,6 +701,32 @@ func TestStartSkipsAnEmptyConfigValue(t *testing.T) {
 	}
 	if out["runtimeSessionId"] != "agent-sess-1" {
 		t.Errorf("the run should start anyway: %v", out)
+	}
+	if got := launcher.agent.setOptions(); got != 0 {
+		t.Fatalf("the agent was asked to set %d option(s), want none", got)
+	}
+}
+
+// A read of a selector is not a change to it.
+//
+// Found in a live conversation: "/model" with no argument carried an empty
+// value, the bridge forwarded it as a change, and the agent refused the whole
+// request with "Invalid params". The empty value is not one the agent offers.
+func TestConfigReadWithNoValueDoesNotReachTheAgent(t *testing.T) {
+	_, c, launcher := newBridge(t)
+	ctx := context.Background()
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	var out map[string]any
+	err := c.peer.Call(ctx, v1.MethodExecutionConfig, v1.ExecutionConfigParams{
+		AgentRunID: "run_1",
+		ConfigID:   "model",
+	}, &out)
+	if err != nil {
+		t.Fatalf("a read must not fail: %v", err)
 	}
 	if got := launcher.agent.setOptions(); got != 0 {
 		t.Fatalf("the agent was asked to set %d option(s), want none", got)

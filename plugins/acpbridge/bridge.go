@@ -629,17 +629,17 @@ func (b *Bridge) config(ctx context.Context, params json.RawMessage) (any, error
 		return nil, v1.NotFound("agent run %s has no live execution", req.AgentRunID)
 	}
 
-	if req.ConfigID != "" {
+	// A config id with no value is a read of that selector, not a change to it.
+	// The empty value is not one the agent offers, and forwarding it as a change
+	// makes the agent refuse the whole request.
+	if req.ConfigID != "" && strings.TrimSpace(req.Value) != "" {
 		if err := client.SetConfigOption(ctx, r.sessionID, req.ConfigID, req.Value); err != nil {
 			return nil, v1.InvalidParams("agent refused %s=%s: %s", req.ConfigID, req.Value, err.Error())
 		}
 
 		b.mu.Lock()
 		r.config = withCurrentValue(r.config, req.ConfigID, req.Value)
-		options := append([]acp.ConfigOption(nil), r.config...)
 		b.mu.Unlock()
-
-		return v1.ExecutionConfigResult{Options: wireConfig(options)}, nil
 	}
 
 	b.mu.Lock()

@@ -399,3 +399,28 @@ func TestRenderCancelWithNothingRunningIsNotAWarning(t *testing.T) {
 		t.Fatalf("text = %q", message.Text)
 	}
 }
+
+// An empty declaration says why, rather than reading like a Hive failure.
+//
+// Found in a live conversation: an agent that exposes its model picker only
+// through the legacy ACP models/modes fields declares no configOptions, and the
+// answer was "This agent offers no settings.", which reads like a bug in Hive
+// rather than a fact about the agent.
+func TestAnEmptyConfigExplainsItself(t *testing.T) {
+	message := configMessage(v1.SessionConfigResult{SessionID: "sess_1", AgentID: "hermes"})
+
+	for _, want := range []string{"hermes", "legacy ACP", "models", "modes", "configOptions"} {
+		if !strings.Contains(message.Text, want) {
+			t.Errorf("the explanation does not mention %q: %q", want, message.Text)
+		}
+	}
+}
+
+// With no agent named, the explanation still reads as a sentence.
+func TestAnEmptyConfigWithoutAnAgent(t *testing.T) {
+	message := configMessage(v1.SessionConfigResult{SessionID: "sess_1"})
+
+	if !strings.HasPrefix(message.Text, "This agent declares") {
+		t.Errorf("text = %q", message.Text)
+	}
+}
