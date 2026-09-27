@@ -49,20 +49,31 @@ func installService(f flags) error {
 	}
 
 	// The secrets are collected from the environment the user is installing from,
-	// which is the only place they exist: Hive never stores them in its config.
+	// and from the file a guided setup may already have written. Hive never stores
+	// them in its config.
 	//
 	// Which variables are needed comes from each plugin's own manifest, so the
 	// core does not have to know which transport needs which token.
-	secrets, missing := serviceSecrets(cfg, pluginManifests(pluginDir()))
-	if len(secrets) > 0 {
-		if err := writeServiceEnv(dir, secrets); err != nil {
+	envPath := filepath.Join(dir, serviceEnvFile)
+	existing := readEnvFile(envPath)
+	secrets, missing := serviceSecrets(cfg, pluginManifests(pluginDir()), existing)
+
+	// Merged, not replaced: `hive init` writes credentials here, and an install
+	// that overwrote the file would drop them — the daemon would then start
+	// without the token the user had already given it.
+	for name, value := range secrets {
+		existing[name] = value
+	}
+	if len(existing) > 0 {
+		if err := writeServiceEnv(dir, existing); err != nil {
 			return err
 		}
 	}
 	if len(missing) > 0 {
 		fmt.Fprintf(os.Stderr,
-			"hive: these variables are not set in this shell, so the service will not have them: %s\n",
-			strings.Join(missing, ", "))
+			"hive: these variables are set in neither this shell nor %s, so the service will not have them: %s\n",
+			envPath, strings.Join(missing, ", "))
+		fmt.Fprintln(os.Stderr, "hive: run `hive config --update` to store them, or export them and install again")
 	}
 	fmt.Printf("hive: the service will inherit PATH from this shell\n")
 
@@ -185,7 +196,11 @@ func copyExecutable(source, target string) error {
 // not mean teaching the core which token it wants. An agent's secret is named by
 // its own configuration, because an agent is a command rather than a plugin with
 // a fixed identity.
-func serviceSecrets(cfg config.Config, manifests map[string]v1.PluginManifest) (map[string]string, []string) {
+//
+// A secret already in the file the service reads is satisfied and is not reported
+// missing: a guided setup writes them there, and re-installing from a shell that
+// does not have them is not a problem to warn about.
+func serviceSecrets(cfg config.Config, manifests map[string]v1.PluginManifest, existing map[string]string) (map[string]string, []string) {
 	var groups [][]string
 
 	for name, transport := range cfg.Transports {
@@ -214,6 +229,10 @@ func serviceSecrets(cfg config.Config, manifests map[string]v1.PluginManifest) (
 		for _, name := range group {
 			if value := os.Getenv(name); value != "" {
 				found[name] = value
+				set = true
+				continue
+			}
+			if existing[name] != "" {
 				set = true
 			}
 		}

@@ -21,8 +21,10 @@ func Manifest(version string) v1.PluginManifest {
 			Section: "transport.zalo",
 			Summary: "Zalo over long polling, so no public endpoint is needed.",
 			Options: []v1.PluginOptionManifest{
-				{Name: "bot_name", Default: "", Description: "the bot's display name from getMe, for @mention resolution in a group"},
-				{Name: "require_mention", Default: "false", Description: "ignore a group message that does not address the bot"},
+				// The first two only matter in a group; a private chat is 1:1 and
+				// always addressed, so a configuration for one can leave both out.
+				{Name: "bot_name", Default: "", Description: "groups only: the bot's display name from getMe, for @mention resolution"},
+				{Name: "require_mention", Default: "false", Description: "groups only: ignore a message that does not address the bot"},
 				{Name: "max_attachment_mb", Default: "8", Description: "largest file the transport will read"},
 				{Name: "typing_indicator", Default: "true", Description: "show Zalo's transient typing action while a turn runs"},
 			},

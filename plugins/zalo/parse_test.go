@@ -214,3 +214,32 @@ func TestPermissionEnvelopeIsAnInteraction(t *testing.T) {
 		t.Fatalf("value = %+v, want the decision", value)
 	}
 }
+
+// With no bot name to compare against, a leading "@word" is left alone: it cannot
+// be known to be ours, and dropping it would silently remove a word from the
+// prompt.
+func TestAnUnknownMentionIsNotStripped(t *testing.T) {
+	parser := Parser{}
+
+	env, ok := parser.ParseUpdate(testUpdate("@alice can you look at this?"))
+	if !ok {
+		t.Fatal("a private message should be for Hive")
+	}
+	if env.Message.Text != "@alice can you look at this?" {
+		t.Fatalf("text = %q, want the sentence untouched", env.Message.Text)
+	}
+
+	// A name that is configured still comes off, because then it is known to be
+	// the bot's.
+	named := Parser{BotName: "Hive"}
+	env, _ = named.ParseUpdate(testUpdate("@Hive can you look at this?"))
+	if env.Message.Text != "can you look at this?" {
+		t.Fatalf("text = %q, want the mention removed", env.Message.Text)
+	}
+
+	// And a mention of somebody else is not the bot's.
+	env, _ = named.ParseUpdate(testUpdate("@alice can you look at this?"))
+	if env.Message.Text != "@alice can you look at this?" {
+		t.Fatalf("text = %q, want somebody else's mention left in", env.Message.Text)
+	}
+}

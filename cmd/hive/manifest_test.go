@@ -68,7 +68,7 @@ func TestServiceSecretsComeFromTheManifest(t *testing.T) {
 		"off": {Secrets: []v1.PluginSecret{{Any: []string{"OFF_TOKEN"}}}},
 	}
 
-	found, missing := serviceSecrets(cfg, manifests)
+	found, missing := serviceSecrets(cfg, manifests, nil)
 	if found["DEMO_TOKEN"] != "s3cret" {
 		t.Fatalf("DEMO_TOKEN = %q, want it captured", found["DEMO_TOKEN"])
 	}
@@ -84,6 +84,35 @@ func TestServiceSecretsComeFromTheManifest(t *testing.T) {
 	// A disabled transport is not asked for its secret.
 	if _, ok := found["OFF_TOKEN"]; ok {
 		t.Error("a disabled transport's secret should not be captured")
+	}
+}
+
+// A secret the guided setup already stored is satisfied, so re-installing from a
+// shell that does not have it warns about nothing and erases nothing.
+//
+// Found by running it: `hive service install` after `hive init` overwrote the
+// secrets file with just PATH, and the daemon then started without its token.
+func TestServiceSecretsKeepsWhatIsAlreadyStored(t *testing.T) {
+	t.Setenv("HIVE_TEST_MISSING_TOKEN", "")
+
+	cfg := config.Config{Transports: map[string]config.TransportConfig{"demo": {Enabled: true}}}
+	manifests := map[string]v1.PluginManifest{
+		"demo": {Secrets: []v1.PluginSecret{{Any: []string{"HIVE_TEST_MISSING_TOKEN"}}}},
+	}
+
+	existing := map[string]string{"HIVE_TEST_MISSING_TOKEN": "from-the-file", "PATH": "/usr/bin"}
+
+	found, missing := serviceSecrets(cfg, manifests, existing)
+	if len(missing) != 0 {
+		t.Fatalf("missing = %v, want none: the file already has it", missing)
+	}
+	if found["HIVE_TEST_MISSING_TOKEN"] != "" {
+		t.Error("a value that is only in the file should not be collected again")
+	}
+
+	// And with neither, it is still reported.
+	if _, missing := serviceSecrets(cfg, manifests, nil); len(missing) != 1 {
+		t.Fatalf("missing = %v, want the variable reported", missing)
 	}
 }
 

@@ -222,6 +222,9 @@ func (p Parser) addressed(text string) bool {
 	if !strings.HasPrefix(fields[0], "@") {
 		return false
 	}
+	// With no name to compare against, an "@word" is accepted rather than
+	// refused: a group that ignores every message because one option was left
+	// empty is a worse failure than answering one that was not addressed.
 	if p.BotName == "" {
 		return true
 	}
@@ -231,15 +234,23 @@ func (p Parser) addressed(text string) bool {
 }
 
 // stripMention removes an "@name" prefix and reports whether one was there.
+//
+// A transport that has no name to compare against cannot tell whether a leading
+// "@word" is for it, and guessing would drop a word from the prompt: "@alice can
+// you look" is a sentence, and the sentence is what the agent should get.
 func (p Parser) stripMention(text string) (string, bool) {
 	fields := strings.Fields(text)
 	if len(fields) == 0 || !strings.HasPrefix(fields[0], "@") {
 		return text, false
 	}
 
-	mention := strings.ToLower(strings.TrimPrefix(fields[0], "@"))
 	name := strings.ToLower(strings.TrimSpace(p.BotName))
-	if name != "" && mention != name && !strings.HasPrefix(name, mention) {
+	if name == "" {
+		return text, false
+	}
+
+	mention := strings.ToLower(strings.TrimPrefix(fields[0], "@"))
+	if mention != name && !strings.HasPrefix(name, mention) {
 		return text, false
 	}
 	return strings.Join(fields[1:], " "), true
