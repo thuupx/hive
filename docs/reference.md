@@ -63,7 +63,7 @@ combinations only. See `adr/0001-storage-libsql.md`.
 
 ```sh
 git clone <this repo> && cd Hive
-make build          # bin/hive, bin/hive-plugin-acp, bin/hive-plugin-slack
+make build          # bin/hive, bin/hive-plugin-acp, bin/hive-plugin-slack, bin/hive-plugin-zalo
 make examples       # bin/example-client, bin/plugin-echo
 make test           # the whole suite
 make ci             # vet, test, build
@@ -407,6 +407,38 @@ catalog, and a test fails if this document and the code disagree.
 
 ---
 
+## Connecting Zalo
+
+Zalo is the other production transport. It uses **long polling** (`getUpdates`),
+so Hive needs no public endpoint and no webhook URL.
+
+> The full guide is in **[zalo.md](zalo.md)**. What follows is the short version.
+
+Create a Zalo Bot and copy its **Bot Token** (`<bot id>:<secret>`), then:
+
+```sh
+export ZALO_BOT_TOKEN='1681425009216512167:...'   # ZALO_TOKEN is accepted too
+```
+
+```toml
+[security]
+allowed_users = ["zalo:6ede9afa66b88fe6d6a9"]    # who may talk to Hive
+
+[transport.zalo]
+enabled = true
+[transport.zalo.options]
+bot_name = "Bot Hive Agent"                      # from getMe
+require_mention = "false"                        # a private chat is always addressed
+```
+
+Restart `hive serve`. You should see `zalo bot connected`.
+
+Zalo has no message editing, no reactions, and no threads, so the transport shows
+the answer and errors rather than the agent's steps, and a permission request is
+answered in words: reply `allow`, `deny`, or the number of a choice.
+
+---
+
 ## How it works
 
 Four ideas carry most of the design.
@@ -431,6 +463,7 @@ starts a replacement, because the original execution may still be alive.
 More:
 
 - `slack.md` — the Slack transport: setup, commands, permission buttons
+- `zalo.md` — the Zalo transport: setup, commands, permission replies
 - `protocol.md` — wire format, API domains, versioning, event types
 - `security.md` — identity classes, authorization, permissions
 - `configuration.md` — every configuration key

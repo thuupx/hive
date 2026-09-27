@@ -1520,6 +1520,7 @@ hive
  |
  +-- hive-plugin-acp
  +-- hive-plugin-slack
+ +-- hive-plugin-zalo
  +-- hive-plugin-telegram
  +-- hive-plugin-web
  +-- hive-plugin-tailscale

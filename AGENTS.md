@@ -56,7 +56,7 @@ is an example of the internal form.
 - `make dist` packages exactly what a runner uploads. Its `VERSION` is stamped
   in with `-ldflags "-X main.Version=..."`, which is why `Version` in
   `cmd/hive/main.go` is a variable rather than a constant.
-- A tarball holds `hive` and both plugins. The daemon resolves plugins from its
+- A tarball holds `hive` and every plugin. The daemon resolves plugins from its
   own directory, so a tarball with `hive` alone is a gateway with no agents.
 - `checksums.txt` is written once, by the release job, after every artifact is
   downloaded. Do not compute it per runner: one file assembled from several
@@ -211,8 +211,11 @@ have to be rediscovered.
 
 - Single-machine v1: `hive` spawns the node as a child process and speaks
   the real node protocol over loopback TLS.
-- One production transport in v1: Slack. CLI/TUI is a protocol client,
+- Production transports in v1: Slack and Zalo. CLI/TUI is a protocol client,
   not a transport plugin.
+- Zalo has no socket mode, no message editing, no reactions, and no threads, so
+  its transport long-polls `getUpdates` and answers permissions in words rather
+  than with buttons. It shows the answer and errors, not the agent's steps.
 - Storage: libSQL via `go-libsql`, CGO accepted.
 - Coordinator failover is not in v1 and is not a v1 guarantee.
 - ACP protocol version 1, negotiated in `initialize`.

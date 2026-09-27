@@ -91,6 +91,21 @@ export SLACK_APP_TOKEN=xapp-...   # Socket Mode connection
 export SLACK_BOT_TOKEN=xoxb-...   # Web API calls
 ```
 
+The Zalo transport long-polls `getUpdates`, so it needs no public endpoint:
+
+```toml
+[transport.zalo]
+enabled = true
+[transport.zalo.options]
+bot_name = "Bot Hive Agent"    # from getMe, for @mention resolution in a group
+require_mention = "false"      # a private chat is always addressed
+typing_indicator = "true"      # show Zalo's transient "typing" action
+```
+
+```sh
+export ZALO_BOT_TOKEN='<bot id>:<secret>'   # ZALO_TOKEN is accepted as an alias
+```
+
 ## Plugin binaries
 
 Plugin binaries ship next to the `hive` binary. `HIVE_PLUGIN_DIR` overrides the
