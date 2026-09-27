@@ -152,6 +152,12 @@ is an example of the internal form.
   command, or when an entry documents a flag the command does not define.
 - Global flags are persistent, so `hive -config x status` and `hive status
   -config x` both work. A caller must not have to remember flag order.
+- `normalizeFlags` rewrites a single-dash long flag as its long spelling before
+  cobra sees it. pflag reads a leading single dash as a shorthand (`-lines 5` is
+  "unknown shorthand flag: 'l' in -lines") and cobra cannot find the command when
+  the flag comes first (`-config x serve` reads the path as the command). Both
+  spellings work; a flag's value is never rewritten, so `--grep -lines` still
+  searches for `-lines`.
 - A command that removes something asks first and defaults to no. `-yes` skips
   the prompt, and is required when there is no terminal to ask, so an unattended
   script cannot delete an installation by accident. `hive uninstall` is the

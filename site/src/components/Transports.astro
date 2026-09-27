@@ -1,0 +1,67 @@
+---
+import Badge from "./Badge.astro";
+import Icon from "./Icon.astro";
+import Section from "./Section.astro";
+import { DOCS } from "../site";
+
+const transports = [
+  {
+    name: "Slack",
+    status: "shipped",
+    how: "Socket Mode",
+    body: "Hive opens the connection outbound, so there is no public endpoint, no tunnel, and no signing secret on the wire. A turn's output is threaded under the message that asked for it, and a permission request arrives as buttons.",
+    guide: `${DOCS}/slack.md`,
+  },
+  {
+    name: "Zalo",
+    status: "shipped",
+    how: "Long polling",
+    body: "Zalo has no socket mode, so Hive polls, and it still needs no public endpoint. There are no buttons and no threads, so a permission request is answered in words — allow, deny, or the number of a choice — and the chat shows the answer rather than every tool call.",
+    guide: `${DOCS}/zalo.md`,
+  },
+] as const;
+---
+
+<Section
+  id="transports"
+  eyebrow="Transports"
+  title="The chat app is a plugin"
+  lead="A transport owns presentation: it resolves its own commands, speaks only for its own platform, and may assert only principals of its own transport. Hive core never learns a platform's name."
+>
+  <ul class="grid gap-6 md:grid-cols-2">
+    {
+      transports.map((transport) => (
+        <li class="card card-hover flex flex-col p-6">
+          <div class="flex items-center justify-between gap-3">
+            <span class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-accent">
+              <Icon name="gateway" size={20} />
+            </span>
+            <Badge status={transport.status} />
+          </div>
+          <h3 class="mt-4 text-lg font-semibold">{transport.name}</h3>
+          <p class="mt-1 font-mono text-xs uppercase tracking-wider text-muted-foreground">
+            {transport.how}
+          </p>
+          <p class="mt-3 text-sm leading-relaxed text-muted-foreground">
+            {transport.body}
+          </p>
+          <a
+            href={transport.guide}
+            class="mt-5 inline-flex items-center gap-1.5 text-sm font-medium text-accent transition-opacity duration-200 hover:opacity-80"
+          >
+            {transport.name} guide
+            <Icon name="arrow" size={15} />
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+
+  <p class="mt-8 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+    <span class="font-medium text-foreground">Adding one is a plugin, not a core
+    change.</span> A transport declares its own configuration section and the
+    credentials it needs, and the core asks it rather than knowing it. The guided
+    setup turns the ones you pick on and asks for those credentials, which are
+    written to a file only you can read — never to the configuration.
+  </p>
+</Section>

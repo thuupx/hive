@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
-	"slices"
 	"strings"
 	"syscall"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/fang"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"golang.org/x/term"
 )
 
 // newRootCommand builds the command tree.
@@ -64,35 +68,84 @@ func newRootCommand(g *flags) *cobra.Command {
 	return root
 }
 
-// globalFlagNames are the long flags the root defines.
-var globalFlagNames = []string{"config", "role", "coordinator-url", "node-id", "help", "version"}
-
-// normalizeGlobalFlags rewrites "-config x" as "--config x".
+// normalizeFlags rewrites "-flag value" as "--flag value".
 //
-// Cobra decides which command is being run before it parses flags, and it only
-// recognises a single-dash long flag once the command is known. The CLI has
-// always accepted both spellings — the node child is started with them, and so is
-// every example in the documentation — so they are normalised once, here, rather
-// than in every invocation ever written down.
-func normalizeGlobalFlags(args []string) []string {
+// pflag reads a leading single dash as a shorthand, so "-lines 5" is "unknown
+// shorthand flag: 'l' in -lines", and cobra cannot even find the command when the
+// flag comes first. The CLI has always accepted both spellings and every example
+// in the documentation is written that way, so the long spelling is restored here
+// rather than in every invocation ever written down.
+//
+// A value is never rewritten: a flag that takes one consumes the next argument,
+// whatever it looks like.
+func normalizeFlags(root *cobra.Command, args []string) []string {
+	long, takesValue := treeFlags(root)
+
 	out := make([]string, 0, len(args))
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") || arg == "-" {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		// Everything after -- is a positional argument.
+		if arg == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
 			out = append(out, arg)
 			continue
 		}
 
-		name := strings.TrimPrefix(arg, "-")
+		name := strings.TrimLeft(arg, "-")
+		hasValue := false
 		if eq := strings.IndexByte(name, '='); eq >= 0 {
-			name = name[:eq]
+			name, hasValue = name[:eq], true
 		}
-		if slices.Contains(globalFlagNames, name) {
-			out = append(out, "-"+arg)
+
+		// A shorthand, or a value, is left as it is.
+		if !long[name] {
+			out = append(out, arg)
 			continue
 		}
+		if !strings.HasPrefix(arg, "--") {
+			arg = "-" + arg
+		}
 		out = append(out, arg)
+
+		if !hasValue && takesValue[name] && i+1 < len(args) {
+			i++
+			out = append(out, args[i])
+		}
 	}
 	return out
+}
+
+// treeFlags lists the long flag names the tree defines, and the ones that take a
+// value.
+func treeFlags(root *cobra.Command) (long, takesValue map[string]bool) {
+	long = map[string]bool{}
+	takesValue = map[string]bool{}
+
+	collect := func(fs *pflag.FlagSet) {
+		fs.VisitAll(func(f *pflag.Flag) {
+			if len(f.Name) > 1 {
+				long[f.Name] = true
+			}
+			if f.NoOptDefVal == "" {
+				takesValue[f.Name] = true
+			}
+		})
+	}
+
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		collect(cmd.Flags())
+		collect(cmd.PersistentFlags())
+		for _, child := range cmd.Commands() {
+			walk(child)
+		}
+	}
+	walk(root)
+	return long, takesValue
 }
 
 // execute runs the tree through fang, which styles help and errors, adds
@@ -100,13 +153,66 @@ func normalizeGlobalFlags(args []string) []string {
 func execute(ctx context.Context, args []string) error {
 	var g flags
 	root := newRootCommand(&g)
-	root.SetArgs(normalizeGlobalFlags(args))
+	root.SetArgs(normalizeFlags(root, args))
 
 	// fang prints the error itself, so the caller only has to exit non-zero.
 	return fang.Execute(ctx, root,
 		fang.WithVersion(Version),
 		fang.WithNotifySignal(os.Interrupt, syscall.SIGTERM),
+		fang.WithErrorHandler(errorHandler),
 	)
+}
+
+// errorHandler renders an error the way fang does, minus two things that mangle
+// what a Hive error says.
+//
+// fang title-cases the message, so a path arrives as /Users/You/.Hive/Config.toml,
+// and it renders the message as one wrapped paragraph, so a second line is folded
+// into the first. Neither is acceptable when the message is a path, a socket, or
+// an instruction.
+func errorHandler(w io.Writer, styles fang.Styles, err error) {
+	// A redirected stderr gets the plain message, as fang's own handler does.
+	if !term.IsTerminal(int(os.Stderr.Fd())) {
+		fmt.Fprintln(w, err.Error())
+		return
+	}
+
+	fmt.Fprintln(w, styles.ErrorHeader.String())
+	// Line by line: the style carries a width, and rendering the whole message at
+	// once folds its newlines away.
+	for _, line := range strings.Split(err.Error(), "\n") {
+		fmt.Fprintln(w, styles.ErrorText.UnsetTransform().Render(line))
+	}
+	fmt.Fprintln(w)
+
+	if isUsageError(err) {
+		fmt.Fprintln(w, lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			styles.ErrorText.UnsetTransform().UnsetWidth().UnsetMargins().Render("Try"),
+			styles.Program.Flag.Render(" --help "),
+			styles.ErrorText.UnsetTransform().UnsetWidth().UnsetMargins().Render("for usage."),
+		))
+		fmt.Fprintln(w)
+	}
+}
+
+// isUsageError reports whether cobra rejected the invocation itself.
+//
+// It mirrors fang's own check, which is unexported, so the "Try --help" line
+// still appears for a mistyped command and not for a failed operation.
+func isUsageError(err error) bool {
+	for _, prefix := range []string{
+		"flag needs an argument:",
+		"unknown flag:",
+		"unknown shorthand flag:",
+		"unknown command",
+		"invalid argument",
+	} {
+		if strings.HasPrefix(err.Error(), prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // applyHelpTable gives every command the curated prose a flag set cannot know.

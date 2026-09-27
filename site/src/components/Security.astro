@@ -14,7 +14,7 @@ const points = [
     icon: "lock",
     title: "Deny by default",
     status: "shipped",
-    body: "A principal must be named before it can act, so an unknown user is refused. A session a principal may not reach is reported as not found rather than unauthorized, so the error leaks nothing.",
+    body: "A principal must be named before it can act, so an unknown user is refused, and a refused message says which principal to add. A transport may assert only a principal of its own transport, so Slack cannot speak for Zalo. A session a principal may not reach is reported as not found rather than unauthorized, so the error leaks nothing.",
   },
   {
     icon: "gateway",

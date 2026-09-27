@@ -82,13 +82,65 @@ func runLogs(f flags, opts logsOptions) error {
 		return err
 	}
 	for _, line := range kept {
-		fmt.Println(line)
+		printLogLine(line)
 	}
 
 	if !opts.follow {
 		return nil
 	}
 	return followFile(context.Background(), path, file, opts.level, opts.grep)
+}
+
+// printLogLine writes one line of the daemon's log, readable.
+//
+// A raw slog line leads with a timestamp nobody reads and buries the level in
+// the middle of key=value pairs. The clock is dimmed and shortened, the level is
+// colored, and the message keeps its own words. A line that is not a slog line is
+// printed as it is.
+func printLogLine(line string) {
+	ts, level, rest, ok := splitLogLine(line)
+	if !ok {
+		fmt.Println(line)
+		return
+	}
+	fmt.Printf("%s %s %s\n",
+		styleDim.Render(shortTime(ts)),
+		levelStyle(level).Render(fmt.Sprintf("%-5s", level)),
+		rest)
+}
+
+// splitLogLine reads the time, the level, and the message out of a slog text line.
+func splitLogLine(line string) (ts, level, rest string, ok bool) {
+	if !strings.HasPrefix(line, "time=") {
+		return "", "", "", false
+	}
+	i := strings.Index(line, " level=")
+	if i < 0 {
+		return "", "", "", false
+	}
+
+	ts = strings.TrimPrefix(line[:i], "time=")
+	after := line[i+len(" level="):]
+
+	// msg is written right after level, so the first occurrence is the message.
+	if j := strings.Index(after, " msg="); j >= 0 {
+		level = after[:j]
+		rest = after[j+len(" msg="):]
+	} else {
+		level = after
+	}
+	return ts, level, rest, true
+}
+
+// shortTime keeps the clock from an RFC 3339 timestamp.
+func shortTime(ts string) string {
+	if i := strings.IndexByte(ts, 'T'); i >= 0 {
+		ts = ts[i+1:]
+	}
+	if i := strings.IndexAny(ts, ".+"); i >= 0 {
+		ts = ts[:i]
+	}
+	return ts
 }
 
 // tailLines reads the file and returns the last lines that pass the filters.
@@ -130,7 +182,7 @@ func followFile(ctx context.Context, path string, file *os.File, level, match st
 		if len(line) > 0 {
 			trimmed := strings.TrimRight(line, "\n")
 			if linePasses(trimmed, level, match) {
-				fmt.Println(trimmed)
+				printLogLine(trimmed)
 			}
 		}
 

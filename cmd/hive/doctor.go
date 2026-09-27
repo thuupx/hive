@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,10 +35,14 @@ type finding struct {
 func runDoctor(f flags) error {
 	cfg, err := loadConfig(f)
 	if err != nil {
-		fmt.Println("fail  configuration")
-		fmt.Printf("      %v\n", err)
-		fmt.Println("      fix: run `hive init` to write a starter configuration")
-		return errors.New("the configuration could not be read")
+		// Nothing else can be checked without a configuration, so the finding is
+		// the only one there is.
+		return report([]finding{{
+			level:  "fail",
+			what:   "the configuration could not be read",
+			detail: err.Error(),
+			fix:    "run `hive init` to write a starter configuration",
+		}})
 	}
 
 	var findings []finding
@@ -57,15 +60,23 @@ func runDoctor(f flags) error {
 }
 
 // report prints the findings and returns an error when something failed.
+//
+// Problems come first. A doctor is read to find out what to fix, and the order
+// the checks happen to run in buries that under everything that is fine.
 func report(findings []finding) error {
+	sorted := append([]finding(nil), findings...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return severity(sorted[i].level) < severity(sorted[j].level)
+	})
+
 	failed, warned := 0, 0
-	for _, f := range findings {
-		fmt.Printf("%-5s %s\n", f.level, f.what)
+	for _, f := range sorted {
+		fmt.Printf("%s %s\n", findingMark(f.level), f.what)
 		if f.detail != "" {
-			fmt.Printf("      %s\n", f.detail)
+			fmt.Println(detailBlock(f.detail))
 		}
 		if f.fix != "" {
-			fmt.Printf("      fix: %s\n", f.fix)
+			fmt.Println(fixBlock("→ " + f.fix))
 		}
 		switch f.level {
 		case "fail":
@@ -75,17 +86,55 @@ func report(findings []finding) error {
 		}
 	}
 
-	fmt.Println()
-	switch {
-	case failed > 0:
-		fmt.Printf("%d problem(s) and %d warning(s)\n", failed, warned)
-		return errors.New("doctor found problems")
-	case warned > 0:
-		fmt.Printf("no problems, %d warning(s)\n", warned)
-	default:
-		fmt.Println("everything checks out")
+	// A failure is reported by the error, which fang renders below, so printing a
+	// summary here as well would say the same thing twice.
+	if failed > 0 {
+		return fmt.Errorf("doctor found %s", count(failed, "problem"))
 	}
+
+	fmt.Println()
+	fmt.Println(summaryLine(warned))
 	return nil
+}
+
+// severity orders the findings, most urgent first.
+func severity(level string) int {
+	switch level {
+	case "fail":
+		return 0
+	case "warn":
+		return 1
+	default:
+		return 2
+	}
+}
+
+// findingMark is the symbol a finding starts with.
+func findingMark(level string) string {
+	switch level {
+	case "fail":
+		return styleFail.Render("✗")
+	case "warn":
+		return styleWarn.Render("!")
+	default:
+		return styleOK.Render("✓")
+	}
+}
+
+// summaryLine is the one line a reader looks at last, when nothing failed.
+func summaryLine(warned int) string {
+	if warned == 0 {
+		return styleOK.Render("✓") + " everything checks out"
+	}
+	return styleOK.Render("✓") + " no problems, " + styleWarn.Render(count(warned, "warning"))
+}
+
+// count renders "1 problem" or "3 problems".
+func count(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // checkConfig reports what the configuration says about itself.
