@@ -82,6 +82,12 @@ and the environment variables it needs. `hive init` scaffolds the sections from
 those manifests, `hive service install` captures the declared variables, and
 `hive doctor` checks them — so adding a transport does not mean editing the core.
 
+In a terminal, `hive init` asks instead of scaffolding: which agent is the
+default, which transports to turn on, the credentials each one declared, and
+where runs should work. The chosen transports are written as active sections;
+the rest stay as commented examples. `hive config --update` runs the same setup
+prefilled with what is configured now.
+
 The Slack transport reads:
 
 ```toml
@@ -98,6 +104,12 @@ Credentials come from the environment so they never appear in configuration:
 export SLACK_APP_TOKEN=xapp-...   # Socket Mode connection
 export SLACK_BOT_TOKEN=xoxb-...   # Web API calls
 ```
+
+The guided setup stores them instead in `~/.hive/data/service.env`, which is
+readable by its owner only. `hive serve` loads that file for any variable the
+environment does not already set, so a daemon started by the service and one
+started in a terminal both find the same credentials. An exported variable always
+wins.
 
 The Zalo transport long-polls `getUpdates`, so it needs no public endpoint:
 

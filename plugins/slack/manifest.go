@@ -20,7 +20,14 @@ func Manifest(version string) v1.PluginManifest {
 			Section: "transport.slack",
 			Summary: "Slack over Socket Mode, so no public endpoint is needed.",
 			Options: []v1.PluginOptionManifest{
-				{Name: "bot_user_id", Default: "U0XXXXXXX", Description: "the bot's own user id, for mention resolution"},
+				{
+					Name:        "bot_user_id",
+					Default:     "U0XXXXXXX",
+					Description: "the bot's own user id, for mention resolution",
+					// Without it a mention is never recognised, and with
+					// require_mention on, every message is ignored.
+					Required: true,
+				},
 				{Name: "require_mention", Default: "true", Description: "ignore messages that do not address the bot"},
 				{Name: "channel_context", Default: "20", Description: "recent messages handed to the agent as room context"},
 				{Name: "max_attachment_mb", Default: "8", Description: "largest file the transport will read"},

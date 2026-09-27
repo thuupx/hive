@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/thuupx/hive/internal/config"
@@ -68,5 +71,43 @@ func TestWithin(t *testing.T) {
 		if got := within(tc.path, tc.folder); got != tc.want {
 			t.Errorf("within(%q, %q) = %v, want %v", tc.path, tc.folder, got, tc.want)
 		}
+	}
+}
+
+// A report puts what needs fixing first, and fails when something did.
+func TestReportOrdersBySeverity(t *testing.T) {
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stdout
+	os.Stdout = write
+
+	reportErr := report([]finding{
+		{level: "ok", what: "fine"},
+		{level: "warn", what: "careful"},
+		{level: "fail", what: "broken"},
+	})
+
+	write.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, read); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	out := buf.String()
+
+	if reportErr == nil {
+		t.Error("a failing finding should make the report fail")
+	}
+	broken := strings.Index(out, "broken")
+	careful := strings.Index(out, "careful")
+	fine := strings.Index(out, "fine")
+	if broken < 0 || careful < 0 || fine < 0 {
+		t.Fatalf("the report is missing a finding:\n%s", out)
+	}
+	if !(broken < careful && careful < fine) {
+		t.Errorf("findings are not ordered most urgent first:\n%s", out)
 	}
 }

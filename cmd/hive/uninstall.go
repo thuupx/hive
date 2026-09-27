@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -28,22 +27,21 @@ import (
 // Nothing is removed until the user says yes, and `-yes` is refused when there is
 // no terminal to ask, so an unattended script cannot delete an installation by
 // accident.
-func runUninstall(f flags, args []string) error {
-	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
-	assumeYes := fs.Bool("yes", false, "remove without asking for confirmation")
-	removeWorkspace := fs.Bool("workspace", false, "also remove the agent workspace and everything in it")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
+// uninstallOptions are the flags `hive uninstall` takes.
+type uninstallOptions struct {
+	yes       bool
+	workspace bool
+}
 
-	plan, err := planUninstall(f, *removeWorkspace)
+func runUninstall(f flags, opts uninstallOptions) error {
+	plan, err := planUninstall(f, opts.workspace)
 	if err != nil {
 		return err
 	}
 
 	plan.print(os.Stdout)
 
-	if !*assumeYes {
+	if !opts.yes {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
 			return errors.New("refusing to remove an installation without confirmation; pass -yes to do it unattended")
 		}

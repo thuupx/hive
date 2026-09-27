@@ -164,6 +164,61 @@ func TestRenderStarterRendersDeclaredTransports(t *testing.T) {
 	}
 }
 
+// A transport the guided setup turned on is written as an active section, with
+// the answers the user gave, and is not repeated as an example.
+func TestRenderStarterWritesEnabledTransports(t *testing.T) {
+	manifest := v1.PluginManifest{
+		ID:      "demo",
+		Type:    v1.PluginTypeTransport,
+		Secrets: []v1.PluginSecret{{Any: []string{"DEMO_TOKEN"}}},
+		Config: &v1.PluginConfigManifest{
+			Section:         "transport.demo",
+			Summary:         "Demo transport.",
+			Options:         []v1.PluginOptionManifest{{Name: "greeting", Default: "hi"}},
+			Acknowledgement: &v1.PluginAcknowledgementManifest{Enabled: true, Mode: "visual"},
+		},
+	}
+
+	rendered := RenderStarter(StarterOptions{
+		Transports: []v1.PluginManifest{manifest},
+		EnabledTransports: []EnabledTransport{{
+			Manifest: manifest,
+			Options:  map[string]string{"greeting": "hello"},
+		}},
+	})
+
+	for _, want := range []string{
+		"[transport.demo]\nenabled = true",
+		`greeting = "hello"`,
+		"[transport.demo.acknowledgement]\nenabled = true",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("the generated file does not contain %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "# [transport.demo]") {
+		t.Error("an enabled transport should not also be written as a commented example")
+	}
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("the generated configuration does not load: %v\n%s", err, rendered)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("the generated configuration does not validate: %v", err)
+	}
+	if !cfg.Transports["demo"].Enabled {
+		t.Error("the transport should be enabled")
+	}
+	if got := cfg.Transports["demo"].Options["greeting"]; got != "hello" {
+		t.Errorf("greeting = %q, want the answer", got)
+	}
+}
+
 // With no transport plugin found, the file says what to do rather than leaving a
 // placeholder that looks configured.
 func TestRenderStarterWithoutTransports(t *testing.T) {

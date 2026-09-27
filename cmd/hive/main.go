@@ -10,12 +10,10 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
@@ -53,145 +51,23 @@ var Version = "0.0.0-dev"
 // ChildStopTimeout bounds how long the coordinator waits for its node child.
 const ChildStopTimeout = 5 * time.Second
 
-const usage = `hive - personal agent gateway
-
-Usage:
-  hive [global flags] <command> [arguments]
-
-Commands:
-  init                       write a starter configuration file
-  version                    print build and protocol version
-  config                     validate the configuration and print effective values
-  serve                      run the Hive daemon
-  service <install|restart|uninstall|status>  run the daemon in the background
-  update [-version x.y.z]    install a release over this one
-  uninstall [-yes] [-workspace]  remove the service, binaries, data, and configuration
-  tui [-interval 2s]         show the management plane
-  session create             create a session
-  session list               list sessions
-  session status <id>        show a session and its runs
-  session prompt <id> <text> prompt a session
-  session cancel <id>        cancel the current run
-  session handoff <id> <agent>  hand the session to another agent
-  session events <id>        replay a session event stream
-  session config <id> [sel] [value]  read or change the agent's settings
-  workspace create <name>    register a workspace
-  workspace list             list workspaces and shared-location warnings
-  permission list            list pending permission requests
-  permission respond <id>    answer a pending request with -allow or -deny
-  agent list                 list configured agents
-  node list                  list nodes
-  command get <id>           show a command status resource
-  doctor                     check the installation and say what is wrong
-  logs [-lines n] [-follow]  show what the daemon has been doing
-  help [command]             what a command does
-
-Global flags:
-  -config <path>           configuration file (default ~/.hive/config.toml)
-  -role <role>             override cluster.role (coordinator, node, auto)
-  -coordinator-url <url>   override cluster.coordinator_url
-  -node-id <id>            override cluster.node_id
-  -h, --help               show this help
-  --version                print the build and protocol version
-`
-
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "hive:", err)
+	if err := execute(context.Background(), os.Args[1:]); err != nil {
+		// fang has already reported the error in the style the rest of the help
+		// uses, so this only has to leave a non-zero status behind.
 		os.Exit(1)
 	}
 }
 
+// flags are the global flags, shared by every command.
+//
+// Cobra parses them wherever they appear, so `hive -config x status` and
+// `hive status -config x` both work without the caller remembering flag order.
 type flags struct {
 	configPath     string
 	role           string
 	coordinatorURL string
 	nodeID         string
-	help           bool
-}
-
-func run(args []string) error {
-	f, rest, err := parseArgs(args)
-	if err != nil {
-		return err
-	}
-	if f.help || len(rest) == 0 {
-		fmt.Print(usage)
-		return nil
-	}
-
-	switch rest[0] {
-	case "version":
-		printVersion()
-		return nil
-	case "init":
-		return runInit(f, rest[1:])
-	case "config":
-		return runConfig(f)
-	case "serve":
-		merged, err := parseServeArgs(f, rest[1:])
-		if err != nil {
-			return err
-		}
-		return runServe(merged)
-	case "service":
-		return runService(f, rest[1:])
-	case "update":
-		return runUpdate(f, rest[1:])
-	case "uninstall":
-		return runUninstall(f, rest[1:])
-	case "help":
-		return runHelp(rest[1:])
-	case "doctor":
-		return runDoctor(f)
-	case "logs":
-		return runLogs(f, rest[1:])
-	case "session":
-		return sessionCommand(f, rest[1:])
-	case "agent":
-		return agentCommand(f, rest[1:])
-	case "node":
-		return nodeCommand(f, rest[1:])
-	case "command":
-		return commandCommand(f, rest[1:])
-	case "workspace":
-		return workspaceCommand(f, rest[1:])
-	case "permission":
-		return permissionCommand(f, rest[1:])
-	case "tui":
-		return tuiCommand(f, rest[1:])
-	default:
-		return fmt.Errorf("unknown command %q\n\n%s", rest[0], usage)
-	}
-}
-
-// parseServeArgs applies the global flags that may also follow `serve`.
-//
-// A spawned node child is started with the role and the coordinator url as flags,
-// so dropping them here would silently turn it into a second coordinator.
-func parseServeArgs(f flags, args []string) (flags, error) {
-	extra, rest, err := parseArgs(args)
-	if err != nil {
-		return f, err
-	}
-	if len(rest) > 0 {
-		return f, fmt.Errorf("unexpected argument %q after serve", rest[0])
-	}
-
-	merged := f
-	if extra.configPath != "" {
-		merged.configPath = extra.configPath
-	}
-	if extra.role != "" {
-		merged.role = extra.role
-	}
-	if extra.coordinatorURL != "" {
-		merged.coordinatorURL = extra.coordinatorURL
-	}
-	if extra.nodeID != "" {
-		merged.nodeID = extra.nodeID
-	}
-	return merged, nil
 }
 
 // nodeChildEnv marks a process that was started as a node child.
@@ -199,54 +75,6 @@ func parseServeArgs(f flags, args []string) (flags, error) {
 // A coordinator refuses to spawn a node child when it is itself one, so a
 // configuration mistake cannot turn into an unbounded chain of processes.
 const nodeChildEnv = "HIVE_NODE_CHILD"
-
-// parseArgs extracts the global flags and returns the remaining arguments.
-func parseArgs(args []string) (flags, []string, error) {
-	var (
-		f    flags
-		rest []string
-	)
-
-	for i := 0; i < len(args); i++ {
-		switch a := args[i]; {
-		case a == "-h" || a == "--help":
-			// Only the flags mean "show the usage". The word `help` is a command,
-			// because `hive help <command>` is how a user asks about one command,
-			// and treating it as a flag would make that impossible to reach.
-			f.help = true
-		case a == "-config" || a == "--config":
-			i++
-			if i >= len(args) {
-				return f, nil, errors.New("-config requires a path")
-			}
-			f.configPath = args[i]
-		case a == "-role" || a == "--role":
-			i++
-			if i >= len(args) {
-				return f, nil, errors.New("-role requires a value")
-			}
-			f.role = args[i]
-		case a == "-coordinator-url" || a == "--coordinator-url":
-			i++
-			if i >= len(args) {
-				return f, nil, errors.New("-coordinator-url requires a value")
-			}
-			f.coordinatorURL = args[i]
-		case a == "-node-id" || a == "--node-id":
-			i++
-			if i >= len(args) {
-				return f, nil, errors.New("-node-id requires a value")
-			}
-			f.nodeID = args[i]
-		default:
-			// Everything from the first positional argument onwards belongs to
-			// the subcommand, which parses its own flags.
-			rest = append(rest, args[i:]...)
-			return f, rest, nil
-		}
-	}
-	return f, rest, nil
-}
 
 func applyOverrides(cfg *config.Config, f flags) {
 	if f.role != "" {
@@ -268,19 +96,21 @@ func printVersion() {
 	}
 }
 
+// initOptions are the flags `hive init` takes.
+type initOptions struct {
+	agent string
+	force bool
+}
+
 // runInit writes a starter configuration.
 //
 // It discovers the ACP agents on this machine and asks which one should be the
 // default when there is more than one, so a first run starts from what is
 // actually installed rather than from a placeholder the user has to replace.
-func runInit(f flags, args []string) error {
-	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	agentFlag := fs.String("agent", "", "the default agent, chosen without prompting")
-	force := fs.Bool("force", false, "overwrite an existing configuration file")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-
+//
+// A terminal gets the guided setup; without one, and with flags, it stays
+// scriptable.
+func runInit(f flags, opts initOptions) error {
 	cfgPath := f.configPath
 	if cfgPath == "" {
 		var err error
@@ -291,14 +121,21 @@ func runInit(f flags, args []string) error {
 
 	// Refuse to overwrite unless asked: a configuration file is not ours to
 	// replace.
-	if _, err := os.Stat(cfgPath); err == nil && !*force {
+	if _, err := os.Stat(cfgPath); err == nil && !opts.force {
 		return fmt.Errorf("%s already exists; edit it, remove it, or pass -force", cfgPath)
 	}
 
 	agents := config.DiscoverAgents()
 	reportDiscovery(agents)
 
-	defaultAgent, err := chooseDefaultAgent(agents, *agentFlag)
+	// A terminal gets the guided setup, because the whole point is not having to
+	// know the file format. `-agent` names the answer without asking, so it keeps
+	// the scriptable path, and so does a run with no terminal at all.
+	if isInteractive() && opts.agent == "" {
+		return runSetup(cfgPath, agents, initSetupOptions{force: opts.force})
+	}
+
+	defaultAgent, err := chooseDefaultAgent(agents, opts.agent)
 	if err != nil {
 		return err
 	}
@@ -535,7 +372,11 @@ func runConfig(f flags) error {
 	return err
 }
 
-func runServe(f flags) error {
+// runServe runs the daemon until ctx ends.
+//
+// The context comes from the command tree, which already turns a signal into a
+// cancellation, so a Ctrl-C stops the node child and the transports with it.
+func runServe(f flags, ctx context.Context) error {
 	cfgPath := f.configPath
 	if cfgPath == "" {
 		var err error
@@ -560,6 +401,13 @@ func runServe(f flags) error {
 	log, closeLog := daemonLogger(cfg)
 	defer closeLog()
 
+	// The guided setup stores credentials in a file only its owner can read, so
+	// the daemon has to read it: a service and a terminal run then behave the
+	// same way. An exported variable still wins.
+	if loaded := loadSecretsFile(cfg); loaded > 0 {
+		log.Info("loaded credentials from the secrets file", "variables", loaded)
+	}
+
 	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
 		log.Warn("no configuration file; Hive cannot run an agent",
 			"path", cfgPath, "create_it_with", "hive init")
@@ -579,9 +427,6 @@ func runServe(f flags) error {
 		log.Info("runs work in the default workspace; set workspace_dir to work in a project",
 			"workspace", workspaceDir)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	switch cfg.EffectiveRole() {
 	case config.RoleCoordinator:
@@ -685,11 +530,14 @@ func spawnNodeChild(cfgPath, coordinatorURL, dir string, log *slog.Logger) (*exe
 	// a second process named hive.
 	command := roleExecutable(filepath.Dir(self), aliasNode, self)
 
+	// Long flags are spelled with two dashes: cobra resolves the command before
+	// it parses flags, and a single-dash long flag before the command name is not
+	// recognised as one.
 	cmd := exec.Command(command,
-		"-config", cfgPath,
+		"--config", cfgPath,
 		"serve",
-		"-role", string(config.RoleNode),
-		"-coordinator-url", coordinatorURL,
+		"--role", string(config.RoleNode),
+		"--coordinator-url", coordinatorURL,
 	)
 	// The child's directory is the directory its agents get. A service starts in
 	// the filesystem root, and a process started there hands every file it

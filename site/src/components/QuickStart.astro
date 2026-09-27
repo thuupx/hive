@@ -10,8 +10,8 @@ const steps = [
     body: "One script, no toolchain. It verifies the checksum before it extracts anything.",
   },
   {
-    title: "Find your agents",
-    body: "hive init scans your PATH for ACP agents and writes ~/.hive/config.toml naming what it found.",
+    title: "Set it up",
+    body: "hive init asks instead of making you learn a file format: which agent is the default, which transports to turn on, the credentials each one declares, and where runs should work. Credentials go to a file only you can read, never to the configuration.",
     code: "hive init",
   },
   {
@@ -25,6 +25,12 @@ const steps = [
     code: `hive session create
 hive session prompt <session-id> "explain this repository"
 hive session handoff <session-id> <agent-id>`,
+  },
+  {
+    title: "Keep it running",
+    body: "hive doctor reports what is wrong and what to do about it, hive update installs a release over this one, and hive config --update re-runs the guided setup.",
+    code: `hive doctor
+hive update`,
   },
 ] as const;
 ---
@@ -87,8 +93,9 @@ hive session handoff <session-id> <agent-id>`,
           <Icon name="arrow" size={15} />
         </a>
         <p class="mt-3 text-sm text-muted-foreground">
-          Connecting a messaging app — the app manifest, the commands, and the
-          permission buttons — is in the reference.
+          Connecting a messaging app — Slack over Socket Mode, Zalo over long
+          polling, the commands, and how each one asks for permission — is in the
+          reference.
         </p>
       </div>
     </aside>

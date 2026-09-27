@@ -143,13 +143,42 @@ is an example of the internal form.
 
 ### CLI
 
-- The standard flag package stops parsing at the first positional argument, so a
-  subcommand must call `parseArgsAndFlags`, not `flag.FlagSet.Parse`. A CLI must
-  not depend on the caller remembering flag order.
+- The command tree is cobra and `fang` renders its help, errors, completions, and
+  manpage. Flags are declared once, on the command; a command body takes parsed
+  values rather than parsing flags itself, so nothing is parsed twice.
+- What a user reads is not generated. `helpTable` in `cmd/hive/help.go` owns the
+  summary, the long text, the flags, and the examples, and `applyHelpTable` hands
+  them to the tree. A test fails when a command has no entry, when an entry has no
+  command, or when an entry documents a flag the command does not define.
+- Global flags are persistent, so `hive -config x status` and `hive status
+  -config x` both work. A caller must not have to remember flag order.
+- `normalizeFlags` rewrites a single-dash long flag as its long spelling before
+  cobra sees it. pflag reads a leading single dash as a shorthand (`-lines 5` is
+  "unknown shorthand flag: 'l' in -lines") and cobra cannot find the command when
+  the flag comes first (`-config x serve` reads the path as the command). Both
+  spellings work; a flag's value is never rewritten, so `--grep -lines` still
+  searches for `-lines`.
 - A command that removes something asks first and defaults to no. `-yes` skips
   the prompt, and is required when there is no terminal to ask, so an unattended
   script cannot delete an installation by accident. `hive uninstall` is the
   reference: it resolves a plan, prints it, asks, and only then acts.
+- An interactive command checks `isInteractive()` and keeps a scriptable path
+  without it: `hive init` with no terminal writes the starter from its flags, and
+  `hive config --update` refuses rather than hanging.
+
+### Guided setup and secrets
+
+- `hive init` in a terminal runs the guided setup (`cmd/hive/setup.go`, on `huh`).
+  Everything it asks comes from something that already knows the answer: the
+  agents from `config.DiscoverAgents`, the transports and their credentials from
+  the plugins' `-describe` manifests, and the workspace from the working
+  directory. Adding a transport still means no core change.
+- Credentials never reach `config.toml`. The setup writes them to
+  `<data_dir>/service.env` (0600, the file the service already sources) and
+  `hive serve` loads it for variables the environment does not set, so a service
+  and a terminal run behave the same. An exported variable wins.
+- A plugin option marked `Required` in its manifest has no working default, so
+  the setup asks for it; one with a default is written as that default.
 
 ### Errors
 

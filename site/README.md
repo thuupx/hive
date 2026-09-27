@@ -24,7 +24,7 @@ The alternatives were considered:
 
 - **A single hand-written `index.html`** with compiled Tailwind. Genuinely
   simpler, and the right answer for a page that will never grow. It was not
-  chosen because components are what keep eight sections consistent, and because
+  chosen because components are what keep nine sections consistent, and because
   `docs/` can join the site later as Astro content collections without a rewrite.
 - **Next.js.** Only worth it for an app — a playground, a dashboard. For a page
   that is entirely static it adds a server runtime and a JS bundle for no gain.

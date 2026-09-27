@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,19 +46,18 @@ var releaseBinaries = []string{"hive", "hive-plugin-acp", "hive-plugin-slack", "
 // It downloads the tarball for this platform, verifies its SHA-256 against the
 // release's checksums.txt, and replaces the binaries next to the running one —
 // which is where the daemon resolves the plugins, so both move together.
-func runUpdate(f flags, args []string) error {
-	fs := flag.NewFlagSet("update", flag.ContinueOnError)
-	version := fs.String("version", "", "the release to install (default: the latest)")
-	dir := fs.String("dir", "", "where to install (default: the running binary's directory)")
-	force := fs.Bool("force", false, "install even when the version is already current")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
+// updateCommandOptions are the flags `hive update` takes.
+type updateCommandOptions struct {
+	version string
+	dir     string
+	force   bool
+}
 
+func runUpdate(f flags, opts updateCommandOptions) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	targetDir := *dir
+	targetDir := opts.dir
 	if targetDir == "" {
 		self, err := os.Executable()
 		if err != nil {
@@ -70,11 +68,11 @@ func runUpdate(f flags, args []string) error {
 		targetDir = filepath.Dir(resolvePath(self))
 	}
 
-	changed, err := performUpdate(ctx, updateOptions{
+	changed, err := performUpdate(ctx, releaseOptions{
 		current: Version,
-		target:  strings.TrimPrefix(*version, "v"),
+		target:  strings.TrimPrefix(opts.version, "v"),
 		dir:     targetDir,
-		force:   *force,
+		force:   opts.force,
 		baseURL: defaultReleaseBase,
 		apiURL:  defaultReleaseAPI,
 		client:  &http.Client{Timeout: 10 * time.Minute},
@@ -97,8 +95,8 @@ func runUpdate(f flags, args []string) error {
 	return nil
 }
 
-// updateOptions is one update, resolved.
-type updateOptions struct {
+// releaseOptions is one update, resolved.
+type releaseOptions struct {
 	// current is the running build's version.
 	current string
 
@@ -120,7 +118,7 @@ type updateOptions struct {
 
 // performUpdate installs the target release, reporting whether it changed
 // anything. It is separate from runUpdate so it can be tested without a service.
-func performUpdate(ctx context.Context, opts updateOptions) (bool, error) {
+func performUpdate(ctx context.Context, opts releaseOptions) (bool, error) {
 	if opts.out == nil {
 		opts.out = io.Discard
 	}
@@ -246,7 +244,7 @@ func displayVersion(current string) string {
 //
 // The redirect on /releases/latest names the tag, and it is one request that is
 // not rate-limited per address the way the API is. The API is the fallback.
-func latestVersion(ctx context.Context, opts updateOptions) (string, error) {
+func latestVersion(ctx context.Context, opts releaseOptions) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(opts.baseURL, "/")+"/releases/latest", nil)
 	if err != nil {
 		return "", err

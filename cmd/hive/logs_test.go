@@ -99,3 +99,31 @@ func itoa(i int) string {
 	}
 	return string(digits)
 }
+
+// A log line is rendered readably: the clock is kept, the level is its own
+// column, and the message keeps its own words.
+func TestSplitLogLine(t *testing.T) {
+	ts, level, rest, ok := splitLogLine(
+		`time=2026-09-27T10:05:06.300+07:00 level=INFO msg="agent tool" run=run_1 status=in_progress`)
+	if !ok {
+		t.Fatal("a slog line should be understood")
+	}
+	if ts != "2026-09-27T10:05:06.300+07:00" {
+		t.Errorf("time = %q", ts)
+	}
+	if level != "INFO" {
+		t.Errorf("level = %q", level)
+	}
+	if rest != `"agent tool" run=run_1 status=in_progress` {
+		t.Errorf("rest = %q", rest)
+	}
+
+	if got := shortTime(ts); got != "10:05:06" {
+		t.Errorf("shortTime = %q, want the clock", got)
+	}
+
+	// A line that is not a slog line is left to speak for itself.
+	if _, _, _, ok := splitLogLine("something else entirely"); ok {
+		t.Error("a plain line should not be parsed as a record")
+	}
+}
