@@ -1,12 +1,15 @@
-// Command hive-plugin-slack runs the Slack transport.
+// Command hive-plugin-zalo runs the Zalo Bot transport.
 //
 // It is a separate process by design: a transport plugin does not link the core,
-// and a Slack failure cannot take the coordinator down with it.
+// and a Zalo failure cannot take the coordinator down with it.
+//
+// Inbound messages arrive by long polling, so the transport needs no public
+// endpoint: a personal installation behind NAT works as it is.
 //
 // Credentials come from the environment so they never appear in configuration:
 //
-//	SLACK_APP_TOKEN  authenticates the Socket Mode connection
-//	SLACK_BOT_TOKEN  authenticates Web API calls
+//	ZALO_BOT_TOKEN  the bot token, "<bot id>:<secret>"
+//	ZALO_TOKEN      an accepted alias for the same token
 package main
 
 import (
@@ -21,7 +24,7 @@ import (
 
 	"github.com/thuupx/hive/internal/logging"
 	"github.com/thuupx/hive/plugins/sdk"
-	"github.com/thuupx/hive/plugins/slack"
+	"github.com/thuupx/hive/plugins/zalo"
 	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
@@ -39,13 +42,13 @@ var capabilities = []string{
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "hive-plugin-slack:", err)
+		fmt.Fprintln(os.Stderr, "hive-plugin-zalo:", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	id := flag.String("id", slack.Name, "stable plugin identity")
+	id := flag.String("id", zalo.Name, "stable plugin identity")
 	version := flag.String("version", "0.0.0-dev", "plugin version")
 	describe := flag.Bool(sdk.DescribeFlag, false, "print the plugin manifest and exit")
 	options := optionFlags{}
@@ -55,7 +58,7 @@ func run() error {
 	// The core asks a plugin what it needs without starting it, so the manifest
 	// is printed before the connection is attempted.
 	if *describe {
-		return sdk.Describe(slack.Manifest(*version))
+		return sdk.Describe(zalo.Manifest(*version))
 	}
 
 	// The plugin does not link the core, so it logs with the standard library
@@ -65,7 +68,7 @@ func run() error {
 
 	// A misspelled option is passed through and would otherwise do nothing
 	// silently, which reads as a setting that does not work.
-	if unknown := sdk.UnknownOptions(slack.Manifest(*version), options); len(unknown) > 0 {
+	if unknown := sdk.UnknownOptions(zalo.Manifest(*version), options); len(unknown) > 0 {
 		log.Warn("ignoring options this transport does not read",
 			"options", strings.Join(unknown, ", "))
 	}
@@ -90,36 +93,27 @@ func run() error {
 		return fmt.Errorf("the core did not grant %s", v1.CapabilityTransportInbound)
 	}
 
-	client, err := slack.NewSocketClient(slack.Config{
-		AppToken: os.Getenv("SLACK_APP_TOKEN"),
-		BotToken: os.Getenv("SLACK_BOT_TOKEN"),
-		Log:      log,
+	client, err := zalo.NewHTTPClient(zalo.Config{
+		Token: botToken(),
+		Log:   log,
 	})
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	plugin := slack.New(host, client, slack.Options{
-		BotUserID:      options.get("bot_user_id"),
-		RequireMention: options.bool("require_mention", true),
-
-		// A channel is not a private pipe, so a bounded amount of the room is
-		// handed to the agent. Zero turns it off.
-		ChannelContext: options.int("channel_context", 20),
+	plugin := zalo.New(host, client, zalo.Options{
+		BotName:        options.get("bot_name"),
+		RequireMention: options.bool("require_mention", false),
 
 		// A transport must not read an unbounded amount of a user's data because
 		// they attached something large.
 		MaxAttachmentBytes: int64(options.int("max_attachment_mb", 8)) << 20,
 
-		// A channel is shared, so a turn's output is threaded under the message
-		// that asked for it. This keeps it flat for someone who prefers that.
-		FlatReplies: !options.bool("thread_replies", true),
-
-		// Slack has no typing indicator a bot can send, so a turn shows one by
-		// animating a message that the answer replaces.
+		// Zalo has a transient chat action a bot can send, so a turn shows it is
+		// working while the agent works.
 		TypingIndicator: options.bool("typing_indicator", true),
-		Acknowledgement: slack.Acknowledgement{
+		Acknowledgement: zalo.Acknowledgement{
 			Enabled:  options.bool("acknowledgement", true),
 			Mode:     options.get("acknowledgement_mode"),
 			Reaction: options.get("acknowledgement_reaction"),
@@ -127,8 +121,19 @@ func run() error {
 		Log: log,
 	})
 
-	log.Info("slack transport starting", "plugin", *id, "instance", host.InstanceID())
+	log.Info("zalo transport starting", "plugin", *id, "instance", host.InstanceID())
 	return plugin.Run(ctx)
+}
+
+// botToken reads the bot token from the environment.
+//
+// ZALO_TOKEN is accepted as well as ZALO_BOT_TOKEN so a value kept in a .env
+// file, which is where a personal installation usually keeps it, works as it is.
+func botToken() string {
+	if token := strings.TrimSpace(os.Getenv("ZALO_BOT_TOKEN")); token != "" {
+		return token
+	}
+	return strings.TrimSpace(os.Getenv("ZALO_TOKEN"))
 }
 
 // optionFlags collects repeated -option key=value arguments.

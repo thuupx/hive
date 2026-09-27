@@ -16,7 +16,7 @@ remove it again.
 
 | Asset | What it is |
 |---|---|
-| `hive_<version>_<os>_<arch>.tar.gz` | `hive`, `hive-plugin-acp`, and `hive-plugin-slack`, side by side |
+| `hive_<version>_<os>_<arch>.tar.gz` | `hive`, `hive-plugin-acp`, `hive-plugin-slack`, and `hive-plugin-zalo`, side by side |
 | `checksums.txt` | SHA-256 of every tarball |
 | `install.sh` | the install script, at the version it installs |
 
@@ -67,7 +67,7 @@ hold.
 
 ```sh
 make dist VERSION=0.0.1-test
-tar -tzf dist/hive_0.0.1-test_*.tar.gz   # hive, hive-plugin-acp, hive-plugin-slack
+tar -tzf dist/hive_0.0.1-test_*.tar.gz   # hive, hive-plugin-acp, hive-plugin-slack, hive-plugin-zalo
 ./bin/hive version                        # 0.0.1-test
 ```
 

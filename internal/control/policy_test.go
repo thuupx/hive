@@ -2,6 +2,7 @@ package control
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	v1 "github.com/thuupx/hive/protocol/hive/v1"
@@ -105,6 +106,22 @@ func TestPolicyAllowsTrustedPlugins(t *testing.T) {
 	// It is not a user: asserting an unlisted user principal is still denied.
 	if err := policy.Authorize("slack:U999", v1.MethodSessionList); err == nil {
 		t.Error("a plugin must not be able to act as an unlisted user")
+	}
+}
+
+// A refusal names the remedy, so a user who is denied learns their own principal
+// and what to do with it.
+func TestAuthorizationDenialNamesTheRemedy(t *testing.T) {
+	policy := NewPolicy(nil, nil)
+
+	err := policy.Authorize("zalo:abc123", v1.MethodSessionCreate)
+	if err == nil {
+		t.Fatal("expected denial")
+	}
+	for _, want := range []string{"zalo:abc123", "security.allowed_users"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to mention %q", err, want)
+		}
 	}
 }
 

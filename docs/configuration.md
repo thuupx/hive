@@ -74,7 +74,15 @@ implemented in v1; starting with one fails rather than silently doing nothing.
 ## Transports
 
 Transport options are opaque to the core: it passes them through, so Hive holds
-no vendor-specific configuration fields. The Slack transport reads:
+no vendor-specific configuration fields.
+
+Each transport describes its own section. The core asks the plugin binary
+(`hive-plugin-<name> -describe`) for a manifest naming the section, its options,
+and the environment variables it needs. `hive init` scaffolds the sections from
+those manifests, `hive service install` captures the declared variables, and
+`hive doctor` checks them — so adding a transport does not mean editing the core.
+
+The Slack transport reads:
 
 ```toml
 [transport.slack]
@@ -89,6 +97,21 @@ Credentials come from the environment so they never appear in configuration:
 ```sh
 export SLACK_APP_TOKEN=xapp-...   # Socket Mode connection
 export SLACK_BOT_TOKEN=xoxb-...   # Web API calls
+```
+
+The Zalo transport long-polls `getUpdates`, so it needs no public endpoint:
+
+```toml
+[transport.zalo]
+enabled = true
+[transport.zalo.options]
+bot_name = "Bot Hive Agent"    # from getMe, for @mention resolution in a group
+require_mention = "false"      # a private chat is always addressed
+typing_indicator = "true"      # show Zalo's transient "typing" action
+```
+
+```sh
+export ZALO_BOT_TOKEN='<bot id>:<secret>'   # ZALO_TOKEN is accepted as an alias
 ```
 
 ## Plugin binaries
@@ -153,6 +176,27 @@ hive service install
 #   binary: /Users/you/.hive/data/bin/hive
 #   secrets: /Users/you/.hive/data/service.env (0600)
 ```
+
+## Uninstalling
+
+```sh
+hive uninstall              # ask, then remove the installation
+hive uninstall -workspace   # also remove the agent workspace
+hive uninstall -yes         # no prompt, for a script
+```
+
+`hive uninstall` stops and removes the service, then removes the installed
+binaries, the data directory (database, logs, secrets), and the configuration
+file. It prints what it will remove and asks `[y/N]` first; a bare newline means
+no. Without a terminal to ask, it refuses unless `-yes` is passed.
+
+The workspace is your files, so it is kept. `-workspace` removes it too, but only
+when it lives inside `~/.hive`: a workspace pointed at a project is never deleted
+by an uninstall.
+
+Binaries are removed only from the directory this installation owns — the data
+directory's `bin/` and the release install directory (`~/.local/bin`). A build
+run from a checkout is reported and left alone.
 
 ## Measuring what it costs
 

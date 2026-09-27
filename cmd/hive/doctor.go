@@ -15,6 +15,7 @@ import (
 	"github.com/thuupx/hive/internal/client"
 	"github.com/thuupx/hive/internal/config"
 	"github.com/thuupx/hive/internal/storage"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // finding is one thing doctor looked at.
@@ -47,7 +48,7 @@ func runDoctor(f flags) error {
 	findings = append(findings, checkGuardedFolder(cfg)...)
 	findings = append(findings, checkDataDir(cfg)...)
 	findings = append(findings, checkAgents(cfg)...)
-	findings = append(findings, checkTransports(cfg)...)
+	findings = append(findings, checkTransports(cfg, pluginManifests(pluginDir()))...)
 	findings = append(findings, checkDaemon(cfg)...)
 	findings = append(findings, checkStore(cfg)...)
 	findings = append(findings, checkService()...)
@@ -312,7 +313,10 @@ func checkAgents(cfg config.Config) []finding {
 }
 
 // checkTransports reports whether each enabled transport can reach its platform.
-func checkTransports(cfg config.Config) []finding {
+//
+// Which environment variables a transport needs comes from the transport's own
+// manifest, so the check works for a transport the core has never heard of.
+func checkTransports(cfg config.Config, manifests map[string]v1.PluginManifest) []finding {
 	var out []finding
 
 	names := make([]string, 0, len(cfg.Transports))
@@ -321,41 +325,78 @@ func checkTransports(cfg config.Config) []finding {
 	}
 	sort.Strings(names)
 
+	// A token may be in this shell or in the file the service reads. Only
+	// reporting the first would fail a working installation, and a check that
+	// cries wolf is worse than no check.
+	serviceEnv := readServiceEnv()
+
 	for _, name := range names {
 		transport := cfg.Transports[name]
 		if !transport.Enabled {
 			continue
 		}
 
-		if name == "slack" {
-			// A token may be in this shell or in the file the service reads. Only
-			// reporting the first would fail a working installation, and a check
-			// that cries wolf is worse than no check.
-			serviceEnv := readServiceEnv()
-
-			for _, variable := range []string{"SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"} {
-				if os.Getenv(variable) != "" || serviceEnv[variable] != "" {
-					continue
-				}
-				out = append(out, finding{
-					level:  "fail",
-					what:   fmt.Sprintf("the Slack transport has no %s", variable),
-					detail: "the transport will exit and no message will be answered.",
-					fix:    fmt.Sprintf("export %s, or run `hive service install` from a shell that has it", variable),
-				})
-			}
-			if len(cfg.Security.AllowedUsers) == 0 {
-				out = append(out, finding{
-					level:  "warn",
-					what:   "no Slack user is allowed",
-					detail: "authorization denies by default, so every message is refused.",
-					fix:    `add the user to security.allowed_users as "slack:<user id>"`,
-				})
-			}
-			out = append(out, finding{level: "ok", what: "the Slack transport is enabled"})
+		manifest, known := manifests[name]
+		if !known {
+			out = append(out, finding{
+				level:  "warn",
+				what:   fmt.Sprintf("the %s transport could not describe itself", name),
+				detail: "its plugin binary was not found or did not answer, so its secrets cannot be checked.",
+				fix:    "install the plugin next to the hive binary, or set HIVE_PLUGIN_DIR",
+			})
 		}
+
+		for _, secret := range manifest.Secrets {
+			// A secret names variables that may carry the same value, so any one
+			// is enough; only the group is reported.
+			if secretPresent(secret.Any, serviceEnv) {
+				continue
+			}
+			want := strings.Join(secret.Any, " or ")
+			out = append(out, finding{
+				level:  "fail",
+				what:   fmt.Sprintf("the %s transport has no %s", name, want),
+				detail: "the transport will exit and no message will be answered.",
+				fix:    fmt.Sprintf("export %s, or run `hive service install` from a shell that has it", secret.Any[0]),
+			})
+		}
+
+		// Authorization denies by default, and a principal names its transport, so
+		// an allow list with no entry for this transport refuses everything.
+		if !allowsTransport(cfg.Security.AllowedUsers, name) {
+			out = append(out, finding{
+				level:  "warn",
+				what:   fmt.Sprintf("no %s user is allowed", name),
+				detail: "authorization denies by default, so every message is refused.",
+				fix:    fmt.Sprintf("add the user to security.allowed_users as %q", name+":<user id>"),
+			})
+		}
+		out = append(out, finding{level: "ok", what: fmt.Sprintf("the %s transport is enabled", name)})
 	}
 	return out
+}
+
+// secretPresent reports whether any of a secret's variables carries a value.
+//
+// A value may be in this shell or in the file the service reads: a token may be
+// in either, and reporting only the first would fail a working installation.
+func secretPresent(names []string, serviceEnv map[string]string) bool {
+	for _, name := range names {
+		if os.Getenv(name) != "" || serviceEnv[name] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// allowsTransport reports whether any allowed principal belongs to a transport.
+func allowsTransport(allowed []string, transport string) bool {
+	for _, principal := range allowed {
+		if strings.HasPrefix(principal, transport+":") {
+			return true
+		}
+	}
+	return false
 }
 
 // readServiceEnv reads the secrets the service was installed with.

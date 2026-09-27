@@ -109,17 +109,26 @@ Connect Slack (Socket Mode — no public URL) per [docs/slack.md](docs/slack.md)
 @your-bot /handoff <agent>     hand it to another agent
 ```
 
+Connect Zalo (long polling — no public URL) per [docs/zalo.md](docs/zalo.md):
+
+```text
+/new_chat                      create a session
+fix the login bug              text becomes a prompt
+/handoff <agent>               hand it to another agent
+```
+
 Full setup, every command, and troubleshooting: **[docs/reference.md](docs/reference.md)**.
 
 ## Status
 
-v1 is deliberately narrow: **single machine, Slack, ACP agents, CLI/TUI as a
-client.** Handoff and durable sessions are in; failover, multi-machine nodes,
-more transports, and a web UI are designed but not shipped.
+v1 is deliberately narrow: **single machine, Slack and Zalo, ACP agents, CLI/TUI
+as a client.** Handoff and durable sessions are in; failover, multi-machine
+nodes, more transports, and a web UI are designed but not shipped.
 
 ## Documentation
 
 - [docs/reference.md](docs/reference.md) — install, run, commands, Slack, troubleshooting
+- [docs/zalo.md](docs/zalo.md) — using Hive from Zalo
 - [docs/protocol.md](docs/protocol.md) — protocol, versioning, event types
 - [docs/security.md](docs/security.md) — identity, authorization, permissions
 - [docs/configuration.md](docs/configuration.md) — every config key

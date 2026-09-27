@@ -64,7 +64,11 @@ func (p Policy) Authorize(principal Principal, method string) error {
 	case p.Plugins[string(principal)]:
 		return nil
 	default:
-		return v1.Unauthorized("principal %s is not allowed to invoke %s", principal, method)
+		// The remedy is named, not just the refusal: a user who is denied learns
+		// their own principal from this message, and the next thing to do with it.
+		return v1.Unauthorized(
+			"principal %s is not allowed to invoke %s; add it to security.allowed_users",
+			principal, method)
 	}
 }
 

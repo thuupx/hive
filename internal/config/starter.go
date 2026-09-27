@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // DefaultLeaseSeconds is the node liveness claim a rendered configuration states
@@ -25,6 +27,12 @@ type StarterOptions struct {
 	// is written into the file because a run with no workspace is refused, and a
 	// starter that cannot run an agent is not a starter.
 	WorkspaceDir string
+
+	// Transports are the transport plugins found on this machine, each describing
+	// its own section. The starter renders what the plugins declare rather than
+	// knowing any of them, so a new transport is configurable without a core
+	// change.
+	Transports []v1.PluginManifest
 }
 
 // RenderStarter renders a starter configuration.
@@ -85,14 +93,16 @@ func RenderStarter(opts StarterOptions) string {
 
 	b.WriteString("[security]\n")
 	fmt.Fprintf(&b, "allowed_users = %s\n", renderStrings(cfg.Security.AllowedUsers))
-	b.WriteString("#   ^ principals a transport may assert, for example \"slack:U123\".\n")
-	b.WriteString("#     Unknown access is denied by default.\n")
+	b.WriteString("#   ^ principals a transport may assert, as \"<transport>:<user id>\", for\n")
+	b.WriteString("#     example \"slack:U123\" or \"zalo:<user id>\". Unknown access is denied by\n")
+	b.WriteString("#     default, so a transport message is refused until its sender is named\n")
+	b.WriteString("#     here. A refused message reports the principal to add.\n")
 	fmt.Fprintf(&b, "allowed_channels = %s\n", renderStrings(cfg.Security.AllowedChannels))
 	b.WriteString("#   ^ optional channel allow list, for a transport that has channels.\n\n")
 
 	renderAgents(&b, opts)
 
-	renderTransports(&b, cfg)
+	renderTransports(&b, opts.Transports)
 
 	return b.String()
 }
@@ -131,31 +141,85 @@ func renderAgents(b *strings.Builder, opts StarterOptions) {
 	}
 }
 
-func renderTransports(b *strings.Builder, cfg Config) {
+// renderTransports renders each transport's section from the plugin's own
+// declaration.
+//
+// The core knows no transport by name: a plugin describes the section it reads,
+// so the starter can document a transport it has never heard of.
+func renderTransports(b *strings.Builder, transports []v1.PluginManifest) {
 	b.WriteString("# Transports.\n")
 	b.WriteString("#\n")
 	b.WriteString("# A transport normalizes a platform into Hive operations. Credentials come from\n")
-	b.WriteString("# the environment, never from this file.\n")
-	b.WriteString("#\n")
-	b.WriteString("# [transport.slack]\n")
-	fmt.Fprintf(b, "# enabled = %t\n", false)
-	b.WriteString("# [transport.slack.options]\n")
-	b.WriteString("# bot_user_id = \"U0XXXXXXX\"   # the bot's own user id, for mention resolution\n")
-	b.WriteString("# require_mention = \"true\"    # ignore messages that do not address the bot\n")
-	b.WriteString("# channel_context = \"20\"      # recent messages handed to the agent as room context\n")
-	b.WriteString("# max_attachment_mb = \"8\"     # largest file the transport will read\n")
-	b.WriteString("#\n")
-	b.WriteString("# The Slack transport needs two environment variables:\n")
-	b.WriteString("#   SLACK_APP_TOKEN=xapp-...   Socket Mode connection\n")
-	b.WriteString("#   SLACK_BOT_TOKEN=xoxb-...   Web API calls\n")
-	b.WriteString("#\n")
-	b.WriteString("# Acknowledgement means \"received\", never \"started\" or \"finished\". It is\n")
-	b.WriteString("# on by default and its failure never fails the operation.\n")
-	b.WriteString("#\n")
-	b.WriteString("# [transport.slack.acknowledgement]\n")
-	fmt.Fprintf(b, "# enabled = %t\n", cfg.Transports["slack"].Acknowledgement.EnabledOr())
-	fmt.Fprintf(b, "# mode = %q\n", cfg.Transports["slack"].Acknowledgement.ModeOr())
-	fmt.Fprintf(b, "# reaction = %q\n", cfg.Transports["slack"].Acknowledgement.ReactionOr())
+	b.WriteString("# the environment, never from this file. Each section below was described by the\n")
+	b.WriteString("# transport plugin itself, so it is the plugin's own contract.\n")
+
+	if len(transports) == 0 {
+		b.WriteString("#\n")
+		b.WriteString("# No transport plugin was found next to the hive binary. Install one, or add a\n")
+		b.WriteString("# section by hand:\n")
+		b.WriteString("#\n")
+		b.WriteString("# [transport.<name>]\n")
+		b.WriteString("# enabled = true\n")
+		b.WriteString("# [transport.<name>.options]\n")
+		return
+	}
+
+	for _, manifest := range transports {
+		renderTransport(b, manifest)
+	}
+}
+
+// renderTransport renders one transport's commented section.
+func renderTransport(b *strings.Builder, manifest v1.PluginManifest) {
+	declared := manifest.Config
+	if declared == nil || declared.Section == "" {
+		return
+	}
+
+	b.WriteString("\n")
+	if declared.Summary != "" {
+		fmt.Fprintf(b, "# %s\n", declared.Summary)
+	}
+	fmt.Fprintf(b, "# [%s]\n", declared.Section)
+	fmt.Fprintf(b, "# enabled = %t\n", declared.Enabled)
+
+	if len(declared.Options) > 0 {
+		fmt.Fprintf(b, "# [%s.options]\n", declared.Section)
+		for _, option := range declared.Options {
+			fmt.Fprintf(b, "# %s = %q", option.Name, option.Default)
+			if option.Description != "" {
+				fmt.Fprintf(b, "   # %s", option.Description)
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	if ack := declared.Acknowledgement; ack != nil {
+		b.WriteString("#\n")
+		b.WriteString("# Acknowledgement means \"received\", never \"started\" or \"finished\".\n")
+		b.WriteString("# It is on by default and its failure never fails the operation.\n")
+		fmt.Fprintf(b, "# [%s.acknowledgement]\n", declared.Section)
+		fmt.Fprintf(b, "# enabled = %t\n", ack.Enabled)
+		if ack.Mode != "" {
+			fmt.Fprintf(b, "# mode = %q\n", ack.Mode)
+		}
+		if ack.Reaction != "" {
+			fmt.Fprintf(b, "# reaction = %q\n", ack.Reaction)
+		}
+	}
+
+	if len(manifest.Secrets) > 0 {
+		b.WriteString("#\n")
+		b.WriteString("# Environment variables this transport needs:\n")
+		for _, secret := range manifest.Secrets {
+			// A secret may be named by more than one variable; any one is enough.
+			fmt.Fprintf(b, "#   %s", strings.Join(secret.Any, " or "))
+			if secret.Description != "" {
+				fmt.Fprintf(b, "   # %s", secret.Description)
+			}
+			b.WriteString("\n")
+		}
+	}
 }
 
 func renderStrings(values []string) string {

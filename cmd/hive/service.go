@@ -8,12 +8,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/thuupx/hive/internal/config"
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // The service label is how the supervisor knows the daemon. It is reverse-DNS so
@@ -68,7 +70,10 @@ func installService(f flags) error {
 
 	// The secrets are collected from the environment the user is installing from,
 	// which is the only place they exist: Hive never stores them in its config.
-	secrets, missing := serviceSecrets(cfg)
+	//
+	// Which variables are needed comes from each plugin's own manifest, so the
+	// core does not have to know which transport needs which token.
+	secrets, missing := serviceSecrets(cfg, pluginManifests(pluginDir()))
 	if len(secrets) > 0 {
 		if err := writeServiceEnv(dir, secrets); err != nil {
 			return err
@@ -195,33 +200,46 @@ func copyExecutable(source, target string) error {
 //
 // Only what the config actually references is captured, so installing the service
 // does not quietly copy every secret in the shell into a file.
-func serviceSecrets(cfg config.Config) (map[string]string, []string) {
-	wanted := map[string]bool{}
+//
+// A transport names its own secrets in its manifest, so adding a transport does
+// not mean teaching the core which token it wants. An agent's secret is named by
+// its own configuration, because an agent is a command rather than a plugin with
+// a fixed identity.
+func serviceSecrets(cfg config.Config, manifests map[string]v1.PluginManifest) (map[string]string, []string) {
+	var groups [][]string
 
 	for name, transport := range cfg.Transports {
 		if !transport.Enabled {
 			continue
 		}
-		if name == "slack" {
-			wanted["SLACK_APP_TOKEN"] = true
-			wanted["SLACK_BOT_TOKEN"] = true
+		for _, secret := range manifests[name].Secrets {
+			if len(secret.Any) > 0 {
+				groups = append(groups, secret.Any)
+			}
 		}
 	}
 	for _, agent := range cfg.Agents {
 		if agent.APIKeyEnv != "" {
-			wanted[agent.APIKeyEnv] = true
+			groups = append(groups, []string{agent.APIKeyEnv})
 		}
 	}
 
 	found := map[string]string{}
 	var missing []string
-	for name := range wanted {
-		value := os.Getenv(name)
-		if value == "" {
-			missing = append(missing, name)
-			continue
+	for _, group := range groups {
+		// A secret names variables that may carry the same value, so any one is
+		// enough. Capturing every name that is set keeps an alias working, and
+		// the group is reported only when none of them is.
+		set := false
+		for _, name := range group {
+			if value := os.Getenv(name); value != "" {
+				found[name] = value
+				set = true
+			}
 		}
-		found[name] = value
+		if !set {
+			missing = append(missing, strings.Join(group, " or "))
+		}
 	}
 
 	// The agents live on the user's PATH, and a background service does not
@@ -232,6 +250,7 @@ func serviceSecrets(cfg config.Config) (map[string]string, []string) {
 	}
 
 	sort.Strings(missing)
+	missing = slices.Compact(missing)
 	return found, missing
 }
 
@@ -403,6 +422,38 @@ WantedBy=default.target
 	return nil
 }
 
+// serviceDefinitionPath is where the platform keeps this service's definition.
+//
+// An empty path means the platform has no user service, which `service install`
+// already refuses; it is not an error here.
+func serviceDefinitionPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "LaunchAgents", serviceLabel+".plist"), nil
+	case "linux":
+		return filepath.Join(home, ".config", "systemd", "user", serviceLabel+".service"), nil
+	default:
+		return "", nil
+	}
+}
+
+// stopService asks the platform to stop the daemon and disable it at login.
+//
+// It is best-effort: a service that is not loaded is not an error, and the
+// definition is removed next either way.
+func stopService() {
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("launchctl", "bootout", launchDomain()+"/"+serviceLabel).Run()
+	case "linux":
+		_ = exec.Command("systemctl", "--user", "disable", "--now", serviceLabel+".service").Run()
+	}
+}
+
 // uninstallService removes the service and the secrets it used.
 func uninstallService(f flags) error {
 	cfg, err := loadConfig(f)
@@ -415,26 +466,16 @@ func uninstallService(f flags) error {
 	}
 
 	switch runtime.GOOS {
-	case "darwin":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		_ = exec.Command("launchctl", "bootout", launchDomain()+"/"+serviceLabel).Run()
-		if err := os.Remove(filepath.Join(home, "Library", "LaunchAgents", serviceLabel+".plist")); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	case "linux":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		_ = exec.Command("systemctl", "--user", "disable", "--now", serviceLabel+".service").Run()
-		if err := os.Remove(filepath.Join(home, ".config", "systemd", "user", serviceLabel+".service")); err != nil && !os.IsNotExist(err) {
-			return err
-		}
+	case "darwin", "linux":
 	default:
 		return fmt.Errorf("hive: %s is not supported for service uninstall", runtime.GOOS)
+	}
+
+	stopService()
+	if path, err := serviceDefinitionPath(); err != nil {
+		return err
+	} else if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 
 	// The secrets exist for the service, so they go with it. Saying so matters:

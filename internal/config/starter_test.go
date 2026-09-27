@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // The generated file must load and validate, or `hive init` produces something
@@ -117,6 +119,57 @@ func TestRenderStarterMarksConventionCommands(t *testing.T) {
 
 	if !strings.Contains(rendered, "verify it") {
 		t.Fatalf("a convention command should be marked:\n%s", rendered)
+	}
+}
+
+// A transport's section is rendered from the plugin's own declaration, so the
+// core documents a transport it has never heard of.
+func TestRenderStarterRendersDeclaredTransports(t *testing.T) {
+	rendered := RenderStarter(StarterOptions{
+		Transports: []v1.PluginManifest{{
+			ID:      "demo",
+			Type:    v1.PluginTypeTransport,
+			Secrets: []v1.PluginSecret{{Any: []string{"DEMO_TOKEN", "DEMO_TOKEN_ALIAS"}}},
+			Config: &v1.PluginConfigManifest{
+				Section: "transport.demo",
+				Summary: "Demo transport.",
+				Options: []v1.PluginOptionManifest{
+					{Name: "greeting", Default: "hi", Description: "what to say"},
+				},
+				Acknowledgement: &v1.PluginAcknowledgementManifest{Enabled: true, Mode: "visual"},
+			},
+		}},
+	})
+
+	for _, want := range []string{
+		"Demo transport.",
+		"# [transport.demo]",
+		`# greeting = "hi"   # what to say`,
+		"# [transport.demo.acknowledgement]",
+		"# mode = \"visual\"",
+		"#   DEMO_TOKEN or DEMO_TOKEN_ALIAS",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("the generated file does not contain %q:\n%s", want, rendered)
+		}
+	}
+
+	// It still loads and validates: the transport section is a comment.
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("the generated configuration does not load: %v", err)
+	}
+}
+
+// With no transport plugin found, the file says what to do rather than leaving a
+// placeholder that looks configured.
+func TestRenderStarterWithoutTransports(t *testing.T) {
+	rendered := RenderStarter(StarterOptions{})
+	if !strings.Contains(rendered, "No transport plugin was found") {
+		t.Fatalf("the file should say that no transport was found:\n%s", rendered)
 	}
 }
 

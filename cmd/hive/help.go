@@ -90,6 +90,25 @@ var helpTable = []commandHelp{
 		},
 	},
 	{
+		path:    "uninstall",
+		summary: "remove the installation",
+		usage:   "hive uninstall [-yes] [-workspace]",
+		details: []string{
+			"Stops and removes the background service, then removes the installed",
+			"binaries, the data directory, and the configuration file. It asks before",
+			"removing anything, and a bare newline means no.",
+			"",
+			"The workspace holds your files, so it is kept. Pass -workspace to remove",
+			"it too, which only works when it is inside Hive's own home: a workspace",
+			"pointed at a project is never deleted by an uninstall.",
+		},
+		flags: []flagHelp{
+			{"-yes", "remove without asking (required when there is no terminal)"},
+			{"-workspace", "also remove the agent workspace and everything in it"},
+		},
+		examples: []string{"hive uninstall", "hive uninstall -workspace", "hive uninstall -yes"},
+	},
+	{
 		path:    "session create",
 		summary: "create a session and its first run",
 		usage:   "hive session create [-agent <name>] [-workspace <name>]",

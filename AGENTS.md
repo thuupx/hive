@@ -56,7 +56,7 @@ is an example of the internal form.
 - `make dist` packages exactly what a runner uploads. Its `VERSION` is stamped
   in with `-ldflags "-X main.Version=..."`, which is why `Version` in
   `cmd/hive/main.go` is a variable rather than a constant.
-- A tarball holds `hive` and both plugins. The daemon resolves plugins from its
+- A tarball holds `hive` and every plugin. The daemon resolves plugins from its
   own directory, so a tarball with `hive` alone is a gateway with no agents.
 - `checksums.txt` is written once, by the release job, after every artifact is
   downloaded. Do not compute it per runner: one file assembled from several
@@ -83,6 +83,22 @@ is an example of the internal form.
   a node child process by default, which is the single-machine installation.
 - Plugin binaries ship next to the `hive` binary. `HIVE_PLUGIN_DIR` overrides
   the lookup directory, which is what makes `go run` and tests workable.
+
+### Plugin manifests
+
+- The core holds no knowledge of any plugin. A plugin declares what it needs in
+  a `v1.PluginManifest`, and the core asks for it by running the plugin binary
+  with `-describe` (`sdk.DescribeFlag`). The manifest prints as JSON before the
+  handshake, so the core learns about a plugin without starting it.
+- A transport names its own `secrets` (the environment variables a service must
+  carry) and its own `config` section. `hive service install`, `hive doctor`, and
+  `hive init` read those, so adding a transport is a plugin change and never a
+  core change. Do not add a `name == "<transport>"` branch to the core.
+- A plugin that cannot describe itself is skipped, never fatal: a missing or
+  broken binary must not stop a command that only wants to read the ones present.
+- An agent names no secret in its manifest: its key is named by its own
+  configuration (`api_key_env`), because an agent is a command rather than a
+  plugin with a fixed identity.
 
 ### Process names
 
@@ -126,6 +142,10 @@ is an example of the internal form.
 - The standard flag package stops parsing at the first positional argument, so a
   subcommand must call `parseArgsAndFlags`, not `flag.FlagSet.Parse`. A CLI must
   not depend on the caller remembering flag order.
+- A command that removes something asks first and defaults to no. `-yes` skips
+  the prompt, and is required when there is no terminal to ask, so an unattended
+  script cannot delete an installation by accident. `hive uninstall` is the
+  reference: it resolves a plan, prints it, asks, and only then acts.
 
 ### Errors
 
@@ -211,8 +231,11 @@ have to be rediscovered.
 
 - Single-machine v1: `hive` spawns the node as a child process and speaks
   the real node protocol over loopback TLS.
-- One production transport in v1: Slack. CLI/TUI is a protocol client,
+- Production transports in v1: Slack and Zalo. CLI/TUI is a protocol client,
   not a transport plugin.
+- Zalo has no socket mode, no message editing, no reactions, and no threads, so
+  its transport long-polls `getUpdates` and answers permissions in words rather
+  than with buttons. It shows the answer and errors, not the agent's steps.
 - Storage: libSQL via `go-libsql`, CGO accepted.
 - Coordinator failover is not in v1 and is not a v1 guarantee.
 - ACP protocol version 1, negotiated in `initialize`.
