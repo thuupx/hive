@@ -40,9 +40,14 @@ func daemonLogger(cfg config.Config) (*slog.Logger, func()) {
 	_ = os.Setenv(logging.LogLevelEnv, cfg.Log.Level)
 	_ = os.Setenv(logging.LogFormatEnv, cfg.Log.Format)
 
-	// Both, because a daemon in a terminal should still say what it is doing there.
-	both := io.MultiWriter(os.Stderr, file)
-	return logging.New(both, cfg.Log.Level, cfg.Log.Format), func() { _ = file.Close() }
+	// Both, because a daemon in a terminal should still say what it is doing
+	// there — and say it the way `hive logs` will read it back.
+	sink := logging.Terminal(os.Stderr)
+	both := io.MultiWriter(sink, file)
+	return logging.New(both, cfg.Log.Level, cfg.Log.Format), func() {
+		logging.Flush(sink)
+		_ = file.Close()
+	}
 }
 
 // logsOptions are the flags `hive logs` takes.
@@ -93,54 +98,10 @@ func runLogs(f flags, opts logsOptions) error {
 
 // printLogLine writes one line of the daemon's log, readable.
 //
-// A raw slog line leads with a timestamp nobody reads and buries the level in
-// the middle of key=value pairs. The clock is dimmed and shortened, the level is
-// colored, and the message keeps its own words. A line that is not a slog line is
-// printed as it is.
+// The rendering is internal/logging's, so what `hive serve` shows while it runs
+// is the same as what `hive logs` shows afterwards.
 func printLogLine(line string) {
-	ts, level, rest, ok := splitLogLine(line)
-	if !ok {
-		fmt.Println(line)
-		return
-	}
-	fmt.Printf("%s %s %s\n",
-		styleDim.Render(shortTime(ts)),
-		levelStyle(level).Render(fmt.Sprintf("%-5s", level)),
-		rest)
-}
-
-// splitLogLine reads the time, the level, and the message out of a slog text line.
-func splitLogLine(line string) (ts, level, rest string, ok bool) {
-	if !strings.HasPrefix(line, "time=") {
-		return "", "", "", false
-	}
-	i := strings.Index(line, " level=")
-	if i < 0 {
-		return "", "", "", false
-	}
-
-	ts = strings.TrimPrefix(line[:i], "time=")
-	after := line[i+len(" level="):]
-
-	// msg is written right after level, so the first occurrence is the message.
-	if j := strings.Index(after, " msg="); j >= 0 {
-		level = after[:j]
-		rest = after[j+len(" msg="):]
-	} else {
-		level = after
-	}
-	return ts, level, rest, true
-}
-
-// shortTime keeps the clock from an RFC 3339 timestamp.
-func shortTime(ts string) string {
-	if i := strings.IndexByte(ts, 'T'); i >= 0 {
-		ts = ts[i+1:]
-	}
-	if i := strings.IndexAny(ts, ".+"); i >= 0 {
-		ts = ts[:i]
-	}
-	return ts
+	fmt.Println(logging.RenderLine(line))
 }
 
 // tailLines reads the file and returns the last lines that pass the filters.

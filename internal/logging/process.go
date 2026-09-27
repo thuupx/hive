@@ -49,5 +49,9 @@ func NewForProcess() (*slog.Logger, func()) {
 		return New(os.Stderr, level, format), func() {}
 	}
 
-	return New(io.MultiWriter(os.Stderr, file), level, format), func() { _ = file.Close() }
+	sink := Terminal(os.Stderr)
+	return New(io.MultiWriter(sink, file), level, format), func() {
+		Flush(sink)
+		_ = file.Close()
+	}
 }

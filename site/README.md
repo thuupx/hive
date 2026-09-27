@@ -107,3 +107,22 @@ after changing it, run `npm run og` to regenerate the PNG.
 
 The renderer (`@resvg/resvg-js`) is a devDependency only, so the site build
 never depends on a native library.
+
+## Responsive rules
+
+Two things keep the page from being wider than the phone it is read on, and
+both are easy to undo by accident:
+
+- **A grid or flex item that holds wide content needs `min-w-0`.** Its automatic
+  minimum size is otherwise its content's, so one long line sets the column
+  width and the page scrolls sideways. The hero's text column and the quick
+  start's step list are the two that needed it.
+- **A long unbreakable string needs `wrap-anywhere`, not `break-words`.**
+  `overflow-wrap: break-word` wraps the text but does *not* shrink the
+  min-content width, so it still sets the column's minimum. The install command
+  is one unbreakable URL, which is how the hero came to be 600px wide inside a
+  390px viewport.
+
+The check is `document.documentElement.scrollWidth === clientWidth` at 320, 360,
+390, 414, 768, 1024 and 1280 — a section that overflows also clips if an
+ancestor has `overflow-hidden`, which hides the symptom rather than the bug.

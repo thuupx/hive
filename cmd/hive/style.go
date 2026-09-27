@@ -72,17 +72,3 @@ func renderBlock(style lipgloss.Style, text string) string {
 	}
 	return strings.Join(lines, "\n")
 }
-
-// levelStyle colors a log level, and a severity the same way.
-func levelStyle(level string) lipgloss.Style {
-	switch strings.ToUpper(level) {
-	case "ERROR", "FAIL":
-		return styleFail
-	case "WARN", "WARNING":
-		return styleWarn
-	case "DEBUG":
-		return styleDim
-	default:
-		return styleOK
-	}
-}

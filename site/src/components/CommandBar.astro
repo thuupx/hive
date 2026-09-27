@@ -15,8 +15,12 @@ const { command, label } = Astro.props;
   <div
     class="flex items-stretch gap-2 rounded-lg border border-border bg-[#0b1120] p-1.5"
   >
+    <!-- wrap-anywhere, not break-words: only `overflow-wrap: anywhere` shrinks
+         the min-content width, and the install command is one unbreakable URL.
+         With break-words the URL set the column's minimum and the hero pushed
+         the whole page wider than a phone. -->
     <code
-      class="min-w-0 flex-1 whitespace-pre-wrap break-words px-2 py-1.5 font-mono text-[0.8125rem] text-foreground"
+      class="min-w-0 flex-1 whitespace-pre-wrap wrap-anywhere px-2 py-1.5 font-mono text-[0.8125rem] text-foreground"
     >
       <span class="select-none text-muted-foreground">$ </span>{command}
     </code>
