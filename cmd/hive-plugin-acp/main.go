@@ -34,7 +34,15 @@ func run() error {
 		"which of the agent's advertised ACP auth methods to use; empty uses the first")
 	apiKeyEnv := flag.String("api-key-env", "",
 		"environment variable holding an API key, passed to the agent as _meta.api_key")
+	describe := flag.Bool(sdk.DescribeFlag, false, "print the plugin manifest and exit")
 	flag.Parse()
+
+	// The core asks a plugin what it needs without starting it. An agent names no
+	// secret here: its key is named by its own configuration, because an agent is
+	// a command rather than a plugin with a fixed identity.
+	if *describe {
+		return sdk.Describe(v1.PluginManifest{ID: *id, Type: v1.PluginTypeAgent, Version: *version})
+	}
 
 	if strings.TrimSpace(*agentCommand) == "" {
 		return fmt.Errorf("-agent-command is required")

@@ -84,6 +84,22 @@ is an example of the internal form.
 - Plugin binaries ship next to the `hive` binary. `HIVE_PLUGIN_DIR` overrides
   the lookup directory, which is what makes `go run` and tests workable.
 
+### Plugin manifests
+
+- The core holds no knowledge of any plugin. A plugin declares what it needs in
+  a `v1.PluginManifest`, and the core asks for it by running the plugin binary
+  with `-describe` (`sdk.DescribeFlag`). The manifest prints as JSON before the
+  handshake, so the core learns about a plugin without starting it.
+- A transport names its own `secrets` (the environment variables a service must
+  carry) and its own `config` section. `hive service install`, `hive doctor`, and
+  `hive init` read those, so adding a transport is a plugin change and never a
+  core change. Do not add a `name == "<transport>"` branch to the core.
+- A plugin that cannot describe itself is skipped, never fatal: a missing or
+  broken binary must not stop a command that only wants to read the ones present.
+- An agent names no secret in its manifest: its key is named by its own
+  configuration (`api_key_env`), because an agent is a command rather than a
+  plugin with a fixed identity.
+
 ### Process names
 
 - Every role runs the same binary, so an operating system reports them all by

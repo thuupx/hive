@@ -74,7 +74,15 @@ implemented in v1; starting with one fails rather than silently doing nothing.
 ## Transports
 
 Transport options are opaque to the core: it passes them through, so Hive holds
-no vendor-specific configuration fields. The Slack transport reads:
+no vendor-specific configuration fields.
+
+Each transport describes its own section. The core asks the plugin binary
+(`hive-plugin-<name> -describe`) for a manifest naming the section, its options,
+and the environment variables it needs. `hive init` scaffolds the sections from
+those manifests, `hive service install` captures the declared variables, and
+`hive doctor` checks them — so adding a transport does not mean editing the core.
+
+The Slack transport reads:
 
 ```toml
 [transport.slack]

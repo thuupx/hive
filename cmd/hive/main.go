@@ -302,6 +302,7 @@ func runInit(f flags, args []string) error {
 		Agents:       agents,
 		DefaultAgent: defaultAgent,
 		WorkspaceDir: workspace,
+		Transports:   transportManifests(pluginDir()),
 	})
 
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {

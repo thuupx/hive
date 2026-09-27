@@ -50,9 +50,16 @@ func main() {
 func run() error {
 	id := flag.String("id", zalo.Name, "stable plugin identity")
 	version := flag.String("version", "0.0.0-dev", "plugin version")
+	describe := flag.Bool(sdk.DescribeFlag, false, "print the plugin manifest and exit")
 	options := optionFlags{}
 	flag.Var(&options, "option", "transport option as key=value; repeatable")
 	flag.Parse()
+
+	// The core asks a plugin what it needs without starting it, so the manifest
+	// is printed before the connection is attempted.
+	if *describe {
+		return sdk.Describe(zalo.Manifest(*version))
+	}
 
 	// The plugin does not link the core, so it logs with the standard library
 	// rather than the core logging package.
