@@ -22,12 +22,20 @@ import (
 // generated from one definition. The prose a user reads is not generated: each
 // command's Long and Example come from helpTable, which is curated and tested.
 func newRootCommand(g *flags) *cobra.Command {
+	// A curated order beats an alphabetical one here: the help is grouped by what
+	// a user is doing, and inside a section the first thing to run comes first.
+	cobra.EnableCommandSorting = false
+
 	root := &cobra.Command{
 		Use:   "hive",
-		Short: "personal agent gateway",
-		Long: "Hive is a self-hosted gateway between where you talk and the agents\n" +
-			"that do the work. A single binary serves every cluster role and is also\n" +
-			"the client of the Hive Control API.",
+		Short: "control plane for coding agents",
+		Long: "Hive is a control plane for coding agents. You reach it from the chat app\n" +
+			"you already use, and it runs the agent on the machine where the work is — so\n" +
+			"the conversation lives in Hive rather than in the agent, and a session can be\n" +
+			"handed to another agent without starting over.\n" +
+			"\n" +
+			"One binary is every role: `hive serve` runs a coordinator and a node child,\n" +
+			"and this CLI is a client of the same Control API.",
 		SilenceUsage: true,
 		// Cobra suggests a command for a typo; a wrong guess is worse than none.
 		DisableSuggestions: true,
@@ -41,31 +49,72 @@ func newRootCommand(g *flags) *cobra.Command {
 	root.PersistentFlags().StringVar(&g.coordinatorURL, "coordinator-url", "", "override cluster.coordinator_url")
 	root.PersistentFlags().StringVar(&g.nodeID, "node-id", "", "override cluster.node_id")
 
+	// The order here is the order the help lists them in, section by section:
+	// cobra's alphabetical sort is off, because "config, doctor, init" is not the
+	// order anyone does them in. Keep this in step with commandGroups.
 	root.AddCommand(
 		initCommand(g),
-		versionCommand(),
 		configCommand(g),
+		doctorCommand(g),
+
 		serveCommand(g),
 		serviceCommand(g),
-		updateCommand(g),
-		uninstallCommand(g),
+		logsCommand(g),
 		tuiCommandGroup(g),
+
 		sessionCommandGroup(g),
-		workspaceCommandGroup(g),
-		permissionCommandGroup(g),
 		agentCommandGroup(g),
 		nodeCommandGroup(g),
+		permissionCommandGroup(g),
+		workspaceCommandGroup(g),
 		commandCommandGroup(g),
-		doctorCommand(g),
-		logsCommand(g),
+
+		updateCommand(g),
+		uninstallCommand(g),
+		versionCommand(),
 	)
 
 	// `hive help <command>` is how a user asks about one command, so the help
-	// command is part of the tree rather than a flag on the root.
+	// command is part of the tree rather than a flag on the root. Completion is
+	// made here too, so it can be placed in a section instead of appearing in a
+	// catch-all of its own.
 	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
 
+	applyCommandGroups(root)
 	applyHelpTable(root)
 	return root
+}
+
+// commandGroups is the order the help lists commands in, and which section each
+// one belongs to.
+//
+// A list of twenty commands in one column is a list a user has to read; the
+// sections are what let them skip to the part they are doing. Every command is
+// named here on purpose: an ungrouped one is listed under a heading of its own
+// at the top, which is where a new command silently ends up.
+var commandGroups = []struct {
+	id       string
+	title    string
+	commands []string
+}{
+	{"setup", "Setup", []string{"init", "config", "doctor"}},
+	{"run", "Run", []string{"serve", "service", "logs", "tui"}},
+	{"use", "Use", []string{"session", "agent", "node", "permission", "workspace", "command"}},
+	{"manage", "Manage", []string{"update", "uninstall", "version"}},
+	{"more", "More", []string{"help", "completion"}},
+}
+
+// applyCommandGroups puts every command in a section.
+func applyCommandGroups(root *cobra.Command) {
+	for _, group := range commandGroups {
+		root.AddGroup(&cobra.Group{ID: group.id, Title: group.title})
+		for _, path := range group.commands {
+			if cmd, ok := findCommand(root, path); ok {
+				cmd.GroupID = group.id
+			}
+		}
+	}
 }
 
 // normalizeFlags rewrites "-flag value" as "--flag value".

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,6 +145,69 @@ func TestValidateWorkspace(t *testing.T) {
 			t.Errorf("validateWorkspace(%q) = %v, want error %v", tc.value, err, tc.wantErr)
 		}
 	}
+}
+
+// The next steps name the service first, because a daemon in the background is
+// the installation that keeps running.
+func TestNextStepsNamesTheService(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	out := captureStdout(t, printNextSteps)
+	for _, want := range []string{"service install", "serve", "doctor"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the next steps do not mention %q:\n%s", want, out)
+		}
+	}
+
+	// An installation that already has a service is told to restart it, not to
+	// install one.
+	path, err := serviceDefinitionPath()
+	if err != nil || path == "" {
+		t.Skip("this platform has no user service")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, path, "definition")
+
+	out = captureStdout(t, printNextSteps)
+	if !strings.Contains(out, "service restart") {
+		t.Errorf("an installation with a service should be told to restart it:\n%s", out)
+	}
+	if strings.Contains(out, "service install") {
+		t.Errorf("the next steps still suggest installing a service:\n%s", out)
+	}
+}
+
+// The next steps name a command that runs, and never an empty one.
+func TestInvokedAsNamesThisBinary(t *testing.T) {
+	if got := invokedAs(); strings.TrimSpace(got) == "" {
+		t.Fatal("the next steps would name an empty command")
+	}
+}
+
+// captureStdout runs fn and returns what it printed.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stdout
+	os.Stdout = write
+
+	fn()
+
+	write.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, read); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return buf.String()
 }
 
 // The confirmation names the credentials without showing them.

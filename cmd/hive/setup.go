@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -324,8 +325,52 @@ func writeSetup(cfgPath string, agents []config.DiscoveredAgent, manifests []v1.
 	sort.Strings(names)
 	fmt.Printf("hive: wrote credentials for %s to %s (%#o)\n",
 		strings.Join(names, ", "), filepath.Join(dir, serviceEnvFile), serviceEnvMode)
-	fmt.Println("hive: `hive serve` reads them; an exported variable takes precedence")
+	fmt.Println("hive: the daemon reads them; an exported variable takes precedence")
+
+	printNextSteps()
 	return nil
+}
+
+// printNextSteps is what to do now that a configuration exists.
+//
+// The service is named first, because a daemon in the background is the
+// installation that keeps running: one started in a terminal stops when the
+// window does.
+func printNextSteps() {
+	cmd := invokedAs()
+
+	fmt.Println("\nNext:")
+	if serviceInstalled() {
+		fmt.Printf("  %s service restart\n", cmd)
+		fmt.Println("      run the new configuration")
+	} else {
+		fmt.Printf("  %s service install\n", cmd)
+		fmt.Println("      run the daemon in the background, at login")
+		fmt.Printf("  %s serve\n", cmd)
+		fmt.Println("      ...or run it in this terminal")
+	}
+	fmt.Printf("  %s doctor\n", cmd)
+	fmt.Println("      checks the installation and names what to fix")
+}
+
+// invokedAs is how to name this binary in the next steps.
+//
+// `hive` when that name resolves to this same binary, and this binary's own path
+// when it does not. Suggesting a bare `hive` from a build in a checkout would
+// install whatever is on PATH instead — a different build, or nothing.
+func invokedAs() string {
+	self, err := os.Executable()
+	if err != nil {
+		return "hive"
+	}
+	found, err := exec.LookPath("hive")
+	if err != nil {
+		return self
+	}
+	if resolvePath(found) == resolvePath(self) {
+		return "hive"
+	}
+	return self
 }
 
 // agentOptions is the agent list as a form asks for it.

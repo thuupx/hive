@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Hive is a self-hosted personal agent gateway that connects any client or
+Hive is a self-hosted control plane for coding agents that connects any client or
 platform to any agent runtime across multiple machines.
 
 The design intentionally preserves the full target architecture:

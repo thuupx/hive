@@ -165,7 +165,7 @@ func runInit(f flags, opts initOptions) error {
 		fmt.Printf("workspace:     %s (default)\n", def)
 		fmt.Println("  this directory is not a project; set workspace_dir to work in one")
 	}
-	fmt.Println("\nNext: `hive serve`, then `hive agent list` in another terminal.")
+	printNextSteps()
 	return nil
 }
 

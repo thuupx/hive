@@ -64,7 +64,7 @@
     font-size="28"
     fill="#94A3B8"
   >
-    A self-hosted gateway between any messaging app and any coding agent that speaks ACP.
+    A self-hosted control plane for coding agents.
   </text>
 
   <text
@@ -74,6 +74,6 @@
     font-size="24"
     fill="#64748B"
   >
-    self-hosted · ACP · Go · handoff between agents
+    self-hosted · Slack + Zalo · ACP · Go · handoff between agents
   </text>
 </svg>

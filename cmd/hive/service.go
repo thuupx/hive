@@ -435,7 +435,7 @@ func installSystemdUnit(binary, dir string) error {
 		shellQuote(filepath.Join(dir, serviceEnvFile)), shellQuote(binary))
 
 	unit := fmt.Sprintf(`[Unit]
-Description=Hive personal agent gateway
+Description=Hive control plane for coding agents
 After=network-online.target
 
 [Service]

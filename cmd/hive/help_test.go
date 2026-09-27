@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -34,16 +35,24 @@ func findHelpEntry(path string) (commandHelp, bool) {
 func TestHelpCoversEveryCommand(t *testing.T) {
 	root := newRootCommand(&flags{})
 
-	// fang adds `man` and cobra adds `completion` at execution time; neither is
+	// fang adds `man`, and cobra adds `completion` and its shells; none of them is
 	// a command a user reads this table for.
-	generated := map[string]bool{"man": true, "completion": true}
+	generated := []string{"man", "completion"}
+	isGenerated := func(path string) bool {
+		for _, prefix := range generated {
+			if path == prefix || strings.HasPrefix(path, prefix+" ") {
+				return true
+			}
+		}
+		return false
+	}
 
 	for _, cmd := range allCommands(root) {
-		if generated[cmd.Name()] {
-			continue
-		}
 		// CommandPath is "hive session create"; the table names it "session create".
 		path := strings.TrimPrefix(cmd.CommandPath(), root.Name()+" ")
+		if isGenerated(path) {
+			continue
+		}
 		if _, ok := findHelpEntry(path); !ok {
 			t.Errorf("%q is a command but has no help entry", cmd.CommandPath())
 		}
@@ -96,6 +105,64 @@ func TestEveryHelpEntrySaysWhatTheCommandIsFor(t *testing.T) {
 		if !strings.HasPrefix(entry.usage, "hive "+entry.path) {
 			t.Errorf("%q has a usage line that does not match its path: %q", entry.path, entry.usage)
 		}
+	}
+}
+
+// Every command is in a section, and every section names a real command.
+//
+// An ungrouped command is listed under a heading of its own at the top of the
+// help, which is where a new command silently ends up.
+func TestEveryCommandIsGrouped(t *testing.T) {
+	root := newRootCommand(&flags{})
+
+	grouped := map[string]bool{}
+	for _, group := range commandGroups {
+		for _, path := range group.commands {
+			cmd, ok := findCommand(root, path)
+			if !ok {
+				t.Errorf("the %s section names %q, which is not a command", group.title, path)
+				continue
+			}
+			if cmd.GroupID != group.id {
+				t.Errorf("%q is in group %q, want %q", path, cmd.GroupID, group.id)
+			}
+			grouped[path] = true
+		}
+	}
+
+	for _, cmd := range root.Commands() {
+		if cmd.Hidden {
+			continue
+		}
+		path := strings.TrimPrefix(cmd.CommandPath(), root.Name()+" ")
+		if !grouped[path] {
+			t.Errorf("%q has no section, so the help lists it on its own", path)
+		}
+	}
+}
+
+// The help lists the commands in the order the sections declare them.
+//
+// Cobra sorts alphabetically by default, which put "config, doctor, init" under
+// Setup — not the order anyone does them in.
+func TestHelpOrderIsTheDeclaredOrder(t *testing.T) {
+	root := newRootCommand(&flags{})
+
+	var want []string
+	for _, group := range commandGroups {
+		want = append(want, group.commands...)
+	}
+
+	var got []string
+	for _, cmd := range root.Commands() {
+		if cmd.Hidden {
+			continue
+		}
+		got = append(got, strings.TrimPrefix(cmd.CommandPath(), root.Name()+" "))
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the help lists commands as\n  %v\nwant\n  %v", got, want)
 	}
 }
 

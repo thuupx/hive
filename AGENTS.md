@@ -150,6 +150,11 @@ is an example of the internal form.
   summary, the long text, the flags, and the examples, and `applyHelpTable` hands
   them to the tree. A test fails when a command has no entry, when an entry has no
   command, or when an entry documents a flag the command does not define.
+- The help is grouped, and the order is deliberate: `commandGroups` in
+  `cmd/hive/root.go` names every command's section and the order it is read in,
+  and cobra's alphabetical sort is off. Adding a command means adding it to that
+  table *and* to `root.AddCommand` in the same order — a test fails otherwise,
+  because an ungrouped command is listed under a heading of its own at the top.
 - Global flags are persistent, so `hive -config x status` and `hive status
   -config x` both work. A caller must not have to remember flag order.
 - `normalizeFlags` rewrites a single-dash long flag as its long spelling before

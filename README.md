@@ -1,10 +1,18 @@
 # Hive
 
-**A self-hosted gateway between where you talk and the agents that do the work.**
+**A self-hosted control plane for coding agents.**
 
-Slack on one side, anything that speaks [ACP](https://agentclientprotocol.com)
-on the other — Claude Code, Codex, Devin, Gemini. You bring the agents. Hive
-keeps the conversation.
+You talk to it from the chat app you already use — Slack, Zalo — and it runs the
+agent on the machine where the work is. Anything that speaks
+[ACP](https://agentclientprotocol.com) is an agent you can use: Claude Code,
+Codex, Devin, Gemini. You bring the agents; Hive keeps the conversation, so a
+session can be handed to another agent without starting over.
+
+It is built as a control plane rather than a bridge: one coordinator owns
+sessions, identity, routing, and events; nodes run agents; transports own
+presentation. That is what makes the conversation portable between agents today,
+and between machines by design — see the
+[design document](docs/hive-solution-design.md).
 
 ---
 

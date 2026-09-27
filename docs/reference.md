@@ -4,10 +4,16 @@ The hands-on reference: install, configure, run, and troubleshoot. If you are
 new here, start with the [README](../README.md) for what Hive is and why it
 exists.
 
-Hive connects clients and platforms to agent runtimes across machines. It owns
-orchestration, identity, routing, context, events, handoff, and node management.
-Agents own reasoning, tools, and their own filesystem and shell semantics.
-Transports own presentation.
+Hive is a control plane: it connects clients and platforms to agent runtimes. It
+owns orchestration, identity, routing, context, events, handoff, and node
+management. Agents own reasoning, tools, and their own filesystem and shell
+semantics. Transports own presentation.
+
+One machine runs the whole stack today. The coordinator and the node are already
+separate roles speaking a real protocol, which is what multi-machine execution
+is built on; joining a second machine is designed and not yet shipped, and
+[releasing.md](releasing.md) and the design document are the source of truth for
+what a release claims.
 
 ```text
 client / transport
@@ -213,7 +219,7 @@ prompted run_15ae8808f22c5ec5 (the current run)
   accepted
   completed
 
-This repository is a self-hosted agent gateway...
+This repository is a self-hosted control plane for coding agents...
 ```
 
 A turn runs in the background, because a command's lifetime is not a request's
@@ -224,7 +230,7 @@ The event stream itself:
 
 ```text
 $ ./bin/hive session events sess_b1d8d6dd8a860f4b
-     8  message                This repository is a self-hosted agent gateway...
+     8  message                This repository is a self-hosted control plane for coding agents...
 ```
 
 `agent.raw` is the protocol-native stream, preserved unmodified, and one turn can
