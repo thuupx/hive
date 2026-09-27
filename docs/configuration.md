@@ -177,6 +177,27 @@ hive service install
 #   secrets: /Users/you/.hive/data/service.env (0600)
 ```
 
+## Uninstalling
+
+```sh
+hive uninstall              # ask, then remove the installation
+hive uninstall -workspace   # also remove the agent workspace
+hive uninstall -yes         # no prompt, for a script
+```
+
+`hive uninstall` stops and removes the service, then removes the installed
+binaries, the data directory (database, logs, secrets), and the configuration
+file. It prints what it will remove and asks `[y/N]` first; a bare newline means
+no. Without a terminal to ask, it refuses unless `-yes` is passed.
+
+The workspace is your files, so it is kept. `-workspace` removes it too, but only
+when it lives inside `~/.hive`: a workspace pointed at a project is never deleted
+by an uninstall.
+
+Binaries are removed only from the directory this installation owns — the data
+directory's `bin/` and the release install directory (`~/.local/bin`). A build
+run from a checkout is reported and left alone.
+
 ## Measuring what it costs
 
 ```sh

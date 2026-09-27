@@ -49,3 +49,27 @@ func TestDescribeWritesAManifest(t *testing.T) {
 		t.Fatalf("config = %+v", decoded.Config)
 	}
 }
+
+// An option the manifest does not declare is reported, so a misspelling does not
+// silently do nothing. The acknowledgement keys every transport receives are not
+// unknown.
+func TestUnknownOptions(t *testing.T) {
+	manifest := v1.PluginManifest{
+		Config: &v1.PluginConfigManifest{
+			Section: "transport.demo",
+			Options: []v1.PluginOptionManifest{{Name: "greeting"}},
+		},
+	}
+	provided := map[string]string{
+		"greeting":                 "hi",
+		"acknowledgement":          "true",
+		"acknowledgement_mode":     "visual",
+		"acknowledgement_reaction": "eyes",
+		"bot_user_id":              "typo",
+	}
+
+	got := UnknownOptions(manifest, provided)
+	if len(got) != 1 || got[0] != "bot_user_id" {
+		t.Fatalf("unknown = %v, want only bot_user_id", got)
+	}
+}

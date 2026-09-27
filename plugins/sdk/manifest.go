@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 
 	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
@@ -31,4 +32,39 @@ func Describe(manifest v1.PluginManifest) error {
 		return fmt.Errorf("sdk: write manifest: %w", err)
 	}
 	return nil
+}
+
+// AcknowledgementOptions are the option keys the core passes to every transport.
+//
+// Acknowledgement is part of the transport contract rather than a transport's own
+// option, so it is not listed in the manifest's options and is known to every
+// transport.
+var AcknowledgementOptions = []string{
+	"acknowledgement", "acknowledgement_mode", "acknowledgement_reaction",
+}
+
+// UnknownOptions lists the provided option keys the manifest does not declare.
+//
+// Options are opaque to the core, so a misspelled one is passed through and
+// quietly ignored by the plugin. Naming it is what turns "my setting did
+// nothing" into a line in the log.
+func UnknownOptions(manifest v1.PluginManifest, provided map[string]string) []string {
+	known := map[string]bool{}
+	for _, name := range AcknowledgementOptions {
+		known[name] = true
+	}
+	if manifest.Config != nil {
+		for _, option := range manifest.Config.Options {
+			known[option.Name] = true
+		}
+	}
+
+	var out []string
+	for key := range provided {
+		if !known[key] {
+			out = append(out, key)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

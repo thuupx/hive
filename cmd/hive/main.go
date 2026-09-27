@@ -64,6 +64,7 @@ Commands:
   config                     validate the configuration and print effective values
   serve                      run the Hive daemon
   service <install|restart|uninstall|status>  run the daemon in the background
+  uninstall [-yes] [-workspace]  remove the service, binaries, data, and configuration
   tui [-interval 2s]         show the management plane
   session create             create a session
   session list               list sessions
@@ -134,6 +135,8 @@ func run(args []string) error {
 		return runServe(merged)
 	case "service":
 		return runService(f, rest[1:])
+	case "uninstall":
+		return runUninstall(f, rest[1:])
 	case "help":
 		return runHelp(rest[1:])
 	case "doctor":

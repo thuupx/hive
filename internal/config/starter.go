@@ -93,8 +93,10 @@ func RenderStarter(opts StarterOptions) string {
 
 	b.WriteString("[security]\n")
 	fmt.Fprintf(&b, "allowed_users = %s\n", renderStrings(cfg.Security.AllowedUsers))
-	b.WriteString("#   ^ principals a transport may assert, for example \"slack:U123\".\n")
-	b.WriteString("#     Unknown access is denied by default.\n")
+	b.WriteString("#   ^ principals a transport may assert, as \"<transport>:<user id>\", for\n")
+	b.WriteString("#     example \"slack:U123\" or \"zalo:<user id>\". Unknown access is denied by\n")
+	b.WriteString("#     default, so a transport message is refused until its sender is named\n")
+	b.WriteString("#     here. A refused message reports the principal to add.\n")
 	fmt.Fprintf(&b, "allowed_channels = %s\n", renderStrings(cfg.Security.AllowedChannels))
 	b.WriteString("#   ^ optional channel allow list, for a transport that has channels.\n\n")
 

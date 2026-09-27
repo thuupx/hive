@@ -251,7 +251,13 @@ hive init [-agent <name>] [-force]   # write a starter configuration
 hive config                    # validate and print the effective configuration
 hive serve                     # run the daemon
 hive version                   # build and protocol version
+hive uninstall [-yes] [-workspace]   # remove the installation (asks first)
 ```
+
+`hive uninstall` stops and removes the service, then removes the binaries, the
+data directory, and the configuration. It asks `[y/N]` first; `-workspace` also
+removes the agent workspace, and only when it is inside `~/.hive`. See
+[configuration.md](configuration.md) for what it does and does not touch.
 
 ### Sessions
 

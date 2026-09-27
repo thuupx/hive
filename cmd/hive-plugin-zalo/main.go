@@ -66,6 +66,13 @@ func run() error {
 	log, closeLog := logging.NewForProcess()
 	defer closeLog()
 
+	// A misspelled option is passed through and would otherwise do nothing
+	// silently, which reads as a setting that does not work.
+	if unknown := sdk.UnknownOptions(zalo.Manifest(*version), options); len(unknown) > 0 {
+		log.Warn("ignoring options this transport does not read",
+			"options", strings.Join(unknown, ", "))
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

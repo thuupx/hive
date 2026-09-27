@@ -422,6 +422,38 @@ WantedBy=default.target
 	return nil
 }
 
+// serviceDefinitionPath is where the platform keeps this service's definition.
+//
+// An empty path means the platform has no user service, which `service install`
+// already refuses; it is not an error here.
+func serviceDefinitionPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "LaunchAgents", serviceLabel+".plist"), nil
+	case "linux":
+		return filepath.Join(home, ".config", "systemd", "user", serviceLabel+".service"), nil
+	default:
+		return "", nil
+	}
+}
+
+// stopService asks the platform to stop the daemon and disable it at login.
+//
+// It is best-effort: a service that is not loaded is not an error, and the
+// definition is removed next either way.
+func stopService() {
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("launchctl", "bootout", launchDomain()+"/"+serviceLabel).Run()
+	case "linux":
+		_ = exec.Command("systemctl", "--user", "disable", "--now", serviceLabel+".service").Run()
+	}
+}
+
 // uninstallService removes the service and the secrets it used.
 func uninstallService(f flags) error {
 	cfg, err := loadConfig(f)
@@ -434,26 +466,16 @@ func uninstallService(f flags) error {
 	}
 
 	switch runtime.GOOS {
-	case "darwin":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		_ = exec.Command("launchctl", "bootout", launchDomain()+"/"+serviceLabel).Run()
-		if err := os.Remove(filepath.Join(home, "Library", "LaunchAgents", serviceLabel+".plist")); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	case "linux":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		_ = exec.Command("systemctl", "--user", "disable", "--now", serviceLabel+".service").Run()
-		if err := os.Remove(filepath.Join(home, ".config", "systemd", "user", serviceLabel+".service")); err != nil && !os.IsNotExist(err) {
-			return err
-		}
+	case "darwin", "linux":
 	default:
 		return fmt.Errorf("hive: %s is not supported for service uninstall", runtime.GOOS)
+	}
+
+	stopService()
+	if path, err := serviceDefinitionPath(); err != nil {
+		return err
+	} else if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 
 	// The secrets exist for the service, so they go with it. Saying so matters:

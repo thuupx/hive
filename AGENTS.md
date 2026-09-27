@@ -142,6 +142,10 @@ is an example of the internal form.
 - The standard flag package stops parsing at the first positional argument, so a
   subcommand must call `parseArgsAndFlags`, not `flag.FlagSet.Parse`. A CLI must
   not depend on the caller remembering flag order.
+- A command that removes something asks first and defaults to no. `-yes` skips
+  the prompt, and is required when there is no terminal to ask, so an unattended
+  script cannot delete an installation by accident. `hive uninstall` is the
+  reference: it resolves a plan, prints it, asks, and only then acts.
 
 ### Errors
 
