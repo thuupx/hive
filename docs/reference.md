@@ -83,6 +83,13 @@ because the daemon resolves plugins from its own directory.
 ./bin/hive init
 ```
 
+In a terminal this walks you through the setup — the default agent, which
+transports to turn on, the credentials each one needs, and where runs should
+work — and writes `~/.hive/config.toml` plus a secrets file only you can read.
+With `-agent`, or without a terminal, it writes the same starter from flags and
+asks nothing, so a script still works. Re-run the guided setup later with
+`hive config --update`.
+
 `hive init` looks for ACP agents on your `PATH`, and writes
 `~/.hive/config.toml` naming what it found:
 

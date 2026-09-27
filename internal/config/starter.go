@@ -33,6 +33,20 @@ type StarterOptions struct {
 	// knowing any of them, so a new transport is configurable without a core
 	// change.
 	Transports []v1.PluginManifest
+
+	// EnabledTransports are the transports a guided setup turned on, with the
+	// values the user gave. They are written as active sections, and are not
+	// repeated among the commented examples.
+	EnabledTransports []EnabledTransport
+}
+
+// EnabledTransport is one transport a user chose, and what they answered.
+type EnabledTransport struct {
+	Manifest v1.PluginManifest
+
+	// Options are the values to write, by option name. An option the user did
+	// not answer keeps the value the plugin declared.
+	Options map[string]string
 }
 
 // RenderStarter renders a starter configuration.
@@ -102,7 +116,7 @@ func RenderStarter(opts StarterOptions) string {
 
 	renderAgents(&b, opts)
 
-	renderTransports(&b, opts.Transports)
+	renderTransports(&b, opts)
 
 	return b.String()
 }
@@ -146,14 +160,14 @@ func renderAgents(b *strings.Builder, opts StarterOptions) {
 //
 // The core knows no transport by name: a plugin describes the section it reads,
 // so the starter can document a transport it has never heard of.
-func renderTransports(b *strings.Builder, transports []v1.PluginManifest) {
+func renderTransports(b *strings.Builder, opts StarterOptions) {
 	b.WriteString("# Transports.\n")
 	b.WriteString("#\n")
 	b.WriteString("# A transport normalizes a platform into Hive operations. Credentials come from\n")
 	b.WriteString("# the environment, never from this file. Each section below was described by the\n")
 	b.WriteString("# transport plugin itself, so it is the plugin's own contract.\n")
 
-	if len(transports) == 0 {
+	if len(opts.Transports) == 0 && len(opts.EnabledTransports) == 0 {
 		b.WriteString("#\n")
 		b.WriteString("# No transport plugin was found next to the hive binary. Install one, or add a\n")
 		b.WriteString("# section by hand:\n")
@@ -164,8 +178,59 @@ func renderTransports(b *strings.Builder, transports []v1.PluginManifest) {
 		return
 	}
 
-	for _, manifest := range transports {
+	// The ones that were chosen are active; the rest stay as examples to uncomment.
+	enabled := make(map[string]bool, len(opts.EnabledTransports))
+	for _, selection := range opts.EnabledTransports {
+		renderEnabledTransport(b, selection)
+		enabled[selection.Manifest.ID] = true
+	}
+	for _, manifest := range opts.Transports {
+		if enabled[manifest.ID] {
+			continue
+		}
 		renderTransport(b, manifest)
+	}
+}
+
+// renderEnabledTransport writes a transport that was turned on, with the answers
+// the user gave.
+func renderEnabledTransport(b *strings.Builder, selection EnabledTransport) {
+	declared := selection.Manifest.Config
+	if declared == nil || declared.Section == "" {
+		return
+	}
+
+	b.WriteString("\n")
+	if declared.Summary != "" {
+		fmt.Fprintf(b, "# %s\n", declared.Summary)
+	}
+	fmt.Fprintf(b, "[%s]\n", declared.Section)
+	b.WriteString("enabled = true\n")
+
+	if len(declared.Options) > 0 {
+		fmt.Fprintf(b, "[%s.options]\n", declared.Section)
+		for _, option := range declared.Options {
+			value := option.Default
+			if chosen, ok := selection.Options[option.Name]; ok {
+				value = chosen
+			}
+			fmt.Fprintf(b, "%s = %q", option.Name, value)
+			if option.Description != "" {
+				fmt.Fprintf(b, "   # %s", option.Description)
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	if ack := declared.Acknowledgement; ack != nil {
+		fmt.Fprintf(b, "[%s.acknowledgement]\n", declared.Section)
+		fmt.Fprintf(b, "enabled = %t\n", ack.Enabled)
+		if ack.Mode != "" {
+			fmt.Fprintf(b, "mode = %q\n", ack.Mode)
+		}
+		if ack.Reaction != "" {
+			fmt.Fprintf(b, "reaction = %q\n", ack.Reaction)
+		}
 	}
 }
 

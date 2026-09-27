@@ -71,6 +71,11 @@ type PluginOptionManifest struct {
 	Default string `json:"default,omitempty"`
 
 	Description string `json:"description,omitempty"`
+
+	// Required marks an option that has no working default, so a guided setup
+	// asks for it rather than writing the default and leaving a transport that
+	// does nothing.
+	Required bool `json:"required,omitempty"`
 }
 
 // PluginAcknowledgementManifest is the acknowledgement a plugin declares.

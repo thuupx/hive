@@ -410,26 +410,7 @@ func readServiceEnv() map[string]string {
 	if err != nil {
 		return values
 	}
-
-	data, err := os.ReadFile(filepath.Join(home, config.DefaultDirName, "data", serviceEnvFile))
-	if err != nil {
-		return values
-	}
-
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "export ") {
-			continue
-		}
-
-		assignment := strings.TrimPrefix(line, "export ")
-		name, value, ok := strings.Cut(assignment, "=")
-		if !ok {
-			continue
-		}
-		values[name] = strings.Trim(value, "'")
-	}
-	return values
+	return readEnvFile(filepath.Join(home, config.DefaultDirName, "data", serviceEnvFile))
 }
 
 // checkDaemon reports whether a daemon is reachable.

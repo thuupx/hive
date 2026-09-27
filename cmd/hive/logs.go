@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -46,17 +45,16 @@ func daemonLogger(cfg config.Config) (*slog.Logger, func()) {
 	return logging.New(both, cfg.Log.Level, cfg.Log.Format), func() { _ = file.Close() }
 }
 
-// runLogs prints what the daemon has been doing.
-func runLogs(f flags, args []string) error {
-	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
-	lines := fs.Int("lines", 50, "how many lines to show (0 for all)")
-	follow := fs.Bool("follow", false, "keep printing as the daemon writes")
-	level := fs.String("level", "", "only lines at this level or above")
-	match := fs.String("grep", "", "only lines containing this text")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
+// logsOptions are the flags `hive logs` takes.
+type logsOptions struct {
+	lines  int
+	follow bool
+	level  string
+	grep   string
+}
 
+// runLogs prints what the daemon has been doing.
+func runLogs(f flags, opts logsOptions) error {
 	cfg, err := loadConfig(f)
 	if err != nil {
 		return err
@@ -79,7 +77,7 @@ func runLogs(f flags, args []string) error {
 
 	// A tail of a file being appended to needs the last lines, which means reading
 	// all of it: a log has no index.
-	kept, err := tailLines(file, *lines, *level, *match)
+	kept, err := tailLines(file, opts.lines, opts.level, opts.grep)
 	if err != nil {
 		return err
 	}
@@ -87,10 +85,10 @@ func runLogs(f flags, args []string) error {
 		fmt.Println(line)
 	}
 
-	if !*follow {
+	if !opts.follow {
 		return nil
 	}
-	return followFile(context.Background(), path, file, *level, *match)
+	return followFile(context.Background(), path, file, opts.level, opts.grep)
 }
 
 // tailLines reads the file and returns the last lines that pass the filters.

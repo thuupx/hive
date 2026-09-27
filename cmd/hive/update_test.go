@@ -164,7 +164,7 @@ func TestPerformUpdateInstallsTheRelease(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "unrelated"), "keep")
 
 	var out bytes.Buffer
-	changed, err := performUpdate(context.Background(), updateOptions{
+	changed, err := performUpdate(context.Background(), releaseOptions{
 		current: "1.0.0",
 		target:  version,
 		dir:     dir,
@@ -223,7 +223,7 @@ func TestPerformUpdateRefusesABadChecksum(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "hive"), "old-hive")
 
 	var out bytes.Buffer
-	changed, err := performUpdate(context.Background(), updateOptions{
+	changed, err := performUpdate(context.Background(), releaseOptions{
 		current: "1.0.0",
 		target:  version,
 		dir:     dir,
@@ -249,7 +249,7 @@ func TestPerformUpdateIsANoOpWhenCurrent(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "hive"), "old-hive")
 
 	var out bytes.Buffer
-	changed, err := performUpdate(context.Background(), updateOptions{
+	changed, err := performUpdate(context.Background(), releaseOptions{
 		current: "1.1.0",
 		target:  "1.1.0",
 		dir:     dir,
@@ -300,7 +300,7 @@ func TestLatestVersionFromRedirect(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	got, err := latestVersion(context.Background(), updateOptions{
+	got, err := latestVersion(context.Background(), releaseOptions{
 		baseURL: server.URL,
 		apiURL:  server.URL,
 		client:  server.Client(),
@@ -325,7 +325,7 @@ func TestLatestVersionFromAPI(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	got, err := latestVersion(context.Background(), updateOptions{
+	got, err := latestVersion(context.Background(), releaseOptions{
 		baseURL: server.URL + "/base",
 		apiURL:  server.URL + "/api",
 		client:  server.Client(),

@@ -33,26 +33,6 @@ const serviceEnvFile = "service.env"
 // serviceEnvMode is read and written by the owner only.
 const serviceEnvMode = 0o600
 
-// runService manages the background service.
-func runService(f flags, args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: hive service <install|uninstall|restart|status>")
-	}
-
-	switch args[0] {
-	case "install":
-		return installService(f)
-	case "uninstall":
-		return uninstallService(f)
-	case "restart":
-		return restartService(f)
-	case "status":
-		return serviceStatus()
-	default:
-		return fmt.Errorf("unknown service command %q", args[0])
-	}
-}
-
 // installService registers the daemon to start at login.
 func installService(f flags) error {
 	cfg, err := loadConfig(f)
@@ -254,6 +234,58 @@ func serviceSecrets(cfg config.Config, manifests map[string]v1.PluginManifest) (
 	return found, missing
 }
 
+// readEnvFile reads a shell-sourced secrets file.
+//
+// A missing or unreadable file is not an error: the file is one place a
+// credential may be, and the environment is another.
+func readEnvFile(path string) map[string]string {
+	values := map[string]string{}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return values
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "export ") {
+			continue
+		}
+
+		assignment := strings.TrimPrefix(line, "export ")
+		name, value, ok := strings.Cut(assignment, "=")
+		if !ok {
+			continue
+		}
+		values[name] = strings.Trim(value, "'")
+	}
+	return values
+}
+
+// loadSecretsFile fills in the credentials the guided setup stored, for variables
+// this process does not already have. It reports how many it set.
+//
+// The environment wins: an exported variable is a deliberate override, and a file
+// that silently replaced it would be the harder bug to find.
+func loadSecretsFile(cfg config.Config) int {
+	dir, err := cfg.EffectiveDataDir()
+	if err != nil {
+		return 0
+	}
+
+	loaded := 0
+	for name, value := range readEnvFile(filepath.Join(dir, serviceEnvFile)) {
+		if value == "" || os.Getenv(name) != "" {
+			continue
+		}
+		if err := os.Setenv(name, value); err != nil {
+			continue
+		}
+		loaded++
+	}
+	return loaded
+}
+
 // writeServiceEnv writes the environment file the service sources.
 func writeServiceEnv(dir string, secrets map[string]string) error {
 	names := make([]string, 0, len(secrets))
@@ -270,6 +302,12 @@ func writeServiceEnv(dir string, secrets map[string]string) error {
 		// Single quotes: a token is not a shell expression, and it must survive
 		// being sourced.
 		fmt.Fprintf(&b, "export %s='%s'\n", name, strings.ReplaceAll(secrets[name], "'", `'\''`))
+	}
+
+	// The caller may be the guided setup rather than the service install, so the
+	// directory is made here instead of being assumed.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
 	}
 
 	path := filepath.Join(dir, serviceEnvFile)

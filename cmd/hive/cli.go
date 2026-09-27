@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,44 +18,79 @@ import (
 	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
-// sessionCommand handles `hive session <action>`.
-func sessionCommand(f flags, args []string) error {
-	if len(args) == 0 {
-		return errors.New("session requires an action: create, list, status, prompt, cancel, handoff, events, config")
-	}
+// The options each command takes. They are plain values, so a command body does
+// not parse flags and the tree owns the flag definitions.
 
-	action, rest := args[0], args[1:]
-	switch action {
-	case "create":
-		return sessionCreate(f, rest)
-	case "list":
-		return sessionList(f, rest)
-	case "status":
-		return sessionStatus(f, rest)
-	case "prompt":
-		return sessionPrompt(f, rest)
-	case "cancel":
-		return sessionCancel(f, rest)
-	case "handoff":
-		return sessionHandoff(f, rest)
-	case "events":
-		return sessionEvents(f, rest)
-	case "config":
-		return sessionConfig(f, rest)
-	default:
-		return fmt.Errorf("unknown session action %q", action)
-	}
+type sessionCreateOptions struct {
+	agent     string
+	workspace string
+	commandID string
 }
 
-func sessionCreate(f flags, args []string) error {
-	fs := flag.NewFlagSet("session create", flag.ContinueOnError)
-	agentID := fs.String("agent", "", "agent to run (default: the configured default agent)")
-	workspace := fs.String("workspace", "", "workspace the run works in")
-	commandID := fs.String("command-id", "", "idempotency key (default: a fresh one)")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
+type sessionListOptions struct {
+	limit int
+}
 
+type sessionPromptOptions struct {
+	sessionID string
+	text      string
+	runID     string
+	commandID string
+	noWait    bool
+}
+
+type sessionCancelOptions struct {
+	sessionID string
+	runID     string
+}
+
+type sessionConfigOptions struct {
+	sessionID string
+	configID  string
+	value     string
+	runID     string
+}
+
+type sessionHandoffOptions struct {
+	sessionID string
+	agentID   string
+	summary   string
+	workspace string
+	commandID string
+}
+
+type sessionEventsOptions struct {
+	sessionID string
+	from      int64
+	limit     int
+	asJSON    bool
+	all       bool
+	types     string
+}
+
+type tuiOptions struct {
+	interval time.Duration
+}
+
+type workspaceCreateOptions struct {
+	name      string
+	nodeID    string
+	path      string
+	commandID string
+}
+
+type permissionListOptions struct {
+	sessionID string
+}
+
+type permissionRespondOptions struct {
+	requestID string
+	allow     bool
+	deny      bool
+	sessionID string
+}
+
+func sessionCreate(f flags, opts sessionCreateOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -67,9 +101,9 @@ func sessionCreate(f flags, args []string) error {
 	defer c.Close()
 
 	result, err := c.CreateSession(ctx, v1.SessionCreateParams{
-		CommandID: commandIDOr(*commandID),
-		AgentID:   *agentID,
-		Workspace: *workspace,
+		CommandID: commandIDOr(opts.commandID),
+		AgentID:   opts.agent,
+		Workspace: opts.workspace,
 	})
 	if err != nil {
 		return err
@@ -83,13 +117,7 @@ func sessionCreate(f flags, args []string) error {
 	return nil
 }
 
-func sessionList(f flags, args []string) error {
-	fs := flag.NewFlagSet("session list", flag.ContinueOnError)
-	limit := fs.Int("limit", 0, "maximum sessions to show")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-
+func sessionList(f flags, opts sessionListOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -99,7 +127,7 @@ func sessionList(f flags, args []string) error {
 	}
 	defer c.Close()
 
-	result, err := c.ListSessions(ctx, *limit)
+	result, err := c.ListSessions(ctx, opts.limit)
 	if err != nil {
 		return err
 	}
@@ -115,15 +143,7 @@ func sessionList(f flags, args []string) error {
 	return nil
 }
 
-func sessionStatus(f flags, args []string) error {
-	fs := flag.NewFlagSet("session status", flag.ContinueOnError)
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return errors.New("session status requires a session id")
-	}
-
+func sessionStatus(f flags, sessionID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -133,7 +153,7 @@ func sessionStatus(f flags, args []string) error {
 	}
 	defer c.Close()
 
-	status, err := c.Status(ctx, fs.Arg(0))
+	status, err := c.Status(ctx, sessionID)
 	if err != nil {
 		return err
 	}
@@ -141,21 +161,7 @@ func sessionStatus(f flags, args []string) error {
 	return nil
 }
 
-func sessionPrompt(f flags, args []string) error {
-	fs := flag.NewFlagSet("session prompt", flag.ContinueOnError)
-	runID := fs.String("run", "", "target a specific AgentRun")
-	commandID := fs.String("command-id", "", "idempotency key (default: a fresh one)")
-	noWait := fs.Bool("no-wait", false, "return as soon as the turn is accepted")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() < 2 {
-		return errors.New("session prompt requires a session id and text")
-	}
-
-	sessionID := fs.Arg(0)
-	text := strings.Join(fs.Args()[1:], " ")
-
+func sessionPrompt(f flags, opts sessionPromptOptions) error {
 	// The call itself is quick. The turn is not, so it is followed separately.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -167,10 +173,10 @@ func sessionPrompt(f flags, args []string) error {
 	defer c.Close()
 
 	result, err := c.Prompt(ctx, v1.SessionPromptParams{
-		CommandID: commandIDOr(*commandID),
-		SessionID: sessionID,
-		RunID:     *runID,
-		Text:      text,
+		CommandID: commandIDOr(opts.commandID),
+		SessionID: opts.sessionID,
+		RunID:     opts.runID,
+		Text:      opts.text,
 	})
 	if err != nil {
 		return err
@@ -182,10 +188,10 @@ func sessionPrompt(f flags, args []string) error {
 	}
 	fmt.Printf("prompted %s (%s)\n", result.RunID, target)
 
-	if *noWait {
+	if opts.noWait {
 		fmt.Printf("\nThe turn runs in the background. Follow it with:\n")
 		fmt.Printf("  hive command get %s\n", result.CommandID)
-		fmt.Printf("  hive session events %s\n", sessionID)
+		fmt.Printf("  hive session events %s\n", opts.sessionID)
 		return nil
 	}
 
@@ -198,7 +204,7 @@ func sessionPrompt(f flags, args []string) error {
 		return err
 	}
 
-	return showRunAnswer(waitCtx, c, sessionID, result.RunID)
+	return showRunAnswer(waitCtx, c, opts.sessionID, result.RunID)
 }
 
 // turnWaitTimeout bounds how long the CLI follows a turn.
@@ -259,16 +265,7 @@ func showRunAnswer(ctx context.Context, c *client.Client, sessionID, runID strin
 	return nil
 }
 
-func sessionCancel(f flags, args []string) error {
-	fs := flag.NewFlagSet("session cancel", flag.ContinueOnError)
-	runID := fs.String("run", "", "cancel a specific AgentRun")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return errors.New("session cancel requires a session id")
-	}
-
+func sessionCancel(f flags, opts sessionCancelOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -280,8 +277,8 @@ func sessionCancel(f flags, args []string) error {
 
 	if err := c.Cancel(ctx, v1.SessionCancelParams{
 		CommandID: ids.New("cmd"),
-		SessionID: fs.Arg(0),
-		RunID:     *runID,
+		SessionID: opts.sessionID,
+		RunID:     opts.runID,
 	}); err != nil {
 		return err
 	}
@@ -294,25 +291,12 @@ func sessionCancel(f flags, args []string) error {
 //
 // The selectors are the agent's own: Hive renders whatever the agent declared,
 // which is why this prints them rather than knowing what a model is.
-func sessionConfig(f flags, args []string) error {
-	fs := flag.NewFlagSet("session config", flag.ContinueOnError)
-	runID := fs.String("run", "", "run whose agent session to ask (default: the session's current run)")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() < 1 {
-		return errors.New("session config requires a session id, and optionally a selector and a value")
-	}
-
+func sessionConfig(f flags, opts sessionConfigOptions) error {
 	params := v1.SessionConfigParams{
-		SessionID: fs.Arg(0),
-		RunID:     *runID,
-	}
-	if fs.NArg() >= 2 {
-		params.ConfigID = fs.Arg(1)
-	}
-	if fs.NArg() >= 3 {
-		params.Value = fs.Arg(2)
+		SessionID: opts.sessionID,
+		RunID:     opts.runID,
+		ConfigID:  opts.configID,
+		Value:     opts.value,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -359,18 +343,7 @@ func sessionConfig(f flags, args []string) error {
 	return nil
 }
 
-func sessionHandoff(f flags, args []string) error {
-	fs := flag.NewFlagSet("session handoff", flag.ContinueOnError)
-	summary := fs.String("summary", "", "optional source-agent summary")
-	workspace := fs.String("workspace", "", "workspace the target works in")
-	commandID := fs.String("command-id", "", "idempotency key (default: a fresh one)")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() != 2 {
-		return errors.New("session handoff requires a session id and a target agent")
-	}
-
+func sessionHandoff(f flags, opts sessionHandoffOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -381,11 +354,11 @@ func sessionHandoff(f flags, args []string) error {
 	defer c.Close()
 
 	result, err := c.Handoff(ctx, v1.SessionHandoffParams{
-		CommandID: commandIDOr(*commandID),
-		SessionID: fs.Arg(0),
-		AgentID:   fs.Arg(1),
-		Summary:   *summary,
-		Workspace: *workspace,
+		CommandID: commandIDOr(opts.commandID),
+		SessionID: opts.sessionID,
+		AgentID:   opts.agentID,
+		Summary:   opts.summary,
+		Workspace: opts.workspace,
 	})
 	if err != nil {
 		return err
@@ -400,20 +373,7 @@ func sessionHandoff(f flags, args []string) error {
 	return nil
 }
 
-func sessionEvents(f flags, args []string) error {
-	fs := flag.NewFlagSet("session events", flag.ContinueOnError)
-	from := fs.Int64("from", 0, "resume after this sequence")
-	limit := fs.Int("limit", 50, "maximum events to show")
-	asJSON := fs.Bool("json", false, "print raw events")
-	all := fs.Bool("all", false, "include agent.raw protocol traffic")
-	types := fs.String("type", "", "only events of this type")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return errors.New("session events requires a session id")
-	}
-
+func sessionEvents(f flags, opts sessionEventsOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -424,9 +384,9 @@ func sessionEvents(f flags, args []string) error {
 	defer c.Close()
 
 	result, err := c.Replay(ctx, v1.EventReplayParams{
-		SessionID:    fs.Arg(0),
-		FromSequence: *from,
-		Limit:        *limit,
+		SessionID:    opts.sessionID,
+		FromSequence: opts.from,
+		Limit:        opts.limit,
 	})
 	if err != nil {
 		return err
@@ -445,12 +405,12 @@ func sessionEvents(f flags, args []string) error {
 
 	shown := 0
 	for _, ev := range result.Events {
-		if !visibleEvent(ev, *all, *types) {
+		if !visibleEvent(ev, opts.all, opts.types) {
 			continue
 		}
 		shown++
 
-		if *asJSON {
+		if opts.asJSON {
 			encoded, err := json.Marshal(ev)
 			if err != nil {
 				return err
@@ -461,9 +421,9 @@ func sessionEvents(f flags, args []string) error {
 		fmt.Printf("%6d  %-22s %s\n", ev.Sequence, ev.Type, eventSummary(ev))
 	}
 
-	if shown == 0 && !*asJSON {
+	if shown == 0 && !opts.asJSON {
 		// Say why the stream looked empty rather than leaving it ambiguous.
-		if *all || *types != "" {
+		if opts.all || opts.types != "" {
 			fmt.Println("no events matched")
 		} else {
 			fmt.Printf("no readable events; %d are protocol traffic (use -all)\n", len(result.Events))
@@ -487,11 +447,7 @@ func visibleEvent(ev v1.Event, all bool, only string) bool {
 	return ev.Type != v1.EventAgentRaw
 }
 
-func agentCommand(f flags, args []string) error {
-	if len(args) == 0 || args[0] != "list" {
-		return errors.New("agent requires the action: list")
-	}
-
+func agentList(f flags) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -516,11 +472,7 @@ func agentCommand(f flags, args []string) error {
 	return nil
 }
 
-func nodeCommand(f flags, args []string) error {
-	if len(args) == 0 || args[0] != "list" {
-		return errors.New("node requires the action: list")
-	}
-
+func nodeList(f flags) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -550,19 +502,7 @@ func nodeCommand(f flags, args []string) error {
 	return nil
 }
 
-func commandCommand(f flags, args []string) error {
-	if len(args) == 0 || args[0] != "get" {
-		return errors.New("command requires the action: get")
-	}
-
-	fs := flag.NewFlagSet("command get", flag.ContinueOnError)
-	if err := parseArgsAndFlags(fs, args[1:]); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return errors.New("command get requires a command id")
-	}
-
+func commandGet(f flags, commandID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -572,7 +512,7 @@ func commandCommand(f flags, args []string) error {
 	}
 	defer c.Close()
 
-	result, err := c.GetCommand(ctx, fs.Arg(0))
+	result, err := c.GetCommand(ctx, commandID)
 	if err != nil {
 		return err
 	}
@@ -592,13 +532,7 @@ func commandCommand(f flags, args []string) error {
 	return nil
 }
 
-func tuiCommand(f flags, args []string) error {
-	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
-	interval := fs.Duration("interval", 0, "refresh interval (default: render once)")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-
+func tuiCommand(f flags, opts tuiOptions) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -608,7 +542,7 @@ func tuiCommand(f flags, args []string) error {
 	}
 	defer c.Close()
 
-	return tui.Run(ctx, c, os.Stdout, *interval)
+	return tui.Run(ctx, c, os.Stdout, opts.interval)
 }
 
 // connect opens the Control API socket described by the configuration.
@@ -648,47 +582,6 @@ func loadConfig(f flags) (config.Config, error) {
 	return cfg, nil
 }
 
-// reorderFlags moves flag arguments before positional ones.
-//
-// The standard flag package stops parsing at the first positional argument, so
-// `workspace create piceta -node x` would silently drop `-node`. A caller should
-// not have to remember that.
-func reorderFlags(fs *flag.FlagSet, args []string) []string {
-	var flags, positional []string
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if !strings.HasPrefix(arg, "-") || arg == "-" {
-			positional = append(positional, arg)
-			continue
-		}
-
-		flags = append(flags, arg)
-		if strings.Contains(arg, "=") {
-			continue
-		}
-
-		defined := fs.Lookup(strings.TrimLeft(arg, "-"))
-		if defined == nil {
-			continue
-		}
-		if _, isBool := defined.Value.(interface{ IsBoolFlag() bool }); isBool {
-			continue
-		}
-		if i+1 < len(args) {
-			i++
-			flags = append(flags, args[i])
-		}
-	}
-
-	return append(flags, positional...)
-}
-
-// parseArgsAndFlags parses a subcommand's arguments regardless of flag order.
-func parseArgsAndFlags(fs *flag.FlagSet, args []string) error {
-	return fs.Parse(reorderFlags(fs, args))
-}
-
 // commandIDOr returns an explicit command id or a fresh one.
 //
 // A fresh id means "this is a new logical operation". Passing an explicit id is
@@ -719,38 +612,10 @@ func eventSummary(ev v1.Event) string {
 	return string(ev.Payload)
 }
 
-// workspaceCommand handles `hive workspace <action>`.
-func workspaceCommand(f flags, args []string) error {
-	if len(args) == 0 {
-		return errors.New("workspace requires an action: create, list")
-	}
-
-	action, rest := args[0], args[1:]
-	switch action {
-	case "create":
-		return workspaceCreate(f, rest)
-	case "list":
-		return workspaceList(f, rest)
-	default:
-		return fmt.Errorf("unknown workspace action %q", action)
-	}
-}
-
-func workspaceCreate(f flags, args []string) error {
-	fs := flag.NewFlagSet("workspace create", flag.ContinueOnError)
-	nodeID := fs.String("node", "", "node the location is on")
-	path := fs.String("path", "", "path the workspace lives at on that node")
-	commandID := fs.String("command-id", "", "idempotency key (default: a fresh one)")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return errors.New("workspace create requires a name")
-	}
-
+func workspaceCreate(f flags, opts workspaceCreateOptions) error {
 	locations := map[string]string{}
-	if *nodeID != "" && *path != "" {
-		locations[*nodeID] = *path
+	if opts.nodeID != "" && opts.path != "" {
+		locations[opts.nodeID] = opts.path
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -763,8 +628,8 @@ func workspaceCreate(f flags, args []string) error {
 	defer c.Close()
 
 	summary, err := c.CreateWorkspace(ctx, v1.WorkspaceCreateParams{
-		CommandID: commandIDOr(*commandID),
-		Name:      fs.Arg(0),
+		CommandID: commandIDOr(opts.commandID),
+		Name:      opts.name,
 		Locations: locations,
 	})
 	if err != nil {
@@ -779,12 +644,7 @@ func workspaceCreate(f flags, args []string) error {
 	return nil
 }
 
-func workspaceList(f flags, args []string) error {
-	fs := flag.NewFlagSet("workspace list", flag.ContinueOnError)
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-
+func workspaceList(f flags) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -818,30 +678,7 @@ func workspaceList(f flags, args []string) error {
 	return nil
 }
 
-// permissionCommand handles `hive permission <action>`.
-func permissionCommand(f flags, args []string) error {
-	if len(args) == 0 {
-		return errors.New("permission requires an action: list, respond")
-	}
-
-	action, rest := args[0], args[1:]
-	switch action {
-	case "list":
-		return permissionList(f, rest)
-	case "respond":
-		return permissionRespond(f, rest)
-	default:
-		return fmt.Errorf("unknown permission action %q", action)
-	}
-}
-
-func permissionList(f flags, args []string) error {
-	fs := flag.NewFlagSet("permission list", flag.ContinueOnError)
-	sessionID := fs.String("session", "", "only this session")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-
+func permissionList(f flags, opts permissionListOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -851,7 +688,7 @@ func permissionList(f flags, args []string) error {
 	}
 	defer c.Close()
 
-	result, err := c.ListPermissions(ctx, v1.PermissionListParams{SessionID: *sessionID})
+	result, err := c.ListPermissions(ctx, v1.PermissionListParams{SessionID: opts.sessionID})
 	if err != nil {
 		return err
 	}
@@ -870,18 +707,8 @@ func permissionList(f flags, args []string) error {
 	return nil
 }
 
-func permissionRespond(f flags, args []string) error {
-	fs := flag.NewFlagSet("permission respond", flag.ContinueOnError)
-	allow := fs.Bool("allow", false, "approve the request")
-	deny := fs.Bool("deny", false, "reject the request")
-	sessionID := fs.String("session", "", "the session the request belongs to")
-	if err := parseArgsAndFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return errors.New("permission respond requires the agent request id")
-	}
-	if *allow == *deny {
+func permissionRespond(f flags, opts permissionRespondOptions) error {
+	if opts.allow == opts.deny {
 		return errors.New("pass exactly one of -allow or -deny")
 	}
 
@@ -895,14 +722,14 @@ func permissionRespond(f flags, args []string) error {
 	defer c.Close()
 
 	if err := c.RespondToPermission(ctx, v1.PermissionRespondParams{
-		AgentRequestID: fs.Arg(0),
-		SessionID:      *sessionID,
-		Approved:       *allow,
+		AgentRequestID: opts.requestID,
+		SessionID:      opts.sessionID,
+		Approved:       opts.allow,
 	}); err != nil {
 		return err
 	}
 
-	if *allow {
+	if opts.allow {
 		fmt.Println("approved")
 	} else {
 		fmt.Println("denied")

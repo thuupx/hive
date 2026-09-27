@@ -1,13 +1,5 @@
 package main
 
-import (
-	"fmt"
-	"io"
-	"os"
-	"sort"
-	"strings"
-)
-
 // commandHelp is what a user needs to use one command.
 //
 // It is written out rather than generated from the flag set, because a flag set
@@ -40,7 +32,10 @@ type flagHelp struct {
 	meaning string
 }
 
-// helpTable is every command, in the order the usage lists them.
+// helpTable is the prose every command shows.
+//
+// The tree owns the commands and their flags; this owns what a user reads. A
+// test fails when the two disagree, in either direction.
 var helpTable = []commandHelp{
 	{
 		path:    "init",
@@ -48,8 +43,13 @@ var helpTable = []commandHelp{
 		usage:   "hive init [-force] [-agent <name>]",
 		details: []string{
 			"Hive cannot create a session without an agent, so this is the first",
-			"command to run. It looks for ACP agents on PATH and writes a",
-			"configuration naming the one you choose.",
+			"command to run. In a terminal it walks you through the setup: which",
+			"agents to configure, which transports to enable, the credentials each",
+			"one needs, and where runs should work.",
+			"",
+			"The credentials are written to a file only you can read, never to the",
+			"configuration. With -agent, or without a terminal, the flags decide and",
+			"nothing is asked, so a script still works.",
 		},
 		flags: []flagHelp{
 			{"-force", "overwrite an existing configuration"},
@@ -127,6 +127,52 @@ var helpTable = []commandHelp{
 			{"-workspace", "also remove the agent workspace and everything in it"},
 		},
 		examples: []string{"hive uninstall", "hive uninstall -workspace", "hive uninstall -yes"},
+	},
+	{
+		path:    "service install",
+		summary: "start the daemon at login",
+		usage:   "hive service install",
+		details: []string{
+			"Writes the platform's service definition and copies the binaries next",
+			"to the data directory, so the daemon does not depend on a checkout.",
+		},
+		examples: []string{"hive service install"},
+	},
+	{
+		path:    "service restart",
+		summary: "restart the daemon, keeping its secrets",
+		usage:   "hive service restart",
+		details: []string{
+			"Refreshes the installed binaries and rewrites the definition, so a new",
+			"build and a changed role both take effect.",
+		},
+		examples: []string{"hive service restart"},
+	},
+	{
+		path:     "service status",
+		summary:  "report whether the daemon is running",
+		usage:    "hive service status",
+		examples: []string{"hive service status"},
+	},
+	{
+		path:    "service uninstall",
+		summary: "stop the daemon and remove its definition",
+		usage:   "hive service uninstall",
+		details: []string{
+			"The secrets file goes with it, because it exists for the service. To",
+			"remove the installation as well, use `hive uninstall`.",
+		},
+		examples: []string{"hive service uninstall"},
+	},
+	{
+		path:    "session",
+		summary: "create and drive sessions",
+		usage:   "hive session <action>",
+		details: []string{
+			"A session is a conversation. A run is one execution of it by one agent,",
+			"so a session outlives its runs and can be handed to another agent.",
+		},
+		examples: []string{"hive session create", "hive session list"},
 	},
 	{
 		path:    "session create",
@@ -240,16 +286,51 @@ var helpTable = []commandHelp{
 		examples: []string{"hive session handoff sess_123 hermes"},
 	},
 	{
+		path:     "session list",
+		summary:  "list sessions",
+		usage:    "hive session list [-limit <n>]",
+		flags:    []flagHelp{{"-limit", "maximum sessions to show"}},
+		examples: []string{"hive session list"},
+	},
+	{
+		path:     "agent",
+		summary:  "inspect the configured agents",
+		usage:    "hive agent <action>",
+		examples: []string{"hive agent list"},
+	},
+	{
 		path:     "agent list",
 		summary:  "list the configured agents",
 		usage:    "hive agent list",
 		examples: []string{"hive agent list"},
 	},
 	{
+		path:     "node",
+		summary:  "inspect the nodes the coordinator has heard from",
+		usage:    "hive node <action>",
+		examples: []string{"hive node list"},
+	},
+	{
 		path:     "node list",
 		summary:  "list the nodes the coordinator has heard from",
 		usage:    "hive node list",
 		examples: []string{"hive node list"},
+	},
+	{
+		path:     "command",
+		summary:  "follow a durable command",
+		usage:    "hive command <action>",
+		examples: []string{"hive command get cmd_123"},
+	},
+	{
+		path:    "permission",
+		summary: "see and answer permission requests",
+		usage:   "hive permission <action>",
+		details: []string{
+			"An agent may ask before running a tool. A request fails closed: it never",
+			"becomes an implicit approval, including when the connection is lost.",
+		},
+		examples: []string{"hive permission list", "hive permission respond perm_123 -allow"},
 	},
 	{
 		path:    "permission list",
@@ -270,6 +351,12 @@ var helpTable = []commandHelp{
 			{"-deny", "refuse it"},
 		},
 		examples: []string{"hive permission respond perm_123 -allow"},
+	},
+	{
+		path:     "workspace",
+		summary:  "register and list workspaces",
+		usage:    "hive workspace <action>",
+		examples: []string{"hive workspace list"},
 	},
 	{
 		path:    "workspace create",
@@ -306,13 +393,19 @@ var helpTable = []commandHelp{
 	{
 		path:    "config",
 		summary: "validate the configuration and print effective values",
-		usage:   "hive config",
+		usage:   "hive config [--update]",
 		details: []string{
 			"Prints what Hive will actually use, after defaults and after resolving",
 			"paths. Unknown keys are refused rather than ignored, so a typo is",
 			"reported instead of silently doing nothing.",
+			"",
+			"With --update it runs the same guided setup as `hive init`, prefilled",
+			"with what is configured now, and writes the result back.",
 		},
-		examples: []string{"hive config"},
+		flags: []flagHelp{
+			{"--update", "change the configuration with a guided setup"},
+		},
+		examples: []string{"hive config", "hive config --update"},
 	},
 	{
 		path:    "logs",
@@ -373,85 +466,4 @@ var helpTable = []commandHelp{
 		usage:    "hive version",
 		examples: []string{"hive version"},
 	},
-}
-
-// runHelp prints help for the binary or for one command.
-func runHelp(args []string) error {
-	if len(args) == 0 {
-		fmt.Print(usage)
-		fmt.Print("\nRun `hive help <command>` for what a command does.\n")
-		return nil
-	}
-
-	// The longest match wins, so `hive help session create` finds that command and
-	// `hive help session` lists the session commands.
-	query := strings.Join(args, " ")
-	if entry, ok := findHelp(query); ok {
-		printCommandHelp(os.Stdout, entry)
-		return nil
-	}
-
-	matches := helpPrefix(query)
-	if len(matches) == 0 {
-		return fmt.Errorf("no such command %q; run `hive help` for the list", query)
-	}
-	if len(matches) == 1 {
-		printCommandHelp(os.Stdout, matches[0])
-		return nil
-	}
-
-	fmt.Printf("Commands under %q:\n\n", query)
-	for _, entry := range matches {
-		fmt.Printf("  %-22s %s\n", entry.path, entry.summary)
-	}
-	return nil
-}
-
-// findHelp is the command whose path is exactly query.
-func findHelp(query string) (commandHelp, bool) {
-	for _, entry := range helpTable {
-		if entry.path == query {
-			return entry, true
-		}
-	}
-	return commandHelp{}, false
-}
-
-// helpPrefix is the commands whose path starts with query.
-func helpPrefix(query string) []commandHelp {
-	var out []commandHelp
-	for _, entry := range helpTable {
-		if strings.HasPrefix(entry.path, query+" ") {
-			out = append(out, entry)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].path < out[j].path })
-	return out
-}
-
-// printCommandHelp writes one command's help.
-func printCommandHelp(w io.Writer, entry commandHelp) {
-	fmt.Fprintf(w, "%s\n\n", entry.summary)
-	fmt.Fprintf(w, "Usage:\n  %s\n", entry.usage)
-
-	if len(entry.details) > 0 {
-		fmt.Fprintln(w)
-		for _, line := range entry.details {
-			fmt.Fprintln(w, line)
-		}
-	}
-
-	if len(entry.flags) > 0 {
-		fmt.Fprintln(w, "\nFlags:")
-		for _, flag := range entry.flags {
-			fmt.Fprintf(w, "  %-14s %s\n", flag.flag, flag.meaning)
-		}
-	}
-
-	if len(entry.examples) > 0 {
-		fmt.Fprintln(w, "\nExamples:")
-		for _, example := range entry.examples {
-			fmt.Fprintf(w, "  %s\n", example)
-		}
-	}
 }
