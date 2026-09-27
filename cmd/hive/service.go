@@ -441,6 +441,19 @@ func serviceDefinitionPath() (string, error) {
 	}
 }
 
+// serviceInstalled reports whether a service definition is present.
+//
+// A definition is what tells the supervisor to run the daemon; without one there
+// is nothing to restart after an update.
+func serviceInstalled() bool {
+	path, err := serviceDefinitionPath()
+	if err != nil || path == "" {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
+}
+
 // stopService asks the platform to stop the daemon and disable it at login.
 //
 // It is best-effort: a service that is not loaded is not an error, and the

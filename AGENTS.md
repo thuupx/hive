@@ -61,6 +61,10 @@ is an example of the internal form.
 - `checksums.txt` is written once, by the release job, after every artifact is
   downloaded. Do not compute it per runner: one file assembled from several
   sources is one that can disagree with itself.
+- `scripts/install.sh` and `cmd/hive/update.go` consume the same release assets,
+  and must verify and place them the same way: the checksum before the archive is
+  opened, and a staged rename beside the target. A change to one is a change to
+  the other.
 
 ### Events
 

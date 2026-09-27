@@ -177,6 +177,27 @@ hive service install
 #   secrets: /Users/you/.hive/data/service.env (0600)
 ```
 
+## Updating
+
+```sh
+hive update                 # install the latest release over this one
+hive update -version 1.1.0  # a specific release
+hive update -force          # reinstall even when the version is current
+```
+
+`hive update` mirrors `scripts/install.sh`: it downloads the tarball for this
+platform, verifies its SHA-256 against the release's `checksums.txt` **before the
+archive is opened**, and replaces `hive` and its plugins beside the running
+binary — the directory the daemon resolves the plugins from, so both move
+together. `-dir` overrides where they land.
+
+A running daemon keeps the binary it was started from, so an update is finished
+with a restart: if the background service is installed, `hive update` restarts it;
+otherwise it tells you to restart `hive serve`.
+
+`darwin/amd64` has no published build (GitHub retired the amd64 macOS runner), so
+that platform is told to build from source with `make build`.
+
 ## Uninstalling
 
 ```sh
