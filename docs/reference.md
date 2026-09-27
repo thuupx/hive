@@ -251,8 +251,15 @@ hive init [-agent <name>] [-force]   # write a starter configuration
 hive config                    # validate and print the effective configuration
 hive serve                     # run the daemon
 hive version                   # build and protocol version
+hive update [-version <x.y.z>] [-dir <path>] [-force]   # install a release over this one
 hive uninstall [-yes] [-workspace]   # remove the installation (asks first)
 ```
+
+`hive update` downloads the release for this platform, verifies its SHA-256
+against the release's `checksums.txt`, and replaces the binaries beside the
+running one — `hive` and its plugins together, because the daemon resolves the
+plugins from that directory. A running service is restarted; otherwise restart
+`hive serve` yourself.
 
 `hive uninstall` stops and removes the service, then removes the binaries, the
 data directory, and the configuration. It asks `[y/N]` first; `-workspace` also

@@ -90,6 +90,26 @@ var helpTable = []commandHelp{
 		},
 	},
 	{
+		path:    "update",
+		summary: "install a release over this one",
+		usage:   "hive update [-version <x.y.z>] [-dir <path>] [-force]",
+		details: []string{
+			"Downloads the release for this platform, verifies its SHA-256 against",
+			"the release's checksums.txt, and replaces the binaries next to the",
+			"running one — hive and its plugins together, because the daemon",
+			"resolves the plugins from that directory.",
+			"",
+			"A running service is restarted, so the new build is the one running.",
+			"Without a service, restart `hive serve` yourself.",
+		},
+		flags: []flagHelp{
+			{"-version", "the release to install (default: the latest)"},
+			{"-dir", "where to install (default: the running binary's directory)"},
+			{"-force", "install even when the version is already current"},
+		},
+		examples: []string{"hive update", "hive update -version 1.1.0", "hive update -force"},
+	},
+	{
 		path:    "uninstall",
 		summary: "remove the installation",
 		usage:   "hive uninstall [-yes] [-workspace]",

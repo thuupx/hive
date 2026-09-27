@@ -24,6 +24,12 @@ The plugins are in the same archive as `hive` because the daemon resolves them
 from its own directory. A tarball with `hive` alone installs a gateway with no
 agents.
 
+These assets are what both `scripts/install.sh` and `hive update` consume: the
+asset name carries the version, the platform, and the architecture, and
+`checksums.txt` covers every tarball. `hive update` mirrors the installer's
+verification and placement, so a self-update lands the same shape as a fresh
+install.
+
 The documented install command points at
 `https://github.com/thuupx/hive/releases/latest/download/install.sh`, not at the
 copy on a branch: a branch is mutable, so a `curl | sh` from one would not be the
