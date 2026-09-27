@@ -237,14 +237,25 @@ service_installed() {
 		[ -f "${HOME}/.config/systemd/user/ai.hive.daemon.service" ]
 }
 
+# The command the user can actually run. When the install directory is not on
+# PATH, the path is spelled out: naming a command that cannot be found is how a
+# successful install reads as a failed one.
+case ":${PATH}:" in
+*":${BIN_DIR}:"*) hive_cmd="hive" ;;
+*) hive_cmd="${BIN_DIR}/hive" ;;
+esac
+
 printf '\nNext:\n'
 if [ -f "${HOME}/.hive/config.toml" ]; then
 	if service_installed; then
-		printf '  hive service restart   # run the new build; the daemon still has the old one\n'
+		printf '  %s service restart\n      the daemon is still running the old build\n' "$hive_cmd"
 	else
-		printf '  hive serve             # run the coordinator, a node, and your agents\n'
+		printf '  %s serve\n      a daemon you started by hand still has the old build\n' "$hive_cmd"
 	fi
 else
-	printf '  hive init              # find your ACP agents and write ~/.hive/config.toml\n'
-	printf '  hive serve             # run the coordinator, a node, and your agents\n'
+	printf '  %s init\n      the guided setup: agent, transports, credentials, workspace\n' "$hive_cmd"
+	printf '  %s serve\n      runs the coordinator, a node, and your agents\n' "$hive_cmd"
+	printf '  %s service install\n      ...or run it at login instead of in a terminal\n' "$hive_cmd"
 fi
+printf '\n  If something is not working: %s doctor\n' "$hive_cmd"
+printf '  To upgrade later: %s update\n' "$hive_cmd"
