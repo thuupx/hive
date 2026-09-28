@@ -108,9 +108,10 @@ type OutboundImage struct {
 	// Alt is the caption the markdown image declared.
 	Alt string
 
-	// Target is where the image is: an http(s) URL the platform fetches itself,
-	// or a file path the transport reads and uploads — a photo has no other way
-	// to reach a chat.
+	// Target is where the image is. An http(s) URL is sent as a photo the
+	// platform fetches itself; anything else, such as a file path, cannot
+	// become a photo — the Bot API takes no upload — so it is posted as a
+	// text reference.
 	Target string
 }
 

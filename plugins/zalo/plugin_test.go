@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -204,33 +202,31 @@ func TestPostSendsAnImageByURL(t *testing.T) {
 		t.Fatalf("photos = %+v, want the picture", client.photos)
 	}
 	photo := client.photos[0]
-	if photo.URL != "https://cdn.example/a.png" || photo.Caption != "shot" || len(photo.Data) != 0 {
+	if photo.URL != "https://cdn.example/a.png" || photo.Caption != "shot" {
 		t.Fatalf("photo = %+v", photo)
 	}
 }
 
-// A picture that is a local file is read and uploaded.
-func TestPostUploadsALocalImage(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "shot.png")
-	if err := os.WriteFile(path, []byte("png bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
+// The Bot API accepts no upload, so a local file cannot become a photo: its
+// reference is posted as text instead of silently disappearing.
+func TestALocalImagePostsItsReference(t *testing.T) {
 	client := &fakeClient{}
 	p := New(nil, client, Options{})
 	p.post(context.Background(), "c1", Message{
-		Images: []OutboundImage{{Target: path}},
+		Images: []OutboundImage{{Alt: "shot", Target: "/tmp/shot.png"}},
 	})
 
-	if len(client.photos) != 1 {
-		t.Fatalf("photos = %+v, want the upload", client.photos)
+	if len(client.photos) != 0 {
+		t.Fatalf("photos = %+v, a path cannot be uploaded", client.photos)
 	}
-	photo := client.photos[0]
-	if string(photo.Data) != "png bytes" || photo.FileName != "shot.png" {
-		t.Fatalf("photo = %+v", photo)
+	found := false
+	for _, req := range client.sent {
+		if strings.Contains(req.Message.Text, "/tmp/shot.png") {
+			found = true
+		}
 	}
-	if len(client.sent) != 0 {
-		t.Fatalf("sent = %+v, an image-only message sends no text", client.sent)
+	if !found {
+		t.Fatalf("sent = %+v, want the reference kept", client.sent)
 	}
 }
 
@@ -255,26 +251,5 @@ func TestAFailedImagePostsItsReference(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("sent = %+v, want the reference kept", client.sent)
-	}
-}
-
-// A local file too big to read is not read.
-func TestAnOversizedLocalImageIsNotRead(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "big.png")
-	if err := os.WriteFile(path, []byte("0123456789"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	client := &fakeClient{}
-	p := New(nil, client, Options{MaxAttachmentBytes: 4})
-	p.post(context.Background(), "c1", Message{
-		Images: []OutboundImage{{Target: path}},
-	})
-
-	if len(client.photos) != 0 {
-		t.Fatalf("photos = %+v, the file was over the bound", client.photos)
-	}
-	if len(client.sent) == 0 {
-		t.Fatal("the reference should still be posted")
 	}
 }

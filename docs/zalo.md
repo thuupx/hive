@@ -159,12 +159,12 @@ warning instead of being read into memory.
 max_attachment_mb = "8"     # default
 ```
 
-An answer that embeds a markdown image — `![alt](target)` — arrives as a photo,
-because Zalo draws no picture inside a text message. The target may be an
-http(s) URL, which the platform fetches itself, or a file path on the machine,
-which the transport reads and uploads. `max_attachment_mb` bounds the read in
-that direction too, and the image's alt text becomes the photo's caption. A
-picture that cannot be sent is reported in words rather than dropped.
+An answer that embeds a markdown image — `![alt](target)` — is sent as a photo
+when the target is an http(s) URL, because Zalo draws no picture inside a text
+message. The Bot API fetches the URL itself and accepts no upload, so a target
+that is a file path — or a photo that fails to send — is posted as a text
+reference rather than silently dropped. The image's alt text becomes the
+photo's caption.
 
 ### Groups
 

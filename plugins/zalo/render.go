@@ -304,9 +304,10 @@ var imagePattern = regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)\)`)
 // extractImages pulls the markdown images out of a text, returning what is left
 // and the pictures found.
 //
-// A target that is neither an http(s) URL nor a file path cannot become a
-// photo — a data: URI, say — so it stays in the text untouched rather than
-// disappearing.
+// An http(s) URL or a file path is pulled out: the URL becomes a photo, and the
+// path becomes a named reference, because Zalo draws neither inside a text
+// message. A target with another scheme — a data: URI, say — cannot be named
+// that way, so it stays in the text untouched rather than disappearing.
 func extractImages(text string) (string, []OutboundImage) {
 	var images []OutboundImage
 	clean := imagePattern.ReplaceAllStringFunc(text, func(match string) string {
@@ -320,8 +321,8 @@ func extractImages(text string) (string, []OutboundImage) {
 	return strings.TrimSpace(clean), images
 }
 
-// isPhotoTarget reports whether an image target can reach the platform: a URL
-// it fetches, or a file path the transport reads and uploads.
+// isPhotoTarget reports whether an image target is a picture reference: a URL
+// the platform fetches, or a file path the transport names in words.
 func isPhotoTarget(target string) bool {
 	switch {
 	case strings.HasPrefix(target, "http://"), strings.HasPrefix(target, "https://"):

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -599,30 +598,20 @@ func (p *Plugin) post(ctx context.Context, conversationID string, message Messag
 
 // sendImage posts one picture.
 //
-// A URL is sent as a reference and the platform fetches it; a file path is
-// read and uploaded, because that is the only way a local file reaches a chat.
-// A failure is reported in words rather than dropped: the reference is still
-// worth having.
+// The Zalo Bot API fetches a photo from an http(s) URL and accepts no upload,
+// so a file path cannot become a photo: it is posted as a text reference, as
+// is a picture whose send fails, rather than being silently dropped.
 func (p *Plugin) sendImage(ctx context.Context, chatID string, image OutboundImage) {
-	req := SendPhotoRequest{
+	if !strings.HasPrefix(image.Target, "http://") && !strings.HasPrefix(image.Target, "https://") {
+		p.postImageFallback(ctx, chatID, image)
+		return
+	}
+
+	if _, err := p.client.SendPhoto(ctx, SendPhotoRequest{
 		ChatID:  chatID,
 		Caption: caption(image.Alt),
-	}
-
-	if strings.HasPrefix(image.Target, "http://") || strings.HasPrefix(image.Target, "https://") {
-		req.URL = image.Target
-	} else {
-		data, err := readFileBounded(image.Target, p.opts.MaxAttachmentBytes)
-		if err != nil {
-			p.log.Warn("could not read an image to send", "target", image.Target, "error", err)
-			p.postImageFallback(ctx, chatID, image)
-			return
-		}
-		req.Data = data
-		req.FileName = filepath.Base(image.Target)
-	}
-
-	if _, err := p.client.SendPhoto(ctx, req); err != nil {
+		URL:     image.Target,
+	}); err != nil {
 		p.log.Warn("could not send an image", "target", image.Target, "error", err)
 		p.postImageFallback(ctx, chatID, image)
 	}

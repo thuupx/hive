@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,56 +125,6 @@ func TestSendPhotoByURL(t *testing.T) {
 	}
 	if gotBody["chat_id"] != "c1" || gotBody["photo"] != "https://cdn.example/a.png" || gotBody["caption"] != "the shot" {
 		t.Fatalf("body = %+v", gotBody)
-	}
-}
-
-// A local file goes up as multipart form data, with the photo in the file part.
-func TestSendPhotoUploadsBytes(t *testing.T) {
-	var gotFields map[string]string
-	var gotFile []byte
-	var gotName string
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Errorf("the request is not multipart: %v", err)
-		}
-		gotFields = map[string]string{
-			"chat_id": r.FormValue("chat_id"),
-			"caption": r.FormValue("caption"),
-		}
-		file, header, err := r.FormFile("photo")
-		if err != nil {
-			t.Errorf("no photo file part: %v", err)
-		} else {
-			gotName = header.Filename
-			gotFile, _ = io.ReadAll(file)
-			file.Close()
-		}
-		writeJSON(w, map[string]any{"ok": true, "result": map[string]any{"message_id": "p2"}})
-	}))
-	defer server.Close()
-
-	client, err := NewHTTPClient(Config{Token: "tok", BaseURL: server.URL})
-	if err != nil {
-		t.Fatalf("client: %v", err)
-	}
-
-	id, err := client.SendPhoto(context.Background(), SendPhotoRequest{
-		ChatID:   "c1",
-		Data:     []byte("png bytes"),
-		FileName: "shot.png",
-	})
-	if err != nil {
-		t.Fatalf("send: %v", err)
-	}
-	if id != "p2" {
-		t.Fatalf("message id = %q", id)
-	}
-	if gotFields["chat_id"] != "c1" {
-		t.Fatalf("fields = %+v", gotFields)
-	}
-	if gotName != "shot.png" || string(gotFile) != "png bytes" {
-		t.Fatalf("file part = %q %q", gotName, gotFile)
 	}
 }
 

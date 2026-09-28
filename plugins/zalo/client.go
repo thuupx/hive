@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"mime/multipart"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -64,16 +62,10 @@ type SendPhotoRequest struct {
 	ChatID  string
 	Caption string
 
-	// URL is a photo the platform fetches itself. When it is empty, Data is
-	// uploaded instead.
+	// URL is a photo the platform fetches itself. The Zalo Bot API accepts
+	// only an http(s) reference: it has no upload endpoint, so a file on this
+	// machine cannot become a photo.
 	URL string
-
-	// Data is the photo's bytes, sent as a multipart upload — the only way a
-	// file on this machine reaches the platform.
-	Data []byte
-
-	// FileName is the name an upload carries.
-	FileName string
 }
 
 // Chat actions.
@@ -184,28 +176,6 @@ func (c *HTTPClient) call(ctx context.Context, method string, params any) (json.
 		body = encoded
 	}
 	return c.post(ctx, method, "application/json", bytes.NewReader(body))
-}
-
-// callUpload invokes one API method with a file, encoded multipart.
-func (c *HTTPClient) callUpload(ctx context.Context, method string, fields map[string]any, fileField, fileName string, data []byte) (json.RawMessage, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	for name, value := range fields {
-		if err := writer.WriteField(name, fmt.Sprint(value)); err != nil {
-			return nil, fmt.Errorf("zalo: encode %s: %w", method, err)
-		}
-	}
-	part, err := writer.CreateFormFile(fileField, fileName)
-	if err != nil {
-		return nil, fmt.Errorf("zalo: encode %s: %w", method, err)
-	}
-	if _, err := part.Write(data); err != nil {
-		return nil, fmt.Errorf("zalo: encode %s: %w", method, err)
-	}
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("zalo: encode %s: %w", method, err)
-	}
-	return c.post(ctx, method, writer.FormDataContentType(), &body)
 }
 
 // post issues one API call and decodes the response envelope.
@@ -408,24 +378,18 @@ func (c *HTTPClient) SendMessage(ctx context.Context, req SendMessageRequest) (s
 
 // SendPhoto posts an image message.
 //
-// A URL is sent as a reference and the platform fetches it; bytes go up as a
-// multipart upload, which is the only way a local file reaches a chat.
+// The photo is sent as a reference and the platform fetches the URL itself:
+// the Bot API accepts no other form, so there is no upload path.
 func (c *HTTPClient) SendPhoto(ctx context.Context, req SendPhotoRequest) (string, error) {
-	fields := map[string]any{
+	params := map[string]any{
 		"chat_id": req.ChatID,
+		"photo":   req.URL,
 	}
 	if req.Caption != "" {
-		fields["caption"] = req.Caption
+		params["caption"] = req.Caption
 	}
 
-	var raw json.RawMessage
-	var err error
-	if len(req.Data) > 0 {
-		raw, err = c.callUpload(ctx, "sendPhoto", fields, "photo", req.FileName, req.Data)
-	} else {
-		fields["photo"] = req.URL
-		raw, err = c.call(ctx, "sendPhoto", fields)
-	}
+	raw, err := c.call(ctx, "sendPhoto", params)
 	if err != nil {
 		return "", err
 	}
@@ -480,37 +444,6 @@ func (c *HTTPClient) DownloadFile(ctx context.Context, url string, maxBytes int6
 	}
 	if int64(buffer.Len()) > maxBytes {
 		return nil, fmt.Errorf("zalo: file is larger than %d bytes", maxBytes)
-	}
-	return buffer.Bytes(), nil
-}
-
-// readFileBounded reads a local file to upload, bounded like a downloaded
-// attachment: a transport must not read an unbounded amount into memory.
-func readFileBounded(path string, maxBytes int64) ([]byte, error) {
-	if maxBytes <= 0 {
-		maxBytes = DefaultMaxAttachmentBytes
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("zalo: read %s: %w", path, err)
-	}
-	defer f.Close()
-
-	info, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("zalo: read %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("zalo: %s is not a regular file", path)
-	}
-
-	var buffer bytes.Buffer
-	if _, err := io.Copy(&buffer, io.LimitReader(f, maxBytes+1)); err != nil {
-		return nil, fmt.Errorf("zalo: read %s: %w", path, err)
-	}
-	if int64(buffer.Len()) > maxBytes {
-		return nil, fmt.Errorf("zalo: %s is larger than %d bytes", path, maxBytes)
 	}
 	return buffer.Bytes(), nil
 }
