@@ -246,7 +246,15 @@ func plainMessage(text string) Message {
 // shown as source.
 func markdown(text string) string {
 	text = unwrapProseFence(text)
-	return linkPattern.ReplaceAllString(text, "$1 ($2)")
+	var b strings.Builder
+	last := 0
+	for _, r := range codeRanges(text) {
+		b.WriteString(linkPattern.ReplaceAllString(text[last:r[0]], "$1 ($2)"))
+		b.WriteString(text[r[0]:r[1]])
+		last = r[1]
+	}
+	b.WriteString(linkPattern.ReplaceAllString(text[last:], "$1 ($2)"))
+	return b.String()
 }
 
 // unwrapProseFence removes a fence an agent wrapped its whole answer in.
@@ -308,17 +316,132 @@ var imagePattern = regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)\)`)
 // path becomes a named reference, because Zalo draws neither inside a text
 // message. A target with another scheme — a data: URI, say — cannot be named
 // that way, so it stays in the text untouched rather than disappearing.
+// An image inside code is not an image: ![alt](url) in a fence or a span is
+// markup an agent is showing, not a picture it is sending.
 func extractImages(text string) (string, []OutboundImage) {
+	text = unwrapProseFence(text)
+	ranges := codeRanges(text)
 	var images []OutboundImage
-	clean := imagePattern.ReplaceAllStringFunc(text, func(match string) string {
-		parts := imagePattern.FindStringSubmatch(match)
-		if !isPhotoTarget(parts[2]) {
-			return match
+	var b strings.Builder
+	last := 0
+	for _, m := range imagePattern.FindAllStringSubmatchIndex(text, -1) {
+		if inRanges(ranges, m[0]) || !isPhotoTarget(text[m[4]:m[5]]) {
+			continue
 		}
-		images = append(images, OutboundImage{Alt: parts[1], Target: parts[2]})
-		return ""
-	})
-	return strings.TrimSpace(clean), images
+		b.WriteString(text[last:m[0]])
+		images = append(images, OutboundImage{Alt: text[m[2]:m[3]], Target: text[m[4]:m[5]]})
+		last = m[1]
+	}
+	b.WriteString(text[last:])
+	return strings.TrimSpace(b.String()), images
+}
+
+// codeRanges returns the byte ranges text marks as code: a fenced block, a line
+// opening with three or more backticks closed by a line of at least as many,
+// and an inline span, a run of backticks closed by an equal run. An unclosed
+// fence or span runs to the end.
+func codeRanges(text string) [][2]int {
+	var ranges [][2]int
+	i := 0
+	for i < len(text) {
+		if text[i] != '`' {
+			i++
+			continue
+		}
+		run := backtickRun(text, i)
+		switch {
+		case run >= 3 && atLineStart(text, i):
+			end := fenceEnd(text, i+run, run)
+			ranges = append(ranges, [2]int{i, end})
+			i = end
+		default:
+			if end := spanEnd(text, i+run, run); end >= 0 {
+				ranges = append(ranges, [2]int{i, end})
+				i = end
+			} else {
+				i += run
+			}
+		}
+	}
+	return ranges
+}
+
+// backtickRun is the length of the run of backticks starting at i.
+func backtickRun(text string, i int) int {
+	j := i
+	for j < len(text) && text[j] == '`' {
+		j++
+	}
+	return j - i
+}
+
+// atLineStart reports whether only spaces stand between i and the line's start.
+func atLineStart(text string, i int) bool {
+	for k := i - 1; k >= 0 && text[k] != '\n'; k-- {
+		if text[k] != ' ' {
+			return false
+		}
+	}
+	return true
+}
+
+// fenceEnd returns the index just past the line holding a closing fence of at
+// least run backticks, or the end of the text when the fence never closes.
+func fenceEnd(text string, pos, run int) int {
+	for pos < len(text) {
+		end := strings.IndexByte(text[pos:], '\n')
+		lineEnd := len(text)
+		if end >= 0 {
+			lineEnd = pos + end
+		}
+		k := pos
+		for k < lineEnd && text[k] == ' ' {
+			k++
+		}
+		if r := backtickRun(text, k); r >= run {
+			if strings.TrimRight(text[k+r:lineEnd], " ") == "" {
+				if end < 0 {
+					return len(text)
+				}
+				return lineEnd + 1
+			}
+		}
+		if end < 0 {
+			return len(text)
+		}
+		pos = lineEnd + 1
+	}
+	return len(text)
+}
+
+// spanEnd returns the index just past the next run of exactly run backticks
+// after pos, or -1 when the span never closes.
+func spanEnd(text string, pos, run int) int {
+	for p := pos; p < len(text); {
+		if text[p] != '`' {
+			p++
+			continue
+		}
+		r := backtickRun(text, p)
+		if r == run {
+			return p + r
+		}
+		p += r
+	}
+	return -1
+}
+
+// inRanges reports whether pos falls inside one of the sorted ranges.
+func inRanges(ranges [][2]int, pos int) bool {
+	for _, r := range ranges {
+		if pos < r[0] {
+			return false
+		}
+		if pos < r[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // isPhotoTarget reports whether an image target is a picture reference: a URL

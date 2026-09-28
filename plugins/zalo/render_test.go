@@ -44,6 +44,42 @@ func TestImageTargetsAreSortedByScheme(t *testing.T) {
 	}
 }
 
+// Markup inside code is shown, not sent: an image inside a span or a fence is
+// an example an agent is quoting, not a picture it is sending.
+func TestAnImageInsideCodeStaysAsMarkup(t *testing.T) {
+	text, images := extractImages("example `![alt](https://example/x.png)` and ![real](https://cdn.example/a.png)")
+	if len(images) != 1 || images[0].Target != "https://cdn.example/a.png" {
+		t.Fatalf("only the prose image should extract, images = %+v", images)
+	}
+	if !strings.Contains(text, "`![alt](https://example/x.png)`") {
+		t.Fatalf("the code span must keep its markup, text = %q", text)
+	}
+
+	fenced := "```go\n![alt](https://example/x.png)\n```"
+	text, images = extractImages(fenced)
+	if len(images) != 0 || !strings.Contains(text, "![alt](https://example/x.png)") {
+		t.Fatalf("a fenced image must stay as markup, text = %q images %+v", text, images)
+	}
+
+	// A prose-labelled fence around the whole answer is unwrapped first, so a
+	// picture inside it still extracts.
+	_, images = extractImages("```markdown\n![real](https://cdn.example/a.png)\n```")
+	if len(images) != 1 {
+		t.Fatalf("an image in a prose fence should still extract, images = %+v", images)
+	}
+}
+
+// A link inside code is text an agent is quoting, not a link to rewrite.
+func TestALinkInsideCodeIsLeftAlone(t *testing.T) {
+	got := markdown("run `[a](b)` then see [the doc](https://x.dev)")
+	if !strings.Contains(got, "`[a](b)`") {
+		t.Fatalf("the code span must keep its markup, got %q", got)
+	}
+	if !strings.Contains(got, "the doc (https://x.dev)") {
+		t.Fatalf("the prose link should still rewrite, got %q", got)
+	}
+}
+
 // A message event carrying a markdown image renders as text plus a photo.
 func TestAMessageEventWithAnImage(t *testing.T) {
 	payload, _ := json.Marshal(map[string]string{"text": "look ![s](https://cdn.example/a.png)"})
