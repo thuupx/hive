@@ -222,7 +222,8 @@ func TestRunsAreBounded(t *testing.T) {
 //
 // Found in a live conversation: an agent narrated, called a tool, and narrated
 // again, and the two narrations were glued into one sentence that read as
-// nonsense.
+// nonsense. The narration ends at the tool call, so it can be published while
+// the turn is still running rather than glued and held until the end.
 func TestMessagesAreSeparatedByWhatComesBetweenThem(t *testing.T) {
 	b := &Bridge{
 		tools:      map[string]map[string]bool{},
@@ -231,22 +232,29 @@ func TestMessagesAreSeparatedByWhatComesBetweenThem(t *testing.T) {
 	r := &run{agentRunID: "run_1"}
 
 	// Two chunks in a row are one message.
-	message(t, b, r, "Mình muốn, cho mình biết")
-	message(t, b, r, " thêm.")
+	if got := message(t, b, r, "Mình muốn, cho mình biết"); got != "" {
+		t.Fatalf("a chunk is still streaming, got %q", got)
+	}
+	if got := message(t, b, r, " thêm."); got != "" {
+		t.Fatalf("a chunk is still streaming, got %q", got)
+	}
 
-	// A tool call comes between them.
-	other(t, b, r)
+	// A tool call ends the narration and hands it back completed.
+	if got := other(t, b, r); got != "Mình muốn, cho mình biết thêm." {
+		t.Fatalf("the tool call should complete the narration, got %q", got)
+	}
 
-	// So the next chunk starts a new message.
-	message(t, b, r, "Users/th là thư mục.")
+	// So the next chunk starts a new message in an empty buffer.
+	if got := message(t, b, r, "Users/th là thư mục."); got != "" {
+		t.Fatalf("a chunk is still streaming, got %q", got)
+	}
 
 	b.mu.Lock()
 	answer := r.answer.String()
 	b.mu.Unlock()
 
-	want := "Mình muốn, cho mình biết thêm.\n\nUsers/th là thư mục."
-	if answer != want {
-		t.Fatalf("answer = %q, want %q", answer, want)
+	if answer != "Users/th là thư mục." {
+		t.Fatalf("answer = %q, want only the second narration", answer)
 	}
 }
 
@@ -261,7 +269,9 @@ func TestAThoughtDoesNotSeparateAMessage(t *testing.T) {
 	}
 	r := &run{agentRunID: "run_1"}
 
-	thought(t, b, r)
+	if got := thought(t, b, r); got != "" {
+		t.Fatalf("a thought ends no narration, got %q", got)
+	}
 	message(t, b, r, "FIRST")
 	thought(t, b, r)
 	message(t, b, r, "_TURN")
@@ -275,8 +285,9 @@ func TestAThoughtDoesNotSeparateAMessage(t *testing.T) {
 	}
 }
 
-// message feeds one assistant text chunk through the bridge.
-func message(t *testing.T, b *Bridge, r *run, text string) {
+// message feeds one assistant text chunk through the bridge and reports the
+// narration it completed, if it completed one.
+func message(t *testing.T, b *Bridge, r *run, text string) string {
 	t.Helper()
 	payload, err := json.Marshal(map[string]any{
 		"sessionUpdate": "agent_message_chunk",
@@ -285,20 +296,22 @@ func message(t *testing.T, b *Bridge, r *run, text string) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	b.collectAnswer(r, payload)
+	return b.collectAnswer(r, payload)
 }
 
-// other feeds a tool call, which is what ends a narration.
-func other(t *testing.T, b *Bridge, r *run) {
+// other feeds a tool call, which is what ends a narration, and reports the
+// narration it completed.
+func other(t *testing.T, b *Bridge, r *run) string {
 	t.Helper()
-	b.collectAnswer(r, json.RawMessage(
+	return b.collectAnswer(r, json.RawMessage(
 		`{"sessionUpdate":"tool_call","toolCallId":"tc1","title":"Ran pwd","kind":"execute"}`))
 }
 
-// thought feeds a thought, which arrives between chunks of one message.
-func thought(t *testing.T, b *Bridge, r *run) {
+// thought feeds a thought, which arrives between chunks of one message, and
+// reports the narration it completed.
+func thought(t *testing.T, b *Bridge, r *run) string {
 	t.Helper()
-	b.collectAnswer(r, json.RawMessage(
+	return b.collectAnswer(r, json.RawMessage(
 		`{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}`))
 }
 

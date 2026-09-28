@@ -693,15 +693,16 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 			renderer := Renderer{SessionID: delivered.Event.SessionID}
 			rendered, ok := renderer.RenderEvent(delivered.Event)
 
-			// The answer is a message of its own, and the indicator that said the
-			// turn was working goes away with it.
+			// The indicator that said the turn was working goes away when the
+			// run ends, not when a message arrives: a turn may carry several
+			// messages with work still running between them.
 			//
-			// It is not edited into the indicator's place: that would put the
-			// answer above the turn's own tool list, out of order, and Slack
-			// refuses an edited text over 4,000 characters while a posted one may
-			// be far larger. A long answer that could never be posted that way is
+			// An answer is not edited into the indicator's place: that would put
+			// it above the turn's own tool list, out of order, and Slack refuses
+			// an edited text over 4,000 characters while a posted one may be far
+			// larger. A long answer that could never be posted that way is
 			// exactly what a user reports as a bot that stopped answering.
-			if ok && isAnswer(delivered.Event) {
+			if delivered.Event.Type == v1.EventRunFinished {
 				for _, conversation := range conversations {
 					p.stopTyping(ctx, conversation)
 				}

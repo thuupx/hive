@@ -406,18 +406,19 @@ func TestCoordinatorNodeAgentEndToEnd(t *testing.T) {
 	}
 
 	// The agent's event must be durable, attributed, and sequence-numbered by
-	// the coordinator rather than by the node.
-	waitFor(t, "the agent event to become durable", func() bool {
+	// the coordinator rather than by the node. The run's end adds a second
+	// event: the turn is over, on the record.
+	waitFor(t, "the agent event and the run's end to become durable", func() bool {
 		n, err := coordinatorStore.EventCount(ctx, testSession)
-		return err == nil && n == 1
+		return err == nil && n == 2
 	})
 
 	events, err := coordinatorStore.ReadEvents(ctx, testSession, 0, 10)
 	if err != nil {
 		t.Fatalf("ReadEvents: %v", err)
 	}
-	if len(events) != 1 {
-		t.Fatalf("events = %d, want 1", len(events))
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2", len(events))
 	}
 	got := events[0]
 	if got.Sequence != 1 {
@@ -431,6 +432,9 @@ func TestCoordinatorNodeAgentEndToEnd(t *testing.T) {
 	}
 	if got.RunID != testRun {
 		t.Errorf("run = %q, want %q", got.RunID, testRun)
+	}
+	if finished := events[1]; finished.Type != "run.finished" || finished.RunID != testRun {
+		t.Errorf("event = %+v, want the run's end on the same stream", finished)
 	}
 
 	// The node buffer is cleared once the coordinator has the event.

@@ -606,14 +606,28 @@ func (c *Coordinator) handleExecutionReport(ctx context.Context, call node.Call)
 	// The read-modify-write happens inside one transaction, and the report is
 	// fenced on the execution generation: a report from a superseded generation
 	// must not move the current one.
-	run, err := c.store.UpdateAgentRunWith(ctx, params.AgentRunID, func(run *agent.AgentRun) error {
+	run, err := c.store.UpdateAgentRunWithTx(ctx, params.AgentRunID, func(tx storage.Execer, run *agent.AgentRun) error {
 		if err := run.CheckGeneration(params.Generation); err != nil {
 			return err
 		}
 		if params.RuntimeSessionID != "" {
 			run.RuntimeSessionID = params.RuntimeSessionID
 		}
-		return applyExecutionReport(run, params)
+		// A retried terminal report is a no-op transition, so the end-of-turn
+		// event belongs only to the report that actually ends the run.
+		wasTerminal := run.State.IsTerminal()
+		if err := applyExecutionReport(run, params); err != nil {
+			return err
+		}
+		if wasTerminal || !run.State.IsTerminal() {
+			return nil
+		}
+		ev, err := event.RunFinished(ids.New("ev"), run.SessionID, run.ID, call.Node.NodeID, string(run.State))
+		if err != nil {
+			return err
+		}
+		_, err = c.store.AppendEvents(ctx, tx, ev)
+		return err
 	})
 	if errors.Is(err, storage.ErrNotFound) {
 		// The coordinator has no record of this run, so the node should stop
@@ -671,7 +685,7 @@ func applyExecutionReport(run *agent.AgentRun, params v1.ExecutionReportParams) 
 func (c *Coordinator) onLeaseExpired(nodeID string, ref v1.ExecutionRef) {
 	ctx := context.Background()
 
-	_, err := c.store.UpdateAgentRunWith(ctx, ref.AgentRunID, func(run *agent.AgentRun) error {
+	_, err := c.store.UpdateAgentRunWithTx(ctx, ref.AgentRunID, func(tx storage.Execer, run *agent.AgentRun) error {
 		if err := run.CheckGeneration(ref.Generation); err != nil {
 			// A superseded generation is not this run's current execution.
 			return apierr.ErrNoChange
@@ -679,7 +693,15 @@ func (c *Coordinator) onLeaseExpired(nodeID string, ref v1.ExecutionRef) {
 		if run.State.IsTerminal() || !run.State.CanTransitionTo(agent.StateInterrupted) {
 			return apierr.ErrNoChange
 		}
-		return run.Transition(agent.StateInterrupted)
+		if err := run.Transition(agent.StateInterrupted); err != nil {
+			return err
+		}
+		ev, err := event.RunFinished(ids.New("ev"), run.SessionID, run.ID, nodeID, string(run.State))
+		if err != nil {
+			return err
+		}
+		_, err = c.store.AppendEvents(ctx, tx, ev)
+		return err
 	})
 	switch {
 	case errors.Is(err, apierr.ErrNoChange):

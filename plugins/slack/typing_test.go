@@ -2,12 +2,9 @@ package slack
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
-
-	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // fakeClient records what a transport asked the platform to do.
@@ -122,40 +119,6 @@ func TestAnIndicatorThatCannotBeShownIsNotFatal(t *testing.T) {
 	p.stopTyping(context.Background(), "C1")
 	if len(client.deleted) != 0 {
 		t.Fatalf("deleted %d message(s), want none", len(client.deleted))
-	}
-}
-
-// Only an answer ends the turn. A tool card is a step, and the turn is still
-// working while it happens.
-func TestOnlyAnAnswerEndsTheTurn(t *testing.T) {
-	cases := map[string]struct {
-		event v1.Event
-		want  bool
-	}{
-		"an answer": {v1.Event{
-			Type:    v1.EventMessage,
-			Payload: json.RawMessage(`{"text":"here it is"}`),
-		}, true},
-		"an empty answer": {v1.Event{
-			Type:    v1.EventMessage,
-			Payload: json.RawMessage(`{"text":"   "}`),
-		}, false},
-		"a tool call": {v1.Event{
-			Type:    v1.EventTool,
-			Payload: json.RawMessage(`{"toolCallId":"tc","status":"in_progress"}`),
-		}, false},
-		"the agent stream": {v1.Event{
-			Type:    v1.EventAgentRaw,
-			Payload: json.RawMessage(`{"sessionUpdate":"x"}`),
-		}, false},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			if got := isAnswer(tc.event); got != tc.want {
-				t.Fatalf("isAnswer = %v, want %v", got, tc.want)
-			}
-		})
 	}
 }
 

@@ -458,9 +458,10 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 			renderer := Renderer{SessionID: delivered.Event.SessionID}
 			rendered, ok := renderer.RenderEvent(delivered.Event)
 
-			// The answer is its own message, and the working signal goes away
-			// with it.
-			if ok && isAnswer(delivered.Event) {
+			// The working signal ends when the run does, not when a message
+			// does: a turn may carry several messages with work still running
+			// between them.
+			if delivered.Event.Type == v1.EventRunFinished {
 				for _, conversation := range conversations {
 					p.stopTyping(conversation)
 				}

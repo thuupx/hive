@@ -2,11 +2,7 @@ package zalo
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 	"time"
-
-	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // A turn shows that it is working with Zalo's transient chat action.
@@ -115,18 +111,4 @@ func (p *Plugin) stopTyping(conversationID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.typing, conversationID)
-}
-
-// isAnswer is whether an event is the answer to a turn.
-func isAnswer(ev v1.Event) bool {
-	if ev.Type != v1.EventMessage {
-		return false
-	}
-	var payload struct {
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
-		return false
-	}
-	return strings.TrimSpace(payload.Text) != ""
 }

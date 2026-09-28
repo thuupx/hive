@@ -2,19 +2,15 @@ package slack
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 	"time"
-
-	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
 
 // A turn shows that it is working by animating one message, and that message is
-// removed when the turn's answer arrives.
+// removed when the run ends.
 //
 // Slack has no typing indicator a bot can send, so the indicator is a message
 // that says nothing and means "working". It is deleted rather than edited into
-// the answer: an edit puts the answer where the indicator was — above the turn's
+// an answer: an edit puts the answer where the indicator was — above the turn's
 // own tool list, out of order — and Slack refuses an edited text over 4,000
 // characters while it accepts a posted one far larger.
 const (
@@ -172,21 +168,4 @@ func (p *Plugin) stopTyping(ctx context.Context, conversationID string) {
 		p.log.Debug("could not remove the typing indicator",
 			"conversation", conversationID, "error", err)
 	}
-}
-
-// isAnswer is whether an event is the answer to a turn.
-//
-// Only an answer replaces the indicator. A tool card is a step, and it belongs
-// after the indicator, not in place of it.
-func isAnswer(ev v1.Event) bool {
-	if ev.Type != v1.EventMessage {
-		return false
-	}
-	var payload struct {
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
-		return false
-	}
-	return strings.TrimSpace(payload.Text) != ""
 }

@@ -587,6 +587,67 @@ func TestPromptForwardsUpdatesAndReportsTerminal(t *testing.T) {
 	})
 }
 
+// A narration ended by a tool call is published while the turn is still
+// running, so a reader sees each message the agent sends as it sends it —
+// not a turn's worth of text arriving at once when the work finishes.
+func TestANarrationEndedByAToolCallIsPublishedImmediately(t *testing.T) {
+	_, c, launcher := newBridge(t)
+
+	if _, err := callStart(t, c, "run_1", 1); err != nil {
+		t.Fatalf("execution.start: %v", err)
+	}
+
+	launcher.agent.setHandler(func(method string, id json.RawMessage, params json.RawMessage) {
+		if method == "session/prompt" {
+			for _, update := range []map[string]any{
+				{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "first narration"}},
+				{"sessionUpdate": "tool_call", "toolCallId": "tc1", "title": "Ran ls", "kind": "execute"},
+				{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "second narration"}},
+			} {
+				launcher.agent.notify("session/update", map[string]any{
+					"sessionId": "agent-sess-1",
+					"update":    update,
+				})
+			}
+		}
+		launcher.agent.baseHandler(method, id, params)
+	})
+
+	if err := c.peer.Call(context.Background(), v1.MethodExecutionPrompt, v1.ExecutionPromptParams{
+		AgentRunID: "run_1", Generation: 1, Text: "do the thing",
+	}, &map[string]any{}); err != nil {
+		t.Fatalf("execution.prompt: %v", err)
+	}
+
+	waitFor(t, "both narrations", func() bool {
+		messages := 0
+		for _, published := range c.publishedSnapshot() {
+			if published.Type == v1.EventMessage {
+				messages++
+			}
+		}
+		return messages == 2
+	})
+
+	var texts []string
+	for _, published := range c.publishedSnapshot() {
+		if published.Type != v1.EventMessage {
+			continue
+		}
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(published.Payload, &payload); err != nil {
+			t.Fatalf("message payload: %v", err)
+		}
+		texts = append(texts, payload.Text)
+	}
+
+	if len(texts) != 2 || texts[0] != "first narration" || texts[1] != "second narration" {
+		t.Fatalf("messages = %v, want the two narrations in order", texts)
+	}
+}
+
 func TestPermissionIsForwardedAndAnswered(t *testing.T) {
 	_, c, launcher := newBridge(t)
 
