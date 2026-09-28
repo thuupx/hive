@@ -63,7 +63,12 @@ func (r Renderer) RenderEvent(ev v1.Event) (Rendered, bool) {
 
 	switch ev.Type {
 	case v1.EventMessage:
-		return Rendered{Message: textMessage(renderText(ev))}, true
+		// The pictures come out before markdown(), which would otherwise read
+		// an image's link as a plain link and leave a stray "!".
+		text, images := extractImages(renderText(ev))
+		message := textMessage(text)
+		message.Images = images
+		return Rendered{Message: message}, true
 
 	case v1.EventError:
 		return Rendered{Message: textMessage("⚠️ " + renderText(ev))}, true
@@ -292,6 +297,43 @@ func fence(line string) (int, string, bool) {
 
 // linkPattern matches a markdown link.
 var linkPattern = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
+
+// imagePattern matches a markdown image: ![alt](target).
+var imagePattern = regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)\)`)
+
+// extractImages pulls the markdown images out of a text, returning what is left
+// and the pictures found.
+//
+// An http(s) URL or a file path is pulled out: the URL becomes a photo, and the
+// path becomes a named reference, because Zalo draws neither inside a text
+// message. A target with another scheme — a data: URI, say — cannot be named
+// that way, so it stays in the text untouched rather than disappearing.
+func extractImages(text string) (string, []OutboundImage) {
+	var images []OutboundImage
+	clean := imagePattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := imagePattern.FindStringSubmatch(match)
+		if !isPhotoTarget(parts[2]) {
+			return match
+		}
+		images = append(images, OutboundImage{Alt: parts[1], Target: parts[2]})
+		return ""
+	})
+	return strings.TrimSpace(clean), images
+}
+
+// isPhotoTarget reports whether an image target is a picture reference: a URL
+// the platform fetches, or a file path the transport names in words.
+func isPhotoTarget(target string) bool {
+	switch {
+	case strings.HasPrefix(target, "http://"), strings.HasPrefix(target, "https://"):
+		return true
+	case strings.Contains(target, ":"):
+		// Another scheme cannot become a photo.
+		return false
+	default:
+		return true
+	}
+}
 
 // chunk splits text so every piece fits in one Zalo message.
 //

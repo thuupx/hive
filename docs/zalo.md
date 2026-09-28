@@ -159,6 +159,13 @@ warning instead of being read into memory.
 max_attachment_mb = "8"     # default
 ```
 
+An answer that embeds a markdown image — `![alt](target)` — is sent as a photo
+when the target is an http(s) URL, because Zalo draws no picture inside a text
+message. The Bot API fetches the URL itself and accepts no upload, so a target
+that is a file path — or a photo that fails to send — is posted as a text
+reference rather than silently dropped. The image's alt text becomes the
+photo's caption.
+
 ### Groups
 
 A private chat is 1:1, so every message is addressed to the bot. A group is

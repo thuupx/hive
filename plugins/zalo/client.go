@@ -36,6 +36,9 @@ type Client interface {
 	// SendMessage posts a text message and returns its id.
 	SendMessage(ctx context.Context, req SendMessageRequest) (string, error)
 
+	// SendPhoto posts an image message and returns its id.
+	SendPhoto(ctx context.Context, req SendPhotoRequest) (string, error)
+
 	// SendChatAction shows a transient status in a conversation, such as
 	// "typing". It is best-effort: a failure must not fail the turn.
 	SendChatAction(ctx context.Context, chatID, action string) error
@@ -52,6 +55,17 @@ type Client interface {
 type SendMessageRequest struct {
 	ChatID  string
 	Message Message
+}
+
+// SendPhotoRequest is a picture to post.
+type SendPhotoRequest struct {
+	ChatID  string
+	Caption string
+
+	// URL is a photo the platform fetches itself. The Zalo Bot API accepts
+	// only an http(s) reference: it has no upload endpoint, so a file on this
+	// machine cannot become a photo.
+	URL string
 }
 
 // Chat actions.
@@ -151,7 +165,7 @@ type response struct {
 	ErrorCode   int             `json:"error_code"`
 }
 
-// call invokes one API method.
+// call invokes one API method with a JSON body.
 func (c *HTTPClient) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	body := []byte("{}")
 	if params != nil {
@@ -161,13 +175,17 @@ func (c *HTTPClient) call(ctx context.Context, method string, params any) (json.
 		}
 		body = encoded
 	}
+	return c.post(ctx, method, "application/json", bytes.NewReader(body))
+}
 
+// post issues one API call and decodes the response envelope.
+func (c *HTTPClient) post(ctx context.Context, method, contentType string, body io.Reader) (json.RawMessage, error) {
 	url := fmt.Sprintf("%s/bot%s/%s", c.baseURL, c.token, method)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("zalo: %s: %w", method, err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -347,6 +365,31 @@ func (c *HTTPClient) SendMessage(ctx context.Context, req SendMessageRequest) (s
 	}
 
 	raw, err := c.call(ctx, "sendMessage", params)
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		MessageID string `json:"message_id"`
+	}
+	_ = json.Unmarshal(raw, &result)
+	return result.MessageID, nil
+}
+
+// SendPhoto posts an image message.
+//
+// The photo is sent as a reference and the platform fetches the URL itself:
+// the Bot API accepts no other form, so there is no upload path.
+func (c *HTTPClient) SendPhoto(ctx context.Context, req SendPhotoRequest) (string, error) {
+	params := map[string]any{
+		"chat_id": req.ChatID,
+		"photo":   req.URL,
+	}
+	if req.Caption != "" {
+		params["caption"] = req.Caption
+	}
+
+	raw, err := c.call(ctx, "sendPhoto", params)
 	if err != nil {
 		return "", err
 	}

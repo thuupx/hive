@@ -92,6 +92,42 @@ func TestSendMessage(t *testing.T) {
 	}
 }
 
+// SendPhoto posts an image by reference: the platform fetches the URL itself.
+func TestSendPhotoByURL(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		writeJSON(w, map[string]any{"ok": true, "result": map[string]any{"message_id": "p1"}})
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPClient(Config{Token: "tok", BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+
+	id, err := client.SendPhoto(context.Background(), SendPhotoRequest{
+		ChatID:  "c1",
+		URL:     "https://cdn.example/a.png",
+		Caption: "the shot",
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if id != "p1" {
+		t.Fatalf("message id = %q", id)
+	}
+	if gotPath != "/bottok/sendPhoto" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotBody["chat_id"] != "c1" || gotBody["photo"] != "https://cdn.example/a.png" || gotBody["caption"] != "the shot" {
+		t.Fatalf("body = %+v", gotBody)
+	}
+}
+
 // A refusal is reported with the platform's own words.
 func TestAPIErrorIsReported(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

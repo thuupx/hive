@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	v1 "github.com/thuupx/hive/protocol/hive/v1"
@@ -11,9 +12,11 @@ import (
 
 // fakeClient records what a transport asked the platform to do.
 type fakeClient struct {
-	sent     []SendMessageRequest
-	actions  []string
-	failSend bool
+	sent      []SendMessageRequest
+	photos    []SendPhotoRequest
+	actions   []string
+	failSend  bool
+	failPhoto bool
 }
 
 func (c *fakeClient) Events(context.Context) (<-chan Update, error) { return nil, nil }
@@ -24,6 +27,14 @@ func (c *fakeClient) SendMessage(_ context.Context, req SendMessageRequest) (str
 	}
 	c.sent = append(c.sent, req)
 	return "m1", nil
+}
+
+func (c *fakeClient) SendPhoto(_ context.Context, req SendPhotoRequest) (string, error) {
+	if c.failSend || c.failPhoto {
+		return "", errors.New("no")
+	}
+	c.photos = append(c.photos, req)
+	return "m2", nil
 }
 
 func (c *fakeClient) SendChatAction(_ context.Context, chatID, action string) error {
@@ -171,5 +182,74 @@ func TestPostSplitsLongMessages(t *testing.T) {
 		if len(req.Message.Text) > ChunkChars {
 			t.Errorf("a chunk is %d chars, over the limit", len(req.Message.Text))
 		}
+	}
+}
+
+// A message's pictures are posted as photos after its text.
+func TestPostSendsAnImageByURL(t *testing.T) {
+	client := &fakeClient{}
+	p := New(nil, client, Options{})
+
+	p.post(context.Background(), "c1", Message{
+		Text:   "here it is",
+		Images: []OutboundImage{{Alt: "shot", Target: "https://cdn.example/a.png"}},
+	})
+
+	if len(client.sent) != 1 || client.sent[0].Message.Text != "here it is" {
+		t.Fatalf("sent = %+v, want the text first", client.sent)
+	}
+	if len(client.photos) != 1 {
+		t.Fatalf("photos = %+v, want the picture", client.photos)
+	}
+	photo := client.photos[0]
+	if photo.URL != "https://cdn.example/a.png" || photo.Caption != "shot" {
+		t.Fatalf("photo = %+v", photo)
+	}
+}
+
+// The Bot API accepts no upload, so a local file cannot become a photo: its
+// reference is posted as text instead of silently disappearing.
+func TestALocalImagePostsItsReference(t *testing.T) {
+	client := &fakeClient{}
+	p := New(nil, client, Options{})
+	p.post(context.Background(), "c1", Message{
+		Images: []OutboundImage{{Alt: "shot", Target: "/tmp/shot.png"}},
+	})
+
+	if len(client.photos) != 0 {
+		t.Fatalf("photos = %+v, a path cannot be uploaded", client.photos)
+	}
+	found := false
+	for _, req := range client.sent {
+		if strings.Contains(req.Message.Text, "/tmp/shot.png") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("sent = %+v, want the reference kept", client.sent)
+	}
+}
+
+// A picture that cannot be sent is not silently lost: the reference is posted
+// as text instead.
+func TestAFailedImagePostsItsReference(t *testing.T) {
+	client := &fakeClient{failPhoto: true}
+	p := New(nil, client, Options{})
+
+	p.post(context.Background(), "c1", Message{
+		Images: []OutboundImage{{Alt: "shot", Target: "https://cdn.example/a.png"}},
+	})
+
+	if len(client.photos) != 0 {
+		t.Fatalf("photos = %+v, the send failed", client.photos)
+	}
+	found := false
+	for _, req := range client.sent {
+		if strings.Contains(req.Message.Text, "https://cdn.example/a.png") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("sent = %+v, want the reference kept", client.sent)
 	}
 }

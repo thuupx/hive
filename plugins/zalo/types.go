@@ -96,6 +96,23 @@ type Bot struct {
 type Message struct {
 	Text      string
 	ParseMode string
+
+	// Images are the pictures the message carries. Zalo draws no image inside a
+	// text message, so a markdown image an agent writes is sent as a photo of
+	// its own rather than arriving as markup.
+	Images []OutboundImage
+}
+
+// OutboundImage is a picture a message refers to.
+type OutboundImage struct {
+	// Alt is the caption the markdown image declared.
+	Alt string
+
+	// Target is where the image is. An http(s) URL is sent as a photo the
+	// platform fetches itself; anything else, such as a file path, cannot
+	// become a photo — the Bot API takes no upload — so it is posted as a
+	// text reference.
+	Target string
 }
 
 // Limits, which a message must respect or Zalo rejects it.
@@ -107,6 +124,9 @@ const (
 	// headroom for the markup a parse_mode message strips, which still counts
 	// toward the platform's limit.
 	ChunkChars = 1900
+
+	// CaptionChars is the most Zalo accepts as a photo caption.
+	CaptionChars = 2000
 )
 
 // DefaultMaxAttachmentBytes bounds how large an attachment may be read.
