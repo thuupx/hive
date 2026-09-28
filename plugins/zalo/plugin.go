@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -571,11 +573,17 @@ func (p *Plugin) acknowledge(ctx context.Context, d delivery) {
 }
 
 // post sends a message, split so it fits Zalo's limit.
+//
+// The text goes first and its images follow as photos: Zalo draws no picture
+// inside a text message.
 func (p *Plugin) post(ctx context.Context, conversationID string, message Message) {
-	if conversationID == "" || message.Text == "" {
+	if conversationID == "" || (message.Text == "" && len(message.Images) == 0) {
 		return
 	}
 	for _, part := range chunk(message.Text, ChunkChars) {
+		if part == "" {
+			continue
+		}
 		if _, err := p.client.SendMessage(ctx, SendMessageRequest{
 			ChatID:  conversationID,
 			Message: Message{Text: part, ParseMode: message.ParseMode},
@@ -584,6 +592,58 @@ func (p *Plugin) post(ctx context.Context, conversationID string, message Messag
 			return
 		}
 	}
+	for _, image := range message.Images {
+		p.sendImage(ctx, conversationID, image)
+	}
+}
+
+// sendImage posts one picture.
+//
+// A URL is sent as a reference and the platform fetches it; a file path is
+// read and uploaded, because that is the only way a local file reaches a chat.
+// A failure is reported in words rather than dropped: the reference is still
+// worth having.
+func (p *Plugin) sendImage(ctx context.Context, chatID string, image OutboundImage) {
+	req := SendPhotoRequest{
+		ChatID:  chatID,
+		Caption: caption(image.Alt),
+	}
+
+	if strings.HasPrefix(image.Target, "http://") || strings.HasPrefix(image.Target, "https://") {
+		req.URL = image.Target
+	} else {
+		data, err := readFileBounded(image.Target, p.opts.MaxAttachmentBytes)
+		if err != nil {
+			p.log.Warn("could not read an image to send", "target", image.Target, "error", err)
+			p.postImageFallback(ctx, chatID, image)
+			return
+		}
+		req.Data = data
+		req.FileName = filepath.Base(image.Target)
+	}
+
+	if _, err := p.client.SendPhoto(ctx, req); err != nil {
+		p.log.Warn("could not send an image", "target", image.Target, "error", err)
+		p.postImageFallback(ctx, chatID, image)
+	}
+}
+
+// postImageFallback keeps the reference visible when its picture cannot go: a
+// path the user can open beats a silently dropped image.
+func (p *Plugin) postImageFallback(ctx context.Context, chatID string, image OutboundImage) {
+	label := image.Alt
+	if label == "" {
+		label = "image"
+	}
+	p.post(ctx, chatID, plainMessage(fmt.Sprintf("🖼 %s: %s", label, image.Target)))
+}
+
+// caption fits the alt text into what a photo caption may hold.
+func caption(alt string) string {
+	if runes := []rune(alt); len(runes) > CaptionChars {
+		return string(runes[:CaptionChars])
+	}
+	return alt
 }
 
 // catchUp renders what was published while this transport was not running.

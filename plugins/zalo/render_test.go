@@ -16,6 +16,46 @@ func TestMarkdownConvertsLinks(t *testing.T) {
 	}
 }
 
+// A markdown image becomes a photo: Zalo draws no picture inside a text
+// message, so the markup comes out of the text and the target is carried
+// alongside.
+func TestAMarkdownImageBecomesAPhoto(t *testing.T) {
+	text, images := extractImages("here it is ![the shot](https://cdn.example/a.png) done")
+
+	if text != "here it is  done" && text != "here it is done" {
+		t.Fatalf("text = %q, want the markup removed", text)
+	}
+	if len(images) != 1 || images[0].Target != "https://cdn.example/a.png" || images[0].Alt != "the shot" {
+		t.Fatalf("images = %+v", images)
+	}
+}
+
+// A local path is a photo the transport uploads; a scheme that is not http(s)
+// cannot become a photo and stays in the text.
+func TestImageTargetsAreSortedByScheme(t *testing.T) {
+	_, images := extractImages("![shot](/tmp/shot.png)")
+	if len(images) != 1 || images[0].Target != "/tmp/shot.png" {
+		t.Fatalf("a file path should be a photo, images = %+v", images)
+	}
+
+	text, images := extractImages("![x](data:image/png;base64,AAA)")
+	if len(images) != 0 || !strings.Contains(text, "data:image/png") {
+		t.Fatalf("a data: URI must stay in the text, got %q images %+v", text, images)
+	}
+}
+
+// A message event carrying a markdown image renders as text plus a photo.
+func TestAMessageEventWithAnImage(t *testing.T) {
+	payload, _ := json.Marshal(map[string]string{"text": "look ![s](https://cdn.example/a.png)"})
+	rendered, ok := Renderer{}.RenderEvent(v1.Event{Type: v1.EventMessage, Payload: payload})
+	if !ok {
+		t.Fatal("a message event should render")
+	}
+	if strings.Contains(rendered.Message.Text, "![") || len(rendered.Message.Images) != 1 {
+		t.Fatalf("rendered = %+v", rendered.Message)
+	}
+}
+
 // A fence an agent wrapped its whole answer in is unwrapped, but real code is
 // left alone.
 func TestMarkdownUnwrapsProseFence(t *testing.T) {
