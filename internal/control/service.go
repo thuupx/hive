@@ -863,11 +863,19 @@ func (s *Service) reconcileRuns(ctx context.Context, runs []*agent.AgentRun) err
 		s.log.Warn("a run has no execution behind it; marking it interrupted",
 			"run", run.ID, "agent", run.AgentID, "state", string(run.State))
 
-		_, err := s.store.UpdateAgentRunWith(ctx, run.ID, func(current *agent.AgentRun) error {
+		_, err := s.store.UpdateAgentRunWithTx(ctx, run.ID, func(tx storage.Execer, current *agent.AgentRun) error {
 			if current.State.IsTerminal() {
 				return nil
 			}
-			return current.Transition(agent.StateInterrupted)
+			if err := current.Transition(agent.StateInterrupted); err != nil {
+				return err
+			}
+			ev, err := event.RunFinished(ids.New("ev"), current.SessionID, current.ID, current.NodeID, string(current.State))
+			if err != nil {
+				return err
+			}
+			_, err = s.store.AppendEvents(ctx, tx, ev)
+			return err
 		})
 		if err != nil {
 			return err

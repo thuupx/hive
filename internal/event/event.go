@@ -7,6 +7,7 @@ package event
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	v1 "github.com/thuupx/hive/protocol/hive/v1"
@@ -53,6 +54,28 @@ type Event struct {
 	Protocol   string
 	Method     string
 	Payload    json.RawMessage
+}
+
+// RunFinished builds the event marking that a run reached a terminal state.
+//
+// A turn can carry several messages, so a transport cannot tell the last one
+// apart from one mid-turn without a lifecycle event of its own.
+func RunFinished(id, sessionID, runID, nodeID string, state string) (*Event, error) {
+	payload, err := json.Marshal(map[string]string{"state": state})
+	if err != nil {
+		return nil, fmt.Errorf("run.finished payload: %w", err)
+	}
+	return &Event{
+		ID:         id,
+		SessionID:  sessionID,
+		RunID:      runID,
+		OriginNode: nodeID,
+		Timestamp:  time.Now().UTC(),
+		Type:       TypeRunFinished,
+		Version:    1,
+		Protocol:   "hive",
+		Payload:    payload,
+	}, nil
 }
 
 // Raw builds an event that preserves protocol data Hive does not interpret.

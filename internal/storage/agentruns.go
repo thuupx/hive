@@ -36,6 +36,15 @@ func (s *Store) InsertAgentRun(ctx context.Context, tx Execer, run *agent.AgentR
 // control plane, so persisting a stale in-memory copy would silently overwrite a
 // newer one.
 func (s *Store) UpdateAgentRunWith(ctx context.Context, agentRunID string, fn func(run *agent.AgentRun) error) (*agent.AgentRun, error) {
+	return s.UpdateAgentRunWithTx(ctx, agentRunID, func(_ Execer, run *agent.AgentRun) error {
+		return fn(run)
+	})
+}
+
+// UpdateAgentRunWithTx is UpdateAgentRunWith with the transaction handed to
+// fn, so a caller can commit what the transition caused — an event, for
+// example — in the same write as the transition itself (§7.1.2).
+func (s *Store) UpdateAgentRunWithTx(ctx context.Context, agentRunID string, fn func(tx Execer, run *agent.AgentRun) error) (*agent.AgentRun, error) {
 	var updated *agent.AgentRun
 
 	err := s.WriteTx(ctx, func(tx Execer) error {
@@ -43,7 +52,7 @@ func (s *Store) UpdateAgentRunWith(ctx context.Context, agentRunID string, fn fu
 		if err != nil {
 			return err
 		}
-		if err := fn(run); err != nil {
+		if err := fn(tx, run); err != nil {
 			return err
 		}
 		if err := s.updateAgentRun(ctx, tx, run); err != nil {

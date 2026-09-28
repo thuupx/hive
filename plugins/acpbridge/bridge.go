@@ -152,10 +152,6 @@ type run struct {
 	contextUsed int
 	contextSize int
 
-	// betweenMessages reports that something other than assistant text arrived
-	// since the last message chunk, so the next chunk starts a new message.
-	betweenMessages bool
-
 	// inTurn reports that a prompt is being processed for this run.
 	//
 	// It is what tells an update which run it belongs to when more than one run
@@ -166,8 +162,8 @@ type run struct {
 	// turns goes to the same run every time rather than a random one.
 	startedAt time.Time
 
-	// answer accumulates the assistant text of the current turn, so the answer to
-	// a prompt can be surfaced as one readable message.
+	// answer accumulates the assistant text of the current narration. A tool
+	// call ends a narration, so the buffer holds only the one still streaming.
 	answer strings.Builder
 }
 
@@ -911,36 +907,36 @@ const (
 	settleStep = 10 * time.Millisecond
 )
 
-// collectAnswer accumulates the assistant text of a turn.
+// collectAnswer accumulates the assistant text of a turn and returns a
+// completed narration when an update ends one.
 //
-// It becomes one readable message when the turn ends; the raw stream is preserved
-// separately.
-//
-// A message that follows something else is a new message, not a continuation: an
-// agent narrates, calls a tool, and narrates again. Gluing the two together
-// produces a sentence that reads as nonsense, which is what a user sees as a
-// garbled answer.
-func (b *Bridge) collectAnswer(r *run, payload json.RawMessage) {
+// A message that follows something else is a new message, not a continuation:
+// an agent narrates, calls a tool, and narrates again. Gluing the two together
+// produces a sentence that reads as nonsense — and holding them both until the
+// turn ends delivers a turn's worth of text at once. A narration is returned
+// the moment a tool call ends it, so each message a user reads arrives as its
+// own event while the turn is still running.
+func (b *Bridge) collectAnswer(r *run, payload json.RawMessage) string {
 	text, ok := agentMessageText(payload)
-	tool := isToolUpdate(payload)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if !ok {
-		// Only a tool call ends a narration. A thought, a config change, or a mode
-		// change arrives between two chunks of one message and does not separate
-		// them: splitting on those would break a sentence in half.
-		if tool {
-			r.betweenMessages = true
-		}
-		return
+	if ok {
+		r.answer.WriteString(text)
+		return ""
 	}
-	if r.betweenMessages && r.answer.Len() > 0 {
-		r.answer.WriteString("\n\n")
+
+	// Only a tool call ends a narration. A thought, a config change, or a mode
+	// change arrives between two chunks of one message and does not separate
+	// them: splitting on those would break a sentence in half.
+	if !isToolUpdate(payload) {
+		return ""
 	}
-	r.answer.WriteString(text)
-	r.betweenMessages = false
+
+	narration := strings.TrimSpace(r.answer.String())
+	r.answer.Reset()
+	return narration
 }
 
 // isToolUpdate reports whether an update is a tool call or one of its updates.
@@ -966,7 +962,9 @@ func isToolUpdate(payload json.RawMessage) bool {
 func (b *Bridge) publishUpdate(r *run, update acp.Update) {
 	payload := update.Payload
 
-	b.collectAnswer(r, payload)
+	if narration := b.collectAnswer(r, payload); narration != "" {
+		b.publishText(context.Background(), r, narration)
+	}
 
 	// A config update means the agent changed a selector itself, so the cached
 	// declaration has to follow.
@@ -1164,7 +1162,7 @@ func toolSummary(title, kind, status string) string {
 	}
 }
 
-// publishAnswer surfaces the agent's answer to the turn that just ended.
+// publishAnswer surfaces the narration still streaming when the turn ended.
 //
 // This is the one normalization Hive needs from an agent stream. Without it the
 // answer to a prompt is only reachable as raw protocol chunks, which no client can
@@ -1175,6 +1173,11 @@ func (b *Bridge) publishAnswer(ctx context.Context, r *run) {
 	r.answer.Reset()
 	b.mu.Unlock()
 
+	b.publishText(ctx, r, text)
+}
+
+// publishText reports one narration as its own message event.
+func (b *Bridge) publishText(ctx context.Context, r *run, text string) {
 	if text == "" {
 		return
 	}

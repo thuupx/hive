@@ -297,11 +297,19 @@ func (s *Service) failHandoff(ctx context.Context, sessionID, handoffID, targetR
 	}
 
 	if targetRunID != "" {
-		if _, err := s.store.UpdateAgentRunWith(ctx, targetRunID, func(run *agent.AgentRun) error {
+		if _, err := s.store.UpdateAgentRunWithTx(ctx, targetRunID, func(tx storage.Execer, run *agent.AgentRun) error {
 			if run.State.IsTerminal() {
 				return apierr.ErrNoChange
 			}
-			return run.Transition(agent.StateFailed)
+			if err := run.Transition(agent.StateFailed); err != nil {
+				return err
+			}
+			ev, err := event.RunFinished(ids.New("ev"), run.SessionID, run.ID, run.NodeID, string(run.State))
+			if err != nil {
+				return err
+			}
+			_, err = s.store.AppendEvents(ctx, tx, ev)
+			return err
 		}); err != nil && !errors.Is(err, apierr.ErrNoChange) {
 			return err
 		}
