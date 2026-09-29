@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
@@ -271,14 +272,42 @@ func markdown(text string) string {
 func markdownProse(text string) string {
 	text = escapeHTML(text)
 	text = boldPattern.ReplaceAllString(text, "<b>$1</b>")
-	text = italicPattern.ReplaceAllString(text, "<i>$1</i>")
+	// Two alternatives share one pattern: a lone-asterisk span needs no
+	// boundary, but an underscore inside a word — snake_case — is a name, not
+	// emphasis, which is why the underscore form asks for non-word edges.
+	text = italicPattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := italicPattern.FindStringSubmatch(match)
+		if parts[1] != "" {
+			return "<i>" + parts[1] + "</i>"
+		}
+		return parts[2] + "<i>" + parts[3] + "</i>" + parts[4]
+	})
 	text = strikePattern.ReplaceAllString(text, "<s>$1</s>")
 	text = headingPattern.ReplaceAllString(text, "<b>$1</b>")
 	return linkPattern.ReplaceAllStringFunc(text, func(match string) string {
 		parts := linkPattern.FindStringSubmatch(match)
-		return fmt.Sprintf(`<a href="%s">%s</a>`, escapeAttr(parts[2]), parts[1])
+		if parts[1] == "!" {
+			// An image the extractor left alone — a data: URI, say — is shown
+			// literally rather than linkified with a stray "!" beside it.
+			return match
+		}
+		// The URL is already entity-escaped; escaping it again writes a
+		// double-escaped href ("&amp;amp;") that opens nowhere.
+		return fmt.Sprintf(`<a href="%s">%s</a>`, escapeAttr(unescapeHTML(parts[3])), parts[2])
 	})
 }
+
+// unescapeHTML undoes the entity escaping a URL picked up inside escaped
+// text, so it can be escaped once for the attribute it lands in.
+func unescapeHTML(text string) string {
+	return htmlUnescaper.Replace(text)
+}
+
+var htmlUnescaper = strings.NewReplacer(
+	"&lt;", "<",
+	"&gt;", ">",
+	"&amp;", "&",
+)
 
 // codeHTML renders a code region: a fence as <pre>, a span as <code>.
 func codeHTML(region string) string {
@@ -379,10 +408,10 @@ func escapeAttr(url string) string {
 // so a tag they produce is the only markup in the message.
 var (
 	boldPattern    = regexp.MustCompile(`\*\*([^*]+)\*\*|__([^_]+)__`)
-	italicPattern  = regexp.MustCompile(`\*([^*\n]+)\*|_([^_\n]+)_`)
+	italicPattern  = regexp.MustCompile(`\*([^*\n]+)\*|(^|[^A-Za-z0-9])_([^_\n]+)_([^A-Za-z0-9]|$)`)
 	strikePattern  = regexp.MustCompile(`~~([^~]+)~~`)
 	headingPattern = regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
-	linkPattern    = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
+	linkPattern    = regexp.MustCompile(`(!?)\[([^\]]+)\]\(([^)\s]+)\)`)
 )
 
 // imagePattern matches a markdown image: ![alt](target).
@@ -566,8 +595,17 @@ func chunk(text string, limit int) []string {
 	for _, line := range strings.Split(text, "\n") {
 		for len(line) > limit {
 			flush()
-			chunks = append(chunks, line[:limit])
-			line = line[limit:]
+			cut := limit
+			// A cut inside a multi-byte rune produces an invalid-UTF-8 chunk,
+			// which Telegram refuses as surely as a long one.
+			for cut > 0 && !utf8.ValidString(line[:cut]) {
+				cut--
+			}
+			if cut == 0 {
+				cut = limit
+			}
+			chunks = append(chunks, line[:cut])
+			line = line[cut:]
 		}
 		if current.Len()+len(line)+1 > limit {
 			flush()

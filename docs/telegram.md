@@ -176,7 +176,8 @@ Telegram parses the addressing itself:
 what is this?                   ignored in a group
 ```
 
-A forum supergroup replies into the topic you wrote in.
+A forum supergroup binds **per topic**: each topic is its own conversation
+with its own session, and answers land in the topic that asked.
 
 Note: a bot in a group with **privacy mode** on (the default) only sees
 commands, replies, and mentions anyway — that is Telegram's rule, not Hive's.

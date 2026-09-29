@@ -17,7 +17,6 @@ type fakeClient struct {
 	actions   []string
 	answered  []string
 	markups   []int64
-	reactions []string
 	failSend  bool
 	failPhoto bool
 }
@@ -44,8 +43,8 @@ func (c *fakeClient) SendPhoto(_ context.Context, req SendPhotoRequest) (int64, 
 	return 100 + int64(len(c.photos)), nil
 }
 
-func (c *fakeClient) SendChatAction(_ context.Context, chatID, action string) error {
-	c.actions = append(c.actions, chatID+":"+action)
+func (c *fakeClient) SendChatAction(_ context.Context, chatID string, threadID int64, action string) error {
+	c.actions = append(c.actions, fmt.Sprintf("%s:%d:%s", chatID, threadID, action))
 	return nil
 }
 
@@ -56,11 +55,6 @@ func (c *fakeClient) AnswerCallbackQuery(_ context.Context, id, _ string) error 
 
 func (c *fakeClient) EditMessageReplyMarkup(_ context.Context, _ string, messageID int64, _ [][]InlineButton) error {
 	c.markups = append(c.markups, messageID)
-	return nil
-}
-
-func (c *fakeClient) SetMessageReaction(_ context.Context, chatID string, messageID int64, emoji string) error {
-	c.reactions = append(c.reactions, fmt.Sprintf("%s:%d:%s", chatID, messageID, emoji))
 	return nil
 }
 
@@ -77,7 +71,7 @@ func TestTypingShowsAndStops(t *testing.T) {
 	p := New(nil, client, Options{TypingIndicator: true})
 
 	p.startTyping(context.Background(), "c1")
-	if len(client.actions) != 1 || client.actions[0] != "c1:typing" {
+	if len(client.actions) != 1 || client.actions[0] != "c1:0:typing" {
 		t.Fatalf("actions = %v, want one typing action", client.actions)
 	}
 	if p.typing["c1"] == nil {

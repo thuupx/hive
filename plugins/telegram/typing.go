@@ -41,7 +41,8 @@ func (p *Plugin) startTyping(ctx context.Context, conversationID string) {
 		return
 	}
 
-	if err := p.client.SendChatAction(ctx, conversationID, ActionTyping); err != nil {
+	chatID, threadID := splitConversation(conversationID)
+	if err := p.client.SendChatAction(ctx, chatID, threadID, ActionTyping); err != nil {
 		// A signal that cannot be shown is not a reason to fail the turn.
 		p.log.Debug("could not show the working signal", "error", err)
 		return
@@ -98,7 +99,8 @@ func (p *Plugin) advanceTyping(ctx context.Context) {
 	p.mu.Unlock()
 
 	for _, entry := range active {
-		if err := p.client.SendChatAction(ctx, entry.conversation, ActionTyping); err != nil {
+		chatID, threadID := splitConversation(entry.conversation)
+		if err := p.client.SendChatAction(ctx, chatID, threadID, ActionTyping); err != nil {
 			p.log.Debug("could not refresh the working signal", "error", err)
 		}
 	}

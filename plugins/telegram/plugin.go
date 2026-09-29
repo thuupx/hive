@@ -55,21 +55,18 @@ type Acknowledgement struct {
 	// typing action either way: a reaction marks the message but tells a user
 	// less than seeing the bot is typing.
 	Mode string
-
-	Reaction string
 }
 
 // delivery is one inbound delivery plus the coordinates needed to reply.
 type delivery struct {
 	envelope v1.Envelope
 
-	// conversationID is what this delivery is bound to: the chat.
+	// conversationID is what this delivery is bound to: the chat, and the
+	// forum topic when there is one.
 	conversationID string
 
 	// chatID is the platform conversation, which is where a message is posted.
 	chatID string
-
-	messageID int64
 
 	// callbackID is the button press to acknowledge, when the delivery is one.
 	callbackID string
@@ -77,10 +74,6 @@ type delivery struct {
 	// callbackMessageID is the message whose buttons were pressed, so they can
 	// be removed once answered.
 	callbackMessageID int64
-
-	// threadID is the forum topic the delivery arrived in, so the answer lands
-	// in the same topic.
-	threadID int64
 }
 
 // pendingPermission is a request a conversation is waiting on, plus the
@@ -123,10 +116,6 @@ type Plugin struct {
 
 	// typing is the conversations showing the working signal.
 	typing map[string]*typing
-
-	// threads is the forum topic each conversation is in, so answers land in
-	// the topic the user wrote to.
-	threads map[string]int64
 }
 
 // New returns a Telegram plugin over a connected host.
@@ -152,7 +141,6 @@ func New(host *sdk.Host, client Client, opts Options) *Plugin {
 		lastSeen: make(map[string]int64),
 		pending:  make(map[string]*pendingPermission),
 		typing:   make(map[string]*typing),
-		threads:  make(map[string]int64),
 	}
 }
 
@@ -266,6 +254,11 @@ func (p *Plugin) serveInbound(ctx context.Context) error {
 			return nil
 		case inbound, ok := <-events:
 			if !ok {
+				// The poll loop closes its channel when the context ends,
+				// which is a shutdown and not a failure.
+				if ctx.Err() != nil {
+					return nil
+				}
 				return errors.New("telegram: the polling connection ended")
 			}
 			p.handleInbound(ctx, inbound)
@@ -303,23 +296,28 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Update) {
 		return
 	}
 
-	// A permission is answered by a button or in words. A callback query
-	// already names the option; a text reply that reads as a decision becomes
-	// an interaction, which is what the router performs a permission
-	// response with.
+	// A permission is answered by a button or in words. A button is only a
+	// decision for the request whose message it sits on: a press on a stale
+	// keyboard — after a restart, or from an older request — must not answer
+	// whatever happens to be pending now. A press that resolves to nothing is
+	// acknowledged and dropped, never forwarded to the core as a raw
+	// permission response.
 	if d.envelope.Kind == v1.EnvelopeInteraction {
-		if pending := p.pendingFor(d.conversationID); pending != nil {
+		pending := p.pendingFor(d.conversationID)
+		resolved := false
+		if pending != nil && (d.callbackMessageID == 0 || d.callbackMessageID == pending.messageID) {
 			if optionID, approved, ok := callbackDecision(d.envelope.Interaction.Value, &pending.request); ok {
+				resolved = true
 				p.clearPending(d.conversationID)
 				p.answerCallback(ctx, d, pending)
 				d.envelope = permissionEnvelope(d, pending, optionID, approved)
-			} else {
-				// A press that resolves to nothing is still acknowledged, or
-				// the button spins until Telegram gives up.
-				p.answerCallback(ctx, d, nil)
 			}
-		} else {
+		}
+		if !resolved {
+			// The spinner ends either way, or the button turns until
+			// Telegram gives up.
 			p.answerCallback(ctx, d, nil)
+			return
 		}
 	}
 	if d.envelope.Kind == v1.EnvelopeMessage {
@@ -331,12 +329,11 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Update) {
 		}
 	}
 
-	p.fetchAttachments(ctx, &d.envelope)
-
 	// A turn shows that it is working before the work starts: the agent can
 	// emit its first event before the delivery returns, and the signal has to
-	// come first in the conversation.
-	working := d.envelope.Kind == v1.EnvelopeMessage
+	// come first in the conversation. It also comes before the attachments
+	// are read, because a download can take a moment.
+	working := d.envelope.Kind == v1.EnvelopeMessage || d.envelope.Kind == v1.EnvelopeInteraction
 	if working {
 		p.startTyping(ctx, d.conversationID)
 	} else {
@@ -345,6 +342,8 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Update) {
 		// answer arrives.
 		p.acknowledge(ctx, d)
 	}
+
+	p.fetchAttachments(ctx, &d.envelope)
 
 	var outcome v1.TransportOutcome
 	err := p.host.Call(ctx, v1.MethodTransportInbound, wireParams(d.envelope), &outcome)
@@ -413,19 +412,13 @@ func (p *Plugin) parse(inbound Update) (delivery, bool) {
 	d := delivery{
 		envelope:       env,
 		conversationID: env.ConversationID,
-		chatID:         env.ConversationID,
 	}
+	d.chatID, _ = splitConversation(env.ConversationID)
 
-	switch {
-	case inbound.Message != nil:
-		d.messageID = inbound.Message.MessageID
-		d.threadID = inbound.Message.ThreadID
-		p.rememberThread(d.conversationID, inbound.Message.ThreadID)
-	case inbound.CallbackQuery != nil:
+	if inbound.CallbackQuery != nil {
 		d.callbackID = inbound.CallbackQuery.ID
 		if inbound.CallbackQuery.Message != nil {
 			d.callbackMessageID = inbound.CallbackQuery.Message.MessageID
-			d.threadID = inbound.CallbackQuery.Message.ThreadID
 		}
 	}
 	return d, true
@@ -445,20 +438,6 @@ func (p *Plugin) answerCallback(ctx context.Context, d delivery, answered *pendi
 			p.log.Debug("could not clear a permission's buttons", "error", err)
 		}
 	}
-}
-
-// rememberThread records the forum topic a conversation is in.
-func (p *Plugin) rememberThread(conversationID string, threadID int64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.threads[conversationID] = threadID
-}
-
-// threadFor is the topic a conversation's answers belong to.
-func (p *Plugin) threadFor(conversationID string) int64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.threads[conversationID]
 }
 
 // permissionEnvelope turns a decision into a permission response.
@@ -685,7 +664,8 @@ func (p *Plugin) acknowledge(ctx context.Context, d delivery) {
 	if !p.opts.Acknowledgement.Enabled || p.opts.Acknowledgement.Mode == "none" {
 		return
 	}
-	if err := p.client.SendChatAction(ctx, d.chatID, ActionTyping); err != nil {
+	_, threadID := splitConversation(d.conversationID)
+	if err := p.client.SendChatAction(ctx, d.chatID, threadID, ActionTyping); err != nil {
 		p.log.Debug("acknowledgement failed", "error", err)
 	}
 }
@@ -698,7 +678,8 @@ func (p *Plugin) post(ctx context.Context, conversationID string, message Messag
 	if conversationID == "" || (message.Text == "" && len(message.Images) == 0) {
 		return
 	}
-	message.ThreadID = p.threadFor(conversationID)
+	chatID, threadID := splitConversation(conversationID)
+	message.ThreadID = threadID
 	for _, part := range chunk(message.Text, ChunkChars) {
 		if part == "" {
 			continue
@@ -706,7 +687,7 @@ func (p *Plugin) post(ctx context.Context, conversationID string, message Messag
 		chunked := message
 		chunked.Text = part
 		if _, err := p.client.SendMessage(ctx, SendMessageRequest{
-			ChatID:  conversationID,
+			ChatID:  chatID,
 			Message: chunked,
 		}); err != nil {
 			p.log.Warn("could not post to Telegram", "conversation", conversationID, "error", err)
@@ -714,7 +695,7 @@ func (p *Plugin) post(ctx context.Context, conversationID string, message Messag
 		}
 	}
 	for _, image := range message.Images {
-		p.sendImage(ctx, conversationID, image, message.ThreadID)
+		p.sendImage(ctx, conversationID, image)
 	}
 }
 
@@ -723,7 +704,8 @@ func (p *Plugin) post(ctx context.Context, conversationID string, message Messag
 // An http(s) URL is a photo the platform fetches itself; a local path is
 // uploaded, which Telegram accepts and Zalo does not. A send that fails keeps
 // its reference as text rather than silently disappearing.
-func (p *Plugin) sendImage(ctx context.Context, chatID string, image OutboundImage, threadID int64) {
+func (p *Plugin) sendImage(ctx context.Context, conversationID string, image OutboundImage) {
+	chatID, threadID := splitConversation(conversationID)
 	request := SendPhotoRequest{ChatID: chatID, Caption: caption(image.Alt), ThreadID: threadID}
 	if strings.HasPrefix(image.Target, "http://") || strings.HasPrefix(image.Target, "https://") {
 		request.URL = image.Target
@@ -733,18 +715,18 @@ func (p *Plugin) sendImage(ctx context.Context, chatID string, image OutboundIma
 
 	if _, err := p.client.SendPhoto(ctx, request); err != nil {
 		p.log.Warn("could not send an image", "target", image.Target, "error", err)
-		p.postImageFallback(ctx, chatID, image)
+		p.postImageFallback(ctx, conversationID, image)
 	}
 }
 
 // postImageFallback keeps the reference visible when its picture cannot go: a
 // path the user can open beats a silently dropped image.
-func (p *Plugin) postImageFallback(ctx context.Context, chatID string, image OutboundImage) {
+func (p *Plugin) postImageFallback(ctx context.Context, conversationID string, image OutboundImage) {
 	label := image.Alt
 	if label == "" {
 		label = "image"
 	}
-	p.post(ctx, chatID, plainMessage(fmt.Sprintf("🖼 %s: %s", label, image.Target)))
+	p.post(ctx, conversationID, plainMessage(fmt.Sprintf("🖼 %s: %s", label, image.Target)))
 }
 
 // postPermission posts a request and remembers it under the answer's buttons.
@@ -752,21 +734,18 @@ func (p *Plugin) postImageFallback(ctx context.Context, chatID string, image Out
 // The message id is kept so the buttons come down once answered — a keyboard
 // that stays up answers twice.
 func (p *Plugin) postPermission(ctx context.Context, conversationID string, rendered Rendered) {
+	chatID, threadID := splitConversation(conversationID)
+	message := rendered.Message
+	message.ThreadID = threadID
 	messageID, err := p.client.SendMessage(ctx, SendMessageRequest{
-		ChatID:  conversationID,
-		Message: withThread(rendered.Message, p.threadFor(conversationID)),
+		ChatID:  chatID,
+		Message: message,
 	})
 	if err != nil {
 		p.log.Warn("could not post a permission", "conversation", conversationID, "error", err)
 		return
 	}
 	p.rememberPending(conversationID, *rendered.Permission, messageID)
-}
-
-// withThread returns the message addressed to a forum topic.
-func withThread(message Message, threadID int64) Message {
-	message.ThreadID = threadID
-	return message
 }
 
 // caption fits the alt text into what a photo caption may hold.

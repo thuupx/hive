@@ -45,8 +45,9 @@ type Client interface {
 	SendPhoto(ctx context.Context, req SendPhotoRequest) (int64, error)
 
 	// SendChatAction shows a transient status in a conversation, such as
-	// "typing". It is best-effort: a failure must not fail the turn.
-	SendChatAction(ctx context.Context, chatID string, action string) error
+	// "typing". The thread names a forum topic when the conversation is one.
+	// It is best-effort: a failure must not fail the turn.
+	SendChatAction(ctx context.Context, chatID string, threadID int64, action string) error
 
 	// AnswerCallbackQuery acknowledges a button press, ending the spinner.
 	AnswerCallbackQuery(ctx context.Context, id, text string) error
@@ -54,9 +55,6 @@ type Client interface {
 	// EditMessageReplyMarkup replaces a message's buttons, normally to take
 	// them away once the question they asked is answered.
 	EditMessageReplyMarkup(ctx context.Context, chatID string, messageID int64, keyboard [][]InlineButton) error
-
-	// SetMessageReaction marks a user's message with an emoji.
-	SetMessageReaction(ctx context.Context, chatID string, messageID int64, emoji string) error
 
 	// DownloadFile fetches an attachment by its file id, bounded in size.
 	DownloadFile(ctx context.Context, fileID string, maxBytes int64) ([]byte, string, error)
@@ -459,14 +457,18 @@ func (c *HTTPClient) sendPhotoUpload(ctx context.Context, req SendPhotoRequest) 
 }
 
 // SendChatAction shows a transient status in a conversation.
-func (c *HTTPClient) SendChatAction(ctx context.Context, chatID, action string) error {
+func (c *HTTPClient) SendChatAction(ctx context.Context, chatID string, threadID int64, action string) error {
 	if chatID == "" {
 		return nil
 	}
-	_, err := c.call(ctx, "sendChatAction", map[string]any{
+	params := map[string]any{
 		"chat_id": chatID,
 		"action":  action,
-	})
+	}
+	if threadID > 0 {
+		params["message_thread_id"] = threadID
+	}
+	_, err := c.call(ctx, "sendChatAction", params)
 	return err
 }
 
@@ -483,20 +485,15 @@ func (c *HTTPClient) AnswerCallbackQuery(ctx context.Context, id, text string) e
 
 // EditMessageReplyMarkup replaces a message's buttons.
 func (c *HTTPClient) EditMessageReplyMarkup(ctx context.Context, chatID string, messageID int64, keyboard [][]InlineButton) error {
+	// A nil keyboard marshals as null, which is not the empty markup the API
+	// clears buttons with.
+	if keyboard == nil {
+		keyboard = [][]InlineButton{}
+	}
 	_, err := c.call(ctx, "editMessageReplyMarkup", map[string]any{
 		"chat_id":      chatID,
 		"message_id":   messageID,
 		"reply_markup": map[string]any{"inline_keyboard": keyboard},
-	})
-	return err
-}
-
-// SetMessageReaction marks a user's message with an emoji.
-func (c *HTTPClient) SetMessageReaction(ctx context.Context, chatID string, messageID int64, emoji string) error {
-	_, err := c.call(ctx, "setMessageReaction", map[string]any{
-		"chat_id":    chatID,
-		"message_id": messageID,
-		"reaction":   []map[string]any{{"type": "emoji", "emoji": emoji}},
 	})
 	return err
 }

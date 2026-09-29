@@ -115,9 +115,8 @@ func run() error {
 		// it is working while the agent works.
 		TypingIndicator: options.bool("typing_indicator", true),
 		Acknowledgement: telegram.Acknowledgement{
-			Enabled:  options.bool("acknowledgement", true),
-			Mode:     options.get("acknowledgement_mode"),
-			Reaction: options.get("acknowledgement_reaction"),
+			Enabled: options.bool("acknowledgement", true),
+			Mode:    options.get("acknowledgement_mode"),
 		},
 		Log: log,
 	})

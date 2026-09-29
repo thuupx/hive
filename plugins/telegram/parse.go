@@ -151,7 +151,7 @@ func (p Parser) parseCallback(query *CallbackQuery) (v1.Envelope, bool) {
 	}
 	return v1.Envelope{
 		Transport:      Name,
-		ConversationID: strconv.FormatInt(query.Message.Chat.ID, 10),
+		ConversationID: conversationID(query.Message.Chat.ID, query.Message.ThreadID),
 		Principal:      Name + ":" + strconv.FormatInt(query.From.ID, 10),
 		SourceID:       fmt.Sprintf("event:%d:%s", query.Message.Chat.ID, query.ID),
 		Kind:           v1.EnvelopeInteraction,
@@ -165,6 +165,30 @@ func (p Parser) parseCallback(query *CallbackQuery) (v1.Envelope, bool) {
 
 // ActionPermissionAnswer is a button press answering a permission request.
 const ActionPermissionAnswer = "permission_answer"
+
+// conversationID is the Hive conversation a chat maps to.
+//
+// A forum topic is its own conversation: a supergroup can carry many
+// unrelated threads, and one session bound to the whole chat would cross
+// their answers. The topic's id joins the chat id so a reply lands in the
+// topic it came from.
+func conversationID(chatID, threadID int64) string {
+	if threadID != 0 {
+		return fmt.Sprintf("%d:%d", chatID, threadID)
+	}
+	return strconv.FormatInt(chatID, 10)
+}
+
+// splitConversation recovers the chat and the topic a conversation names.
+// The chat id is a number, so a colon only ever separates it from a topic.
+func splitConversation(id string) (chatID string, threadID int64) {
+	if i := strings.LastIndexByte(id, ':'); i >= 0 {
+		if thread, err := strconv.ParseInt(id[i+1:], 10, 64); err == nil {
+			return id[:i], thread
+		}
+	}
+	return id, 0
+}
 
 // parseMessage turns a message into an envelope.
 func (p Parser) parseMessage(message *InboundMessage, updateID int64) (v1.Envelope, bool) {
@@ -186,7 +210,7 @@ func (p Parser) parseMessage(message *InboundMessage, updateID int64) (v1.Envelo
 
 	env := v1.Envelope{
 		Transport:      Name,
-		ConversationID: strconv.FormatInt(message.Chat.ID, 10),
+		ConversationID: conversationID(message.Chat.ID, message.ThreadID),
 		Principal:      Name + ":" + strconv.FormatInt(message.From.ID, 10),
 		SourceID:       fmt.Sprintf("event:%d:%d", message.Chat.ID, updateID),
 	}
@@ -196,6 +220,11 @@ func (p Parser) parseMessage(message *InboundMessage, updateID int64) (v1.Envelo
 	}
 
 	text = p.stripMention(text, message)
+	if strings.TrimSpace(text) == "" && len(attachments) == 0 {
+		// A bare mention summons the bot without a question; there is nothing
+		// to act on and an error would only be noise.
+		return v1.Envelope{}, false
+	}
 
 	if name, method, args, ok := parseCommand(text); ok {
 		env.Kind = v1.EnvelopeCommand
@@ -390,18 +419,41 @@ func parseCommand(text string) (name, method string, args []string, ok bool) {
 
 // entityText reads the text an entity covers.
 //
-// Telegram measures entities in UTF-16 code units, so the range is walked in
-// runes rather than bytes.
+// Telegram measures entities in UTF-16 code units, not bytes or runes: an
+// emoji before a mention counts for two units and one rune, so the offset is
+// converted before the range is taken.
 func entityText(text string, entity Entity) string {
-	runes := []rune(text)
-	if entity.Offset < 0 || entity.Offset >= len(runes) {
+	start := utf16Offset(text, entity.Offset)
+	end := utf16Offset(text, entity.Offset+entity.Length)
+	if start < 0 || end < 0 || end < start {
 		return ""
 	}
-	end := entity.Offset + entity.Length
-	if end > len(runes) {
-		end = len(runes)
+	return string([]rune(text)[start:end])
+}
+
+// utf16Offset converts a UTF-16 code-unit offset into a rune index, returning
+// -1 when the offset lands past the text.
+func utf16Offset(text string, offset int) int {
+	if offset < 0 {
+		return -1
 	}
-	return string(runes[entity.Offset:end])
+	units, runes := 0, 0
+	for _, r := range text {
+		if units >= offset {
+			return runes
+		}
+		// A rune past the BMP is a UTF-16 surrogate pair: two code units.
+		if r > 0xFFFF {
+			units += 2
+		} else {
+			units++
+		}
+		runes++
+	}
+	if units >= offset {
+		return runes
+	}
+	return -1
 }
 
 // mimeOfName guesses a file's media type from its name.

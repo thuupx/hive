@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
@@ -158,5 +159,49 @@ func TestMarkdownUnwrapsProseFence(t *testing.T) {
 	code := "```go\nfunc main() {}\n```"
 	if got := markdown(code); !strings.Contains(got, "<pre>") || !strings.Contains(got, "func main()") {
 		t.Fatalf("a real code fence must render as code, got %q", got)
+	}
+}
+
+// A link URL with a query string must not be entity-escaped twice: "&amp;" in
+// the escaped text would become "&amp;amp;" in the href, opening nowhere.
+func TestALinkURLIsEscapedOnce(t *testing.T) {
+	got := markdown("see [docs](https://a.example/?x=1&y=2)")
+	want := `<a href="https://a.example/?x=1&amp;y=2">docs</a>`
+	if !strings.Contains(got, want) {
+		t.Fatalf("link = %q, want %q", got, want)
+	}
+}
+
+// An underscore inside a word is a name, not emphasis.
+func TestSnakeCaseIsNotItalic(t *testing.T) {
+	got := markdown("check_file_name is the field")
+	if strings.Contains(got, "<i>") {
+		t.Fatalf("snake_case must not render as italic, got %q", got)
+	}
+	if got = markdown("this is _emphasized_ text"); !strings.Contains(got, "<i>emphasized</i>") {
+		t.Fatalf("an underscore span should still be italic, got %q", got)
+	}
+}
+
+// An image target that is not a photo stays in the text literally rather than
+// becoming a link with a stray bang.
+func TestADataImageIsNotLinkified(t *testing.T) {
+	got := markdown("an inline dot: ![dot](data:image/png;base64,xyz)")
+	if strings.Contains(got, "<a ") {
+		t.Fatalf("a data: image should not become a link, got %q", got)
+	}
+	if !strings.Contains(got, "![dot](data:image/png;base64,xyz)") {
+		t.Fatalf("the image markup should stay literal, got %q", got)
+	}
+}
+
+// A chunk never ends inside a multi-byte rune.
+func TestAChunkEndsOnARuneBoundary(t *testing.T) {
+	line := strings.Repeat("é", 500) // two bytes each
+	parts := chunk(line, 51)
+	for _, part := range parts {
+		if !utf8.ValidString(part) {
+			t.Fatalf("a chunk is not valid UTF-8: %q...", part[:10])
+		}
 	}
 }

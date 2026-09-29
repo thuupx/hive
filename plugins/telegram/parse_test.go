@@ -249,3 +249,89 @@ func TestPermissionDecisions(t *testing.T) {
 		t.Fatal("an out-of-range button is not a decision")
 	}
 }
+
+// Telegram measures entity offsets in UTF-16 code units, so a mention that
+// follows an emoji — one rune but two units — must still resolve.
+func TestAMentionAfterAnEmojiIsFound(t *testing.T) {
+	parser := Parser{RequireMention: true, BotUsername: "hivebot"}
+	env, ok := parser.ParseUpdate(Update{
+		UpdateID: 1,
+		Message: &InboundMessage{
+			MessageID: 10,
+			From:      User{ID: 42},
+			Chat:      Chat{ID: -100, Type: ChatGroup},
+			Text:      "😀 @hivebot hi",
+			// 😀 is two UTF-16 units: the mention starts at unit 3, rune 2.
+			Entities: []Entity{{Type: EntityMention, Offset: 3, Length: 8}},
+		},
+	})
+	if !ok {
+		t.Fatal("a mention after an emoji should be addressed")
+	}
+	if env.Message.Text != "hi" && env.Message.Text != "😀 @hivebot hi" {
+		t.Fatalf("text = %q", env.Message.Text)
+	}
+}
+
+// A group command named for a different bot is not addressed here.
+func TestACommandForAnotherBotIsIgnored(t *testing.T) {
+	parser := Parser{RequireMention: true, BotUsername: "hivebot"}
+	if _, ok := parser.ParseUpdate(Update{
+		UpdateID: 1,
+		Message: &InboundMessage{
+			MessageID: 10,
+			From:      User{ID: 42},
+			Chat:      Chat{ID: -100, Type: ChatGroup},
+			Text:      "/status@otherbot",
+		},
+	}); ok {
+		t.Fatal("a command for another bot should be ignored")
+	}
+}
+
+// A bare mention asks for nothing, so it produces nothing rather than an
+// empty prompt the core would refuse.
+func TestABareMentionProducesNothing(t *testing.T) {
+	parser := Parser{BotUsername: "hivebot"}
+	if _, ok := parser.ParseUpdate(Update{
+		UpdateID: 1,
+		Message: &InboundMessage{
+			MessageID: 10,
+			From:      User{ID: 42},
+			Chat:      Chat{ID: 42, Type: ChatPrivate},
+			Text:      "@hivebot",
+		},
+	}); ok {
+		t.Fatal("a bare mention should produce no delivery")
+	}
+}
+
+// A forum topic is its own conversation, so two topics never share a session
+// and an answer lands in the topic that asked.
+func TestAForumTopicIsItsOwnConversation(t *testing.T) {
+	env, ok := Parser{}.ParseUpdate(Update{
+		UpdateID: 1,
+		Message: &InboundMessage{
+			MessageID: 10,
+			From:      User{ID: 42},
+			Chat:      Chat{ID: -100, Type: ChatSupergroup},
+			Text:      "hi",
+			ThreadID:  77,
+		},
+	})
+	if !ok {
+		t.Fatal("a topic message should parse")
+	}
+	if env.ConversationID != "-100:77" {
+		t.Fatalf("conversation = %q, want the topic joined to the chat", env.ConversationID)
+	}
+
+	chatID, threadID := splitConversation(env.ConversationID)
+	if chatID != "-100" || threadID != 77 {
+		t.Fatalf("splitConversation = %q %d", chatID, threadID)
+	}
+	chatID, threadID = splitConversation("-100")
+	if chatID != "-100" || threadID != 0 {
+		t.Fatalf("splitConversation = %q %d", chatID, threadID)
+	}
+}
