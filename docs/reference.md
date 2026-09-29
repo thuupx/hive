@@ -459,6 +459,25 @@ require_mention = "false"                        # a private chat is always addr
 
 Restart `hive serve`. You should see `zalo bot connected`.
 
+**Telegram**: talk to `@BotFather`, run `/newbot`, copy the token, then:
+
+```sh
+export TELEGRAM_BOT_TOKEN='123456789:...'       # TELEGRAM_TOKEN is accepted too
+```
+
+```toml
+allowed_users = ["telegram:123456789"]
+
+[transport.telegram]
+enabled = true
+[transport.telegram.options]
+require_mention = "false"    # a private chat is always addressed
+```
+
+Restart `hive serve`. You should see `telegram bot connected`. A group message
+must address the bot — a `@mention`, a reply to the bot, or a `/command`. A
+permission request comes with buttons.
+
 Zalo has no message editing, no reactions, and no threads, so the transport shows
 the answer and errors rather than the agent's steps, and a permission request is
 answered in words: reply `allow`, `deny`, or the number of a choice.
@@ -490,6 +509,7 @@ More:
 
 - `slack.md` — the Slack transport: setup, commands, permission buttons
 - `zalo.md` — the Zalo transport: setup, commands, permission replies
+- `telegram.md` — the Telegram transport: setup, commands, permission buttons
 - `protocol.md` — wire format, API domains, versioning, event types
 - `security.md` — identity classes, authorization, permissions
 - `configuration.md` — every configuration key

@@ -126,6 +126,22 @@ typing_indicator = "true"      # show Zalo's transient "typing" action
 export ZALO_BOT_TOKEN='<bot id>:<secret>'   # ZALO_TOKEN is accepted as an alias
 ```
 
+The Telegram transport also long-polls `getUpdates`, so it needs no public
+endpoint either:
+
+```toml
+[transport.telegram]
+enabled = true
+[transport.telegram.options]
+bot_username = "hivebot"       # fallback for @mention resolution; getMe fills it
+require_mention = "false"      # a private chat is always addressed
+typing_indicator = "true"      # show Telegram's "typing" action
+```
+
+```sh
+export TELEGRAM_BOT_TOKEN='<bot id>:<secret>'   # TELEGRAM_TOKEN is accepted as an alias
+```
+
 ## Plugin binaries
 
 Plugin binaries ship next to the `hive` binary. `HIVE_PLUGIN_DIR` overrides the
