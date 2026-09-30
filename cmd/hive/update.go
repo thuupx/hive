@@ -39,7 +39,7 @@ const (
 )
 
 // releaseBinaries are the files a release archive holds, beside hive.
-var releaseBinaries = []string{"hive", "hive-plugin-acp", "hive-plugin-slack", "hive-plugin-zalo"}
+var releaseBinaries = []string{"hive", "hive-plugin-acp", "hive-plugin-slack", "hive-plugin-zalo", "hive-plugin-telegram"}
 
 // runUpdate replaces this installation with a release.
 //

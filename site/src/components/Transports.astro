@@ -19,6 +19,13 @@ const transports = [
     body: "Zalo has no socket mode, so Hive polls, and it still needs no public endpoint. There are no buttons and no threads, so a permission request is answered in words — allow, deny, or the number of a choice — and the chat shows the answer rather than every tool call.",
     guide: `${DOCS}/zalo.md`,
   },
+  {
+    name: "Telegram",
+    status: "shipped",
+    how: "Long polling",
+    body: "Telegram polls getUpdates like Zalo, so it still needs no public endpoint — but it has buttons, uploads, and forum topics, so a permission request is a button press and a picture the agent sends can be a local file.",
+    guide: `${DOCS}/telegram.md`,
+  },
 ] as const;
 ---
 

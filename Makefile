@@ -5,6 +5,7 @@ HIVE := $(BINDIR)/hive
 PLUGIN_ACP := $(BINDIR)/hive-plugin-acp
 PLUGIN_SLACK := $(BINDIR)/hive-plugin-slack
 PLUGIN_ZALO := $(BINDIR)/hive-plugin-zalo
+PLUGIN_TELEGRAM := $(BINDIR)/hive-plugin-telegram
 EXAMPLES := $(BINDIR)/example-client $(BINDIR)/plugin-echo
 
 # VERSION is stamped into the binary as `hive version` reports it. The release
@@ -22,6 +23,7 @@ build:
 	$(GO) build -o $(PLUGIN_ACP) ./cmd/hive-plugin-acp
 	$(GO) build -o $(PLUGIN_SLACK) ./cmd/hive-plugin-slack
 	$(GO) build -o $(PLUGIN_ZALO) ./cmd/hive-plugin-zalo
+	$(GO) build -o $(PLUGIN_TELEGRAM) ./cmd/hive-plugin-telegram
 
 examples:
 	$(GO) build -o $(BINDIR)/example-client ./examples/client
@@ -70,8 +72,9 @@ dist:
 	$(GO) build -o $(PLUGIN_ACP) ./cmd/hive-plugin-acp
 	$(GO) build -o $(PLUGIN_SLACK) ./cmd/hive-plugin-slack
 	$(GO) build -o $(PLUGIN_ZALO) ./cmd/hive-plugin-zalo
+	$(GO) build -o $(PLUGIN_TELEGRAM) ./cmd/hive-plugin-telegram
 	tar -czf $(DISTDIR)/hive_$(VERSION)_$$($(GO) env GOOS)_$$($(GO) env GOARCH).tar.gz \
-		-C $(BINDIR) hive hive-plugin-acp hive-plugin-slack hive-plugin-zalo
+		-C $(BINDIR) hive hive-plugin-acp hive-plugin-slack hive-plugin-zalo hive-plugin-telegram
 	@echo "$(DISTDIR)/hive_$(VERSION)_$$($(GO) env GOOS)_$$($(GO) env GOARCH).tar.gz"
 
 ci: vet test build examples

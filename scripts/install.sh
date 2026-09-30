@@ -215,7 +215,7 @@ mkdir -p "$BIN_DIR"
 
 # The plugin binaries are installed next to hive on purpose: the daemon resolves
 # them from its own directory, and the transports have to be found the same way.
-for name in hive hive-plugin-acp hive-plugin-slack hive-plugin-zalo; do
+for name in hive hive-plugin-acp hive-plugin-slack hive-plugin-zalo hive-plugin-telegram; do
 	[ -f "${tmp}/extract/${name}" ] || die "${asset} does not contain ${name}"
 	[ ! -L "${tmp}/extract/${name}" ] || die "${asset} has a symlink where ${name} should be"
 	install_bin "${tmp}/extract/${name}" "${BIN_DIR}/${name}"
