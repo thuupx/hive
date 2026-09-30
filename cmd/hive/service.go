@@ -165,6 +165,14 @@ func installBinary(dir string) (string, error) {
 		return "", fmt.Errorf("re-link the role aliases: %w", err)
 	}
 
+	// The directory the binaries came from may hold aliases too — an older
+	// layout kept them beside the installed binaries, and a `hive serve` run
+	// names its own directory. Re-link what is already there so nothing keeps
+	// reporting the build that was replaced.
+	if err := refreshRoleAliases(filepath.Dir(current)); err != nil {
+		return "", fmt.Errorf("re-link the source role aliases: %w", err)
+	}
+
 	return filepath.Join(binDir, "hive"), nil
 }
 

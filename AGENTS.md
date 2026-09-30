@@ -117,8 +117,9 @@ is an example of the internal form.
   error: the process keeps the real binary's name.
 - A hard link names an inode, so replacing a binary by staged rename leaves
   every alias on the build that was replaced. After any replacement —
-  `hive update`, `installBinary`'s copies, `install.sh` — the aliases the
-  directory already has are re-linked by `refreshRoleAliases` (or its shell
+  `hive update`, `installBinary`'s copies (both the directory staged into
+  and the one it copied from), `install.sh` — the aliases the directory
+  already has are re-linked by `refreshRoleAliases` (or its shell
   equivalent); none are created there, because which roles exist is
   configuration, not the installer's business.
 - A process name is fixed when the process starts, so the supervisor has to
