@@ -739,8 +739,10 @@ func (b bindingCursor) Advance(ctx context.Context, transport, conversationID st
 	})
 }
 
-// Conversations names the platform conversations a session belongs to.
-func (b bindingCursor) Conversations(ctx context.Context, sessionID string) ([]string, error) {
+// Conversations names the platform conversations a session belongs to for one
+// transport. Bindings of every transport share the session, but a conversation
+// id is only meaningful to the transport that created it.
+func (b bindingCursor) Conversations(ctx context.Context, transport, sessionID string) ([]string, error) {
 	bindings, err := b.store.ListBindingsForSession(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -748,6 +750,9 @@ func (b bindingCursor) Conversations(ctx context.Context, sessionID string) ([]s
 
 	out := make([]string, 0, len(bindings))
 	for _, binding := range bindings {
+		if binding.Transport != transport {
+			continue
+		}
 		out = append(out, binding.ConversationID)
 	}
 	return out, nil

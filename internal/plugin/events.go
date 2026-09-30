@@ -29,8 +29,12 @@ const EventBuffer = 1024
 type BindingCursor interface {
 	Advance(ctx context.Context, transport, conversationID string, sequence int64) error
 
-	// Conversations names the platform conversations a session belongs to.
-	Conversations(ctx context.Context, sessionID string) ([]string, error)
+	// Conversations names the platform conversations a session belongs to for
+	// one transport. A session may be bound from more than one transport, and a
+	// transport may only render into its own ids: another transport's
+	// conversation id is meaningless to its API and would leak the event onto
+	// a platform it does not belong to.
+	Conversations(ctx context.Context, transport, sessionID string) ([]string, error)
 }
 
 type Events struct {
@@ -222,10 +226,12 @@ func (e *Events) deliver(ev *event.Event) {
 		}
 
 		// The core owns the binding, so it says where the event goes rather than
-		// leaving each transport to keep a copy that a restart loses.
+		// leaving each transport to keep a copy that a restart loses. Scoped to
+		// the subscriber's transport: a session bound on another platform must
+		// not be rendered there.
 		var conversations []string
 		if e.Bindings != nil {
-			conversations, _ = e.Bindings.Conversations(context.Background(), ev.SessionID)
+			conversations, _ = e.Bindings.Conversations(context.Background(), e.transportOf(sub), ev.SessionID)
 		}
 
 		if err := sub.instance.Notify(v1.NotificationEvent, v1.DeliveredEvent{
