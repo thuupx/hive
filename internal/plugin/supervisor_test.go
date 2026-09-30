@@ -104,14 +104,24 @@ func runHelperPlugin() {
 		return
 	}
 
-	if mode == "subscriber" {
-		resp, err := host.Subscribe(ctx, v1.SubscribeRequest{SessionID: "sess_1"})
+	if mode == "subscriber" || mode == "subscriber-all" {
+		var req v1.SubscribeRequest
+		if mode == "subscriber" {
+			req.SessionID = "sess_1"
+		}
+		resp, err := host.Subscribe(ctx, req)
 		if err != nil {
 			os.Exit(4)
 		}
 		go func() {
 			for ev := range host.Events() {
-				_ = host.Ack(ctx, resp.SubscriptionID, ev.Event.Sequence)
+				if out := os.Getenv("HIVE_TEST_OUT"); out != "" {
+					if f, err := os.OpenFile(out, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+						_, _ = f.WriteString(ev.Event.ID + "\n")
+						_ = f.Close()
+					}
+				}
+				_ = host.Ack(ctx, resp.SubscriptionID, ev.Event.SessionID, ev.Event.Sequence)
 			}
 		}()
 	}
@@ -535,6 +545,72 @@ func TestEventSubscriptionScopesToSession(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if got := events.AckedThrough(inst); got != 0 {
 		t.Fatalf("acked through %d, want 0 for another session", got)
+	}
+}
+
+// An acknowledgement advances one session's stream cursor. Another session's
+// lower sequence is not a duplicate of it: a scalar cursor would suppress
+// every event behind the highest sequence acknowledged.
+func TestEventAcksDoNotSuppressOtherSessions(t *testing.T) {
+	bus := eventbus.NewBus()
+	defer bus.Close()
+
+	s := newSupervisor(t)
+	events := plugin.NewEvents(bus, s, nil)
+	events.Register(s)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = events.Run(ctx) }()
+
+	out := filepath.Join(t.TempDir(), "events.txt")
+	spec := helperSpec("subscriber-all", 0)
+	spec.Env = append(spec.Env, "HIVE_TEST_OUT="+out)
+	inst, err := s.Start(ctx, spec)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for events.SubscriptionCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if events.SubscriptionCount() == 0 {
+		t.Fatal("the plugin never subscribed")
+	}
+
+	publish := func(id, session string, seq int64) {
+		bus.Publish(&event.Event{
+			ID: id, Sequence: seq, SessionID: session,
+			Type: event.TypeMessage, Version: 1, Payload: []byte(`{}`),
+		})
+	}
+	saw := func(id string) bool {
+		if b, err := os.ReadFile(out); err == nil {
+			return strings.Contains(string(b), id)
+		}
+		return false
+	}
+
+	// A far-ahead stream acknowledges a high sequence; the next session's
+	// first event is a small sequence and must still be delivered.
+	publish("ev_a_late", "sess_a", 900)
+	for time.Now().Before(deadline) && !saw("ev_a_late") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !saw("ev_a_late") {
+		t.Fatal("the first session's event was not delivered")
+	}
+	for time.Now().Before(deadline) && events.AckedThrough(inst) < 900 {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	publish("ev_b_first", "sess_b", 1)
+	for time.Now().Before(deadline) && !saw("ev_b_first") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !saw("ev_b_first") {
+		t.Fatal("a lower sequence on another session was suppressed")
 	}
 }
 

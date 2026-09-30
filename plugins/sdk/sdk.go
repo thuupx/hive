@@ -189,8 +189,8 @@ func (h *Host) Subscribe(ctx context.Context, req v1.SubscribeRequest) (v1.Subsc
 }
 
 // Ack acknowledges that events up to sequence were processed.
-func (h *Host) Ack(ctx context.Context, subscriptionID string, sequence int64) error {
-	return h.AckFor(ctx, subscriptionID, sequence, "")
+func (h *Host) Ack(ctx context.Context, subscriptionID, sessionID string, sequence int64) error {
+	return h.AckFor(ctx, subscriptionID, sessionID, sequence, "")
 }
 
 // AckFor acknowledges delivery for a specific conversation.
@@ -198,10 +198,11 @@ func (h *Host) Ack(ctx context.Context, subscriptionID string, sequence int64) e
 // Naming the conversation is what advances the durable binding cursor, so a
 // restarted transport resumes from where it left off instead of replaying
 // everything.
-func (h *Host) AckFor(ctx context.Context, subscriptionID string, sequence int64, conversationID string) error {
+func (h *Host) AckFor(ctx context.Context, subscriptionID, sessionID string, sequence int64, conversationID string) error {
 	return h.peer.Call(ctx, v1.MethodEventAck, v1.AckRequest{
 		SubscriptionID: subscriptionID,
 		Sequence:       sequence,
+		SessionID:      sessionID,
 		ConversationID: conversationID,
 	}, nil)
 }

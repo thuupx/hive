@@ -84,7 +84,7 @@ func runTestTransport() {
 	if subscription.SubscriptionID != "" {
 		select {
 		case delivered := <-host.Events():
-			_ = host.AckFor(ctx, subscription.SubscriptionID, delivered.Event.Sequence, params.ConversationID)
+			_ = host.AckFor(ctx, subscription.SubscriptionID, delivered.Event.SessionID, delivered.Event.Sequence, params.ConversationID)
 		case <-time.After(10 * time.Second):
 			os.Exit(5)
 		}

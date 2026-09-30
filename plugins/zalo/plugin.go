@@ -485,13 +485,13 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 			// Acknowledge once per conversation so each durable binding cursor
 			// advances.
 			if len(conversations) == 0 {
-				if err := p.host.Ack(ctx, subscriptionID, delivered.Event.Sequence); err != nil {
+				if err := p.host.Ack(ctx, subscriptionID, delivered.Event.SessionID, delivered.Event.Sequence); err != nil {
 					p.log.Debug("could not acknowledge an event", "error", err)
 				}
 				continue
 			}
 			for _, conversation := range conversations {
-				if err := p.host.AckFor(ctx, subscriptionID, delivered.Event.Sequence, conversation); err != nil {
+				if err := p.host.AckFor(ctx, subscriptionID, delivered.Event.SessionID, delivered.Event.Sequence, conversation); err != nil {
 					p.log.Debug("could not acknowledge an event", "conversation", conversation, "error", err)
 				}
 			}

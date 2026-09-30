@@ -57,8 +57,11 @@ type subscription struct {
 	instance  *Instance
 	sessionID string
 
-	mu    sync.Mutex
-	acked int64
+	mu sync.Mutex
+	// acked is per session: an event's sequence counts within its own stream,
+	// so a scalar high-water mark would suppress every session that is behind
+	// the highest one seen.
+	acked map[string]int64
 }
 
 // NewEvents returns an event delivery surface for plugin subscriptions.
@@ -112,8 +115,10 @@ func (e *Events) AckedThrough(inst *Instance) int64 {
 	var highest int64
 	for _, s := range subs {
 		s.mu.Lock()
-		if s.acked > highest {
-			highest = s.acked
+		for _, seq := range s.acked {
+			if seq > highest {
+				highest = seq
+			}
 		}
 		s.mu.Unlock()
 	}
@@ -144,7 +149,10 @@ func (e *Events) subscribe(_ context.Context, call Call) (any, error) {
 		id:        fmt.Sprintf("sub_%d", e.next),
 		instance:  call.Instance,
 		sessionID: req.SessionID,
-		acked:     req.FromSequence,
+		acked:     map[string]int64{},
+	}
+	if req.SessionID != "" {
+		sub.acked[req.SessionID] = req.FromSequence
 	}
 	e.byID[sub.id] = sub
 	if e.byInst[call.Instance] == nil {
@@ -174,8 +182,8 @@ func (e *Events) ack(_ context.Context, call Call) (any, error) {
 	}
 
 	sub.mu.Lock()
-	if req.Sequence > sub.acked {
-		sub.acked = req.Sequence
+	if req.Sequence > sub.acked[req.SessionID] {
+		sub.acked[req.SessionID] = req.Sequence
 	}
 	sub.mu.Unlock()
 
@@ -219,7 +227,7 @@ func (e *Events) deliver(ev *event.Event) {
 		}
 
 		sub.mu.Lock()
-		alreadyAcked := ev.Sequence <= sub.acked
+		alreadyAcked := ev.Sequence <= sub.acked[ev.SessionID]
 		sub.mu.Unlock()
 		if alreadyAcked {
 			continue

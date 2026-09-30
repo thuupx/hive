@@ -150,6 +150,10 @@ type AckRequest struct {
 	SubscriptionID string `json:"subscriptionId"`
 	Sequence       int64  `json:"sequence"`
 
+	// SessionID scopes the sequence. Event sequences are per session stream,
+	// so acknowledging one session must not advance another.
+	SessionID string `json:"sessionId,omitempty"`
+
 	// ConversationID names the transport conversation the event was delivered to.
 	// A transport sets it so the durable binding cursor advances with the
 	// acknowledgement.
