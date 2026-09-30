@@ -18,7 +18,8 @@ bin_dir=${1:?usage: sign-macos.sh <binary directory>}
 : "${APPLE_KEYCHAIN_PASSWORD:?any password for the temporary keychain}"
 
 keychain="build-$$.keychain"
-p12=$(mktemp)
+# security import infers the format from the file extension.
+p12=$(mktemp).p12
 cleanup() {
 	security delete-keychain "$keychain" 2>/dev/null || true
 	rm -f "$p12"
