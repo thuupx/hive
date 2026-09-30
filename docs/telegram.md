@@ -51,7 +51,7 @@ enabled = true
 [transport.telegram.options]
 bot_username = "hivebot"        # learned from getMe; this is the fallback
 require_mention = "false"       # a private chat is always addressed
-typing_indicator = "true"       # show Telegram's "typing" action while a turn runs
+typing_indicator = "true"       # show Telegram's action and a ✍️ reaction on your message
 ```
 
 Restart `hive serve`. You should see:
@@ -204,7 +204,9 @@ the turn runs and simply stops when the run finishes.
 
 ```toml
 [transport.telegram.options]
-typing_indicator = "true"     # default; "false" says nothing until the answer
+typing_indicator = "true"     # default; shows Telegram's header "typing" action and
+                            # marks your message with a ✍️ reaction while the turn
+                            # runs. "false" says nothing until the answer
 ```
 
 The transport shows the **answer** and **errors**, not the agent's steps. A

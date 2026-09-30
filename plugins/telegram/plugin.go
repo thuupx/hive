@@ -38,7 +38,8 @@ type Options struct {
 	MaxAttachmentBytes int64
 
 	// TypingIndicator shows that a turn is working with Telegram's transient
-	// chat action. Off means a turn says nothing until it answers.
+	// chat action and a reaction on the message that started it, which comes
+	// off when the turn ends. Off means a turn says nothing until it answers.
 	TypingIndicator bool
 
 	Log *slog.Logger
@@ -74,6 +75,10 @@ type delivery struct {
 	// callbackMessageID is the message whose buttons were pressed, so they can
 	// be removed once answered.
 	callbackMessageID int64
+
+	// messageID is the platform id of the message that started the delivery,
+	// so a turn can mark it with the working reaction. A button press has none.
+	messageID int64
 }
 
 // pendingPermission is a request a conversation is waiting on, plus the
@@ -335,7 +340,7 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Update) {
 	// are read, because a download can take a moment.
 	working := d.envelope.Kind == v1.EnvelopeMessage || d.envelope.Kind == v1.EnvelopeInteraction
 	if working {
-		p.startTyping(ctx, d.conversationID)
+		p.startTyping(ctx, d.conversationID, d.messageID)
 	} else {
 		// A command answers immediately, so the acknowledgement is the whole
 		// signal rather than a status that would still be ticking when the
@@ -352,7 +357,7 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Update) {
 
 		// The signal goes rather than being left behind: it would say the
 		// turn is still working, and it is not.
-		p.stopTyping(d.conversationID)
+		p.stopTyping(ctx, d.conversationID)
 		p.post(ctx, d.conversationID, textMessage(fmt.Sprintf("⚠️ %s", err.Error())))
 		return
 	}
@@ -387,7 +392,7 @@ func (p *Plugin) handleInbound(ctx context.Context, inbound Update) {
 	}
 
 	if endsTurn(d, outcome) {
-		p.stopTyping(d.conversationID)
+		p.stopTyping(ctx, d.conversationID)
 	}
 	p.post(ctx, d.conversationID, RenderOutcome(outcome))
 }
@@ -420,6 +425,9 @@ func (p *Plugin) parse(inbound Update) (delivery, bool) {
 		if inbound.CallbackQuery.Message != nil {
 			d.callbackMessageID = inbound.CallbackQuery.Message.MessageID
 		}
+	}
+	if inbound.Message != nil {
+		d.messageID = inbound.Message.MessageID
 	}
 	return d, true
 }
@@ -557,7 +565,7 @@ func (p *Plugin) renderWorker(ctx context.Context, subscriptionID string, render
 			// between them.
 			if delivered.Event.Type == v1.EventRunFinished {
 				for _, conversation := range conversations {
-					p.stopTyping(conversation)
+					p.stopTyping(ctx, conversation)
 				}
 			}
 
@@ -680,7 +688,13 @@ func (p *Plugin) post(ctx context.Context, conversationID string, message Messag
 	}
 	chatID, threadID := splitConversation(conversationID)
 	message.ThreadID = threadID
-	for _, part := range chunk(message.Text, ChunkChars) {
+	parts := chunk(message.Text, ChunkChars)
+	if message.ParseMode != "" {
+		// A split can land inside a tag; malformed markup is refused and the
+		// client reposts the text plain, so the chunks are balanced first.
+		parts = balanceChunks(parts)
+	}
+	for _, part := range parts {
 		if part == "" {
 			continue
 		}

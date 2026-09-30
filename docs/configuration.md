@@ -135,7 +135,7 @@ enabled = true
 [transport.telegram.options]
 bot_username = "hivebot"       # fallback for @mention resolution; getMe fills it
 require_mention = "false"      # a private chat is always addressed
-typing_indicator = "true"      # show Telegram's "typing" action
+typing_indicator = "true"      # show Telegram's action and a ✍️ reaction on your message
 ```
 
 ```sh

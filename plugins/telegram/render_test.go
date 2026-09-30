@@ -205,3 +205,43 @@ func TestAChunkEndsOnARuneBoundary(t *testing.T) {
 		}
 	}
 }
+
+// A split inside a <pre> block closes and reopens the tag, so no chunk is
+// malformed markup — Telegram refuses that, and the plain repost shows the
+// tags literally.
+func TestAChunkInsidePreIsBalanced(t *testing.T) {
+	text := "lead-in\n\n<pre>" + strings.Repeat("diagram line\n", 40) + "</pre>\ntail"
+	parts := balanceChunks(chunk(text, 120))
+	if len(parts) < 2 {
+		t.Fatalf("want the message split, got %d part(s)", len(parts))
+	}
+	for i, part := range parts {
+		if open := tagStack(part); len(open) != 0 {
+			t.Fatalf("chunk %d leaves %v open: %q", i, open, part)
+		}
+	}
+	if parts[0][len(parts[0])-6:] != "</pre>" || !strings.HasPrefix(parts[1], "<pre>") {
+		t.Fatalf("the boundary chunks should carry the split pre, got %q / %q", parts[0], parts[1])
+	}
+	if strings.Count(strings.Join(parts, ""), "diagram line") != 40 {
+		t.Fatal("balancing dropped or duplicated content")
+	}
+	if !strings.HasSuffix(strings.Join(parts, ""), "</pre>\ntail") {
+		t.Fatalf("the tail lost its context: %q", parts[len(parts)-1])
+	}
+}
+
+// A cut inside a tag or an entity moves back to where it starts, so a chunk
+// never ends in half a markup construct.
+func TestAChunkNeverSplitsATagOrEntity(t *testing.T) {
+	long := strings.Repeat("x", 60)
+	line := `<a href="https://a.example/?x=1&amp;y=2">` + long + `</a>`
+	for _, part := range chunk(line, 50) {
+		if lt, gt := strings.LastIndexByte(part, '<'), strings.LastIndexByte(part, '>'); lt > gt {
+			t.Fatalf("a chunk ends inside a tag: %q", part)
+		}
+		if amp, semi := strings.LastIndexByte(part, '&'), strings.LastIndexByte(part, ';'); amp > semi {
+			t.Fatalf("a chunk ends inside an entity: %q", part)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/thuupx/hive/protocol/hive/v1"
 )
@@ -17,6 +18,7 @@ type fakeClient struct {
 	actions   []string
 	answered  []string
 	markups   []int64
+	reactions []string
 	failSend  bool
 	failPhoto bool
 }
@@ -58,21 +60,30 @@ func (c *fakeClient) EditMessageReplyMarkup(_ context.Context, _ string, message
 	return nil
 }
 
+func (c *fakeClient) SetMessageReaction(_ context.Context, chatID string, messageID int64, emoji string) error {
+	c.reactions = append(c.reactions, fmt.Sprintf("%s:%d:%s", chatID, messageID, emoji))
+	return nil
+}
+
 func (c *fakeClient) DownloadFile(context.Context, string, int64) ([]byte, string, error) {
 	return []byte("data"), "file", nil
 }
 
 func (c *fakeClient) Close() error { return nil }
 
-// A turn shows the working signal while it runs, and stops refreshing when it
+// A turn shows the working signal while it runs — the chat action in the
+// header and a reaction on the user's message — and takes both down when it
 // ends.
 func TestTypingShowsAndStops(t *testing.T) {
 	client := &fakeClient{}
 	p := New(nil, client, Options{TypingIndicator: true})
 
-	p.startTyping(context.Background(), "c1")
+	p.startTyping(context.Background(), "c1", 42)
 	if len(client.actions) != 1 || client.actions[0] != "c1:0:typing" {
 		t.Fatalf("actions = %v, want one typing action", client.actions)
+	}
+	if len(client.reactions) != 1 || client.reactions[0] != "c1:42:✍️" {
+		t.Fatalf("reactions = %v, want the message marked as working", client.reactions)
 	}
 	if p.typing["c1"] == nil {
 		t.Fatal("the conversation should be tracked as working")
@@ -83,9 +94,30 @@ func TestTypingShowsAndStops(t *testing.T) {
 		t.Fatalf("actions = %v, want the signal refreshed", client.actions)
 	}
 
-	p.stopTyping("c1")
+	p.stopTyping(context.Background(), "c1")
 	if p.typing["c1"] != nil {
 		t.Fatal("the signal should be forgotten when the turn ends")
+	}
+	if len(client.reactions) != 2 || client.reactions[1] != "c1:42:" {
+		t.Fatalf("reactions = %v, want the reaction taken off", client.reactions)
+	}
+}
+
+// A turn that runs long enough to time out loses its reaction rather than
+// claiming work that is not happening.
+func TestATimedOutTypingReactionIsRemoved(t *testing.T) {
+	client := &fakeClient{}
+	p := New(nil, client, Options{TypingIndicator: true})
+
+	p.startTyping(context.Background(), "c1", 42)
+	p.typing["c1"].started = time.Now().Add(-typingTimeout - time.Minute)
+
+	p.advanceTyping(context.Background())
+	if p.typing["c1"] != nil {
+		t.Fatal("an expired signal should be forgotten")
+	}
+	if len(client.reactions) != 2 || client.reactions[1] != "c1:42:" {
+		t.Fatalf("reactions = %v, want the stale reaction removed", client.reactions)
 	}
 }
 
@@ -94,9 +126,9 @@ func TestTypingCanBeTurnedOff(t *testing.T) {
 	client := &fakeClient{}
 	p := New(nil, client, Options{TypingIndicator: false})
 
-	p.startTyping(context.Background(), "c1")
-	if len(client.actions) != 0 {
-		t.Fatalf("actions = %v, want none", client.actions)
+	p.startTyping(context.Background(), "c1", 42)
+	if len(client.actions) != 0 || len(client.reactions) != 0 {
+		t.Fatalf("actions = %v reactions = %v, want none", client.actions, client.reactions)
 	}
 }
 

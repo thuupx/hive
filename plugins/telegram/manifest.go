@@ -27,7 +27,7 @@ func Manifest(version string) v1.PluginManifest {
 				{Name: "bot_username", Default: "", Description: "groups only: the bot's @username, for mention resolution; learned from getMe when empty"},
 				{Name: "require_mention", Default: "false", Description: "groups only: ignore a message that does not address the bot"},
 				{Name: "max_attachment_mb", Default: "8", Description: "largest file the transport will read"},
-				{Name: "typing_indicator", Default: "true", Description: "show Telegram's transient typing action while a turn runs"},
+				{Name: "typing_indicator", Default: "true", Description: "show Telegram's typing action and a working reaction on the message while a turn runs"},
 			},
 			// The signal is the transient typing action rather than a mark on
 			// the user's message; mode is accepted for parity and ignored.

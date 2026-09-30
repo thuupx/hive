@@ -604,6 +604,7 @@ func chunk(text string, limit int) []string {
 			if cut == 0 {
 				cut = limit
 			}
+			cut = avoidMarkupCut(line, cut)
 			chunks = append(chunks, line[:cut])
 			line = line[cut:]
 		}
@@ -621,6 +622,90 @@ func chunk(text string, limit int) []string {
 		return []string{text}
 	}
 	return chunks
+}
+
+// avoidMarkupCut moves a split point that lands inside a tag or an entity
+// back to where the construct starts. A '<' or '&' cut in two arrives as
+// literal text, because the piece that opens it never closes.
+//
+// The generated markup escapes every literal '<' and '&', so backing off to
+// the last one is always safe; on unformatted text it only moves the cut.
+func avoidMarkupCut(line string, cut int) int {
+	if cut <= 0 || cut >= len(line) {
+		return cut
+	}
+	if lt := strings.LastIndexByte(line[:cut], '<'); lt >= 0 && strings.LastIndexByte(line[:cut], '>') < lt {
+		if lt > 0 {
+			return lt
+		}
+		return cut
+	}
+	if amp := strings.LastIndexByte(line[:cut], '&'); amp > 0 && strings.LastIndexByte(line[:cut], ';') < amp {
+		return amp
+	}
+	return cut
+}
+
+// tagPattern matches the markup markdown() and the renderers emit.
+var tagPattern = regexp.MustCompile(`<(/?)(b|i|s|u|code|pre|a|blockquote)(\s[^>]*)?>`)
+
+// openTag is a tag a split left open: its name to close it and its text to
+// reopen it, which for an anchor carries the href.
+type openTag struct {
+	name string
+	text string
+}
+
+// balanceChunks makes every chunk well-formed HTML. A split at a line
+// boundary can land inside a <pre> or an emphasis span, and Telegram refuses
+// malformed markup — the client then reposts the text plain and a user reads
+// the tags literally. Each chunk gets the still-open tags closed, and the
+// next chunk reopens them.
+func balanceChunks(chunks []string) []string {
+	balanced := make([]string, 0, len(chunks))
+	var open []openTag
+	for _, part := range chunks {
+		if len(open) > 0 {
+			var reopened strings.Builder
+			for _, tag := range open {
+				reopened.WriteString(tag.text)
+			}
+			part = reopened.String() + part
+		}
+		open = tagStack(part)
+		balanced = append(balanced, closeTags(part, open))
+	}
+	return balanced
+}
+
+// closeTags appends the closers for tags a chunk leaves open.
+func closeTags(part string, stack []openTag) string {
+	var b strings.Builder
+	b.WriteString(part)
+	for i := len(stack) - 1; i >= 0; i-- {
+		b.WriteString("</")
+		b.WriteString(stack[i].name)
+		b.WriteString(">")
+	}
+	return b.String()
+}
+
+// tagStack is the list of tags still open after a chunk.
+func tagStack(part string) []openTag {
+	var stack []openTag
+	for _, match := range tagPattern.FindAllStringSubmatch(part, -1) {
+		if match[1] == "" {
+			stack = append(stack, openTag{name: match[2], text: match[0]})
+			continue
+		}
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].name == match[2] {
+				stack = stack[:i]
+				break
+			}
+		}
+	}
+	return stack
 }
 
 // configMessage renders the selectors an agent declared.

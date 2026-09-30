@@ -49,6 +49,11 @@ type Client interface {
 	// It is best-effort: a failure must not fail the turn.
 	SendChatAction(ctx context.Context, chatID string, threadID int64, action string) error
 
+	// SetMessageReaction puts the bot's reaction on a message, or takes it
+	// off when emoji is empty. It is how a turn shows it is working inside
+	// the conversation without posting a message.
+	SetMessageReaction(ctx context.Context, chatID string, messageID int64, emoji string) error
+
 	// AnswerCallbackQuery acknowledges a button press, ending the spinner.
 	AnswerCallbackQuery(ctx context.Context, id, text string) error
 
@@ -360,7 +365,7 @@ func (c *HTTPClient) SendMessage(ctx context.Context, req SendMessageRequest) (i
 		// the same, only the presentation degrades.
 		var apiErr *apiError
 		if req.Message.ParseMode != "" && errors.As(err, &apiErr) {
-			c.log.Debug("markup was refused; sending the text plain", "error", err)
+			c.log.Warn("markup was refused; sending the text plain", "error", err)
 			params["parse_mode"] = ""
 			delete(params, "parse_mode")
 			raw, err = c.call(ctx, "sendMessage", params)
@@ -469,6 +474,21 @@ func (c *HTTPClient) SendChatAction(ctx context.Context, chatID string, threadID
 		params["message_thread_id"] = threadID
 	}
 	_, err := c.call(ctx, "sendChatAction", params)
+	return err
+}
+
+// SetMessageReaction changes the bot's reaction on a message. An empty emoji
+// removes the reaction; other users' reactions are untouched.
+func (c *HTTPClient) SetMessageReaction(ctx context.Context, chatID string, messageID int64, emoji string) error {
+	reaction := []map[string]string{}
+	if emoji != "" {
+		reaction = append(reaction, map[string]string{"type": "emoji", "emoji": emoji})
+	}
+	_, err := c.call(ctx, "setMessageReaction", map[string]any{
+		"chat_id":    chatID,
+		"message_id": messageID,
+		"reaction":   reaction,
+	})
 	return err
 }
 
