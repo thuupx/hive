@@ -177,10 +177,23 @@ what is this?                   ignored in a group
 ```
 
 A forum supergroup binds **per topic**: each topic is its own conversation
-with its own session, and answers land in the topic that asked.
+with its own session, and answers land in the topic that asked. Make one by
+enabling **Topics** in the group's settings, then create a topic per project
+or agent and address the bot inside it.
 
-Note: a bot in a group with **privacy mode** on (the default) only sees
-commands, replies, and mentions anyway — that is Telegram's rule, not Hive's.
+A bot joins a group with **privacy mode** on — that is Telegram's default,
+not Hive's — and it then receives only:
+
+- commands addressed to it (`/cancel@hivebot`),
+- replies to its own messages,
+- service messages (joins, topic creation, ...).
+
+A plain `@hivebot hello` is **never delivered** — the log shows nothing at
+all. To hear everything, make the bot a group **administrator** (group
+settings → Administrators → Add Admin); bot admins always receive all
+messages. The alternative is @BotFather → Group Privacy → Turn off, which
+takes effect only after the bot is removed and re-added. `require_mention`
+then decides which of the delivered messages matter.
 
 ### While a turn is working
 
@@ -301,8 +314,12 @@ while one is set. Delete the webhook (see above).
 
 **The bot ignores my messages.**
 1. Is your user id in `security.allowed_users`? Deny by default.
-2. In a group, does the message address the bot — a mention, a reply, or a
-   command?
+2. In a group, can the bot read the message at all? With privacy mode on —
+   the default — only commands addressed to it and replies to its own
+   messages are delivered; an @mention never arrives. Make the bot an
+   administrator (see *Groups*).
+3. In a group the bot can read, does the message address it — a mention, a
+   reply, or a command — when `require_mention` is on?
 
 **A reply never appears.**
 Check the log for `could not post to Telegram`. Telegram refuses a text over

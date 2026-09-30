@@ -278,8 +278,8 @@ have to be rediscovered.
 
 - Single-machine v1: `hive` spawns the node as a child process and speaks
   the real node protocol over loopback TLS.
-- Production transports in v1: Slack and Zalo. CLI/TUI is a protocol client,
-  not a transport plugin.
+- Production transports in v1: Slack, Zalo, and Telegram. CLI/TUI is a
+  protocol client, not a transport plugin.
 - Zalo has no socket mode, no message editing, no reactions, and no threads, so
   its transport long-polls `getUpdates` and answers permissions in words rather
   than with buttons. It shows the answer and errors, not the agent's steps.

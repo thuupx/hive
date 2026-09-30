@@ -2,7 +2,8 @@
 
 **A self-hosted control plane for coding agents.**
 
-You talk to it from the chat app you already use — Slack, Zalo — and it runs the
+You talk to it from the chat app you already use — Slack, Zalo, Telegram —
+and it runs the
 agent on the machine where the work is. Anything that speaks
 [ACP](https://agentclientprotocol.com) is an agent you can use: Claude Code,
 Codex, Devin, Gemini. You bring the agents; Hive keeps the conversation, so a
@@ -44,7 +45,7 @@ That is what makes them quick to build and hard to grow.
 Hive separates the three.
 
 ```text
-Transport   presentation      Slack, a terminal, later: anything
+Transport   presentation      Slack, Zalo, Telegram, later: anything
 Session     the conversation  Hive: durable, yours, transport-agnostic
 AgentRun    execution         one agent process, on one node
 ```
@@ -125,18 +126,29 @@ fix the login bug              text becomes a prompt
 /handoff <agent>               hand it to another agent
 ```
 
+Connect Telegram (long polling — no public URL) per
+[docs/telegram.md](docs/telegram.md). In a group, make the bot an admin so
+privacy mode does not hide your messages:
+
+```text
+/new_chat                      create a session
+@your-bot fix the login bug    mention it in a group, or just type in a DM
+/handoff <agent>               hand it to another agent
+```
+
 Full setup, every command, and troubleshooting: **[docs/reference.md](docs/reference.md)**.
 
 ## Status
 
-v1 is deliberately narrow: **single machine, Slack and Zalo, ACP agents, CLI/TUI
-as a client.** Handoff and durable sessions are in; failover, multi-machine
+v1 is deliberately narrow: **single machine, Slack, Zalo, and Telegram, ACP
+agents, CLI/TUI as a client.** Handoff and durable sessions are in; failover, multi-machine
 nodes, more transports, and a web UI are designed but not shipped.
 
 ## Documentation
 
-- [docs/reference.md](docs/reference.md) — install, run, commands, Slack, troubleshooting
+- [docs/reference.md](docs/reference.md) — install, run, commands, troubleshooting
 - [docs/zalo.md](docs/zalo.md) — using Hive from Zalo
+- [docs/telegram.md](docs/telegram.md) — using Hive from Telegram
 - [docs/protocol.md](docs/protocol.md) — protocol, versioning, event types
 - [docs/security.md](docs/security.md) — identity, authorization, permissions
 - [docs/configuration.md](docs/configuration.md) — every config key

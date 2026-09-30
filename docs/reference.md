@@ -474,9 +474,13 @@ enabled = true
 require_mention = "false"    # a private chat is always addressed
 ```
 
-Restart `hive serve`. You should see `telegram bot connected`. A group message
-must address the bot — a `@mention`, a reply to the bot, or a `/command`. A
-permission request comes with buttons.
+Restart `hive serve`. You should see `telegram bot connected`. In a group,
+make the bot an **administrator** — with privacy mode on (the default)
+Telegram delivers only commands addressed to it and replies to its own
+messages, so even a `@mention` never arrives. With `require_mention` on, a
+message must also address the bot — a `@mention`, a reply, or a `/command`.
+A permission request comes with buttons, and a forum topic is its own
+conversation. See [telegram.md](telegram.md) for the details.
 
 Zalo has no message editing, no reactions, and no threads, so the transport shows
 the answer and errors rather than the agent's steps, and a permission request is
