@@ -20,6 +20,8 @@ func Manifest(version string) v1.PluginManifest {
 		Config: &v1.PluginConfigManifest{
 			Section: "transport.telegram",
 			Summary: "Telegram over long polling, so no public endpoint is needed.",
+			// The user id is numeric; bots like @userinfobot report it.
+			PrincipalHint: "your numeric user id — @userinfobot reports it",
 			Options: []v1.PluginOptionManifest{
 				// The first two only matter in a group; a private chat is 1:1
 				// and always addressed, so a configuration for one can leave

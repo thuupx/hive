@@ -20,6 +20,8 @@ func Manifest(version string) v1.PluginManifest {
 		Config: &v1.PluginConfigManifest{
 			Section: "transport.zalo",
 			Summary: "Zalo over long polling, so no public endpoint is needed.",
+			// There is no id lookup bot; a refused message logs the principal.
+			PrincipalHint: "your Zalo user id — a refused message logs the principal to add",
 			Options: []v1.PluginOptionManifest{
 				// The first two only matter in a group; a private chat is 1:1 and
 				// always addressed, so a configuration for one can leave both out.

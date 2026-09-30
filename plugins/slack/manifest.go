@@ -19,6 +19,8 @@ func Manifest(version string) v1.PluginManifest {
 		Config: &v1.PluginConfigManifest{
 			Section: "transport.slack",
 			Summary: "Slack over Socket Mode, so no public endpoint is needed.",
+			// A member id looks like U0123456789; a profile's ⋯ menu copies it.
+			PrincipalHint: "your member id (U…) — profile → ⋯ → Copy member ID",
 			Options: []v1.PluginOptionManifest{
 				{
 					Name:        "bot_user_id",

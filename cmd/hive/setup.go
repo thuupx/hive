@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -44,14 +45,30 @@ type setupAnswers struct {
 	options      map[string]map[string]string
 	secrets      map[string]string
 	workspace    string
-	confirmed    bool
+
+	// users holds the allowed-user ids asked per transport, as typed: a
+	// comma-separated list written to security.allowed_users as
+	// "<transport>:<id>" principals.
+	users map[string]string
+
+	// extraUsers are the principals carried over unchanged — the ones whose
+	// transport is not part of this run and so was never asked about.
+	extraUsers []string
+
+	confirmed bool
 }
 
 // runSetup walks the user through the configuration and writes it.
 func runSetup(cfgPath string, agents []config.DiscoveredAgent, opts initSetupOptions) error {
 	manifests := transportManifests(pluginDir())
 
-	answers, err := askSetup(agents, manifests, opts)
+	dataDir, err := setupDataDir(opts.base)
+	if err != nil {
+		return err
+	}
+	stored := readEnvFile(filepath.Join(dataDir, serviceEnvFile))
+
+	answers, err := askSetup(agents, manifests, opts, stored)
 	if err != nil {
 		return err
 	}
@@ -59,14 +76,24 @@ func runSetup(cfgPath string, agents []config.DiscoveredAgent, opts initSetupOpt
 		fmt.Println("hive: nothing was written")
 		return nil
 	}
-	return writeSetup(cfgPath, agents, manifests, answers)
+	return writeSetup(cfgPath, agents, manifests, answers, opts, dataDir)
+}
+
+// setupDataDir is where the secrets file lives: the configured data directory
+// when there is a configuration to read it from, the default otherwise.
+func setupDataDir(base *config.Config) (string, error) {
+	if base != nil {
+		return base.EffectiveDataDir()
+	}
+	return config.Default().EffectiveDataDir()
 }
 
 // askSetup collects the answers.
-func askSetup(agents []config.DiscoveredAgent, manifests []v1.PluginManifest, opts initSetupOptions) (setupAnswers, error) {
+func askSetup(agents []config.DiscoveredAgent, manifests []v1.PluginManifest, opts initSetupOptions, stored map[string]string) (setupAnswers, error) {
 	answers := setupAnswers{
 		options: map[string]map[string]string{},
 		secrets: map[string]string{},
+		users:   map[string]string{},
 	}
 
 	// Prefill from what is configured now, when there is something to prefill.
@@ -78,6 +105,18 @@ func askSetup(agents []config.DiscoveredAgent, manifests []v1.PluginManifest, op
 			}
 		}
 		sort.Strings(answers.transports)
+
+		// Allowed users are principals, "<transport>:<id>". The ones a chosen
+		// transport owns prefill its field; the rest are carried as given, so
+		// a rewrite never drops a principal the form did not ask about.
+		for _, principal := range opts.base.Security.AllowedUsers {
+			prefix, id, found := strings.Cut(principal, ":")
+			if !found || !slices.Contains(answers.transports, prefix) {
+				answers.extraUsers = append(answers.extraUsers, principal)
+				continue
+			}
+			answers.users[prefix] = joinIDs(answers.users[prefix], id)
+		}
 	}
 	if answers.defaultAgent == "" && len(agents) > 0 {
 		answers.defaultAgent = agents[0].Name
@@ -93,7 +132,7 @@ func askSetup(agents []config.DiscoveredAgent, manifests []v1.PluginManifest, op
 	if err := askBasics(&answers, agents, manifests); err != nil {
 		return answers, err
 	}
-	if err := askCredentials(&answers, manifests); err != nil {
+	if err := askCredentials(&answers, manifests, stored); err != nil {
 		return answers, err
 	}
 	if err := askConfirmation(&answers, manifests); err != nil {
@@ -135,11 +174,13 @@ func askBasics(answers *setupAnswers, agents []config.DiscoveredAgent, manifests
 	return runForm(huh.NewForm(huh.NewGroup(fields...)))
 }
 
-// askCredentials asks each chosen transport for the credentials it declared, and
-// for the options that have no working default.
+// askCredentials asks each chosen transport for the credentials it declared,
+// for the options that have no working default, and for who may use it.
 //
 // It is a second form because what to ask depends on what was just selected.
-func askCredentials(answers *setupAnswers, manifests []v1.PluginManifest) error {
+// stored is what the secrets file already holds: a credential that exists is
+// kept by leaving the field empty rather than being re-typed.
+func askCredentials(answers *setupAnswers, manifests []v1.PluginManifest, stored map[string]string) error {
 	byID := make(map[string]v1.PluginManifest, len(manifests))
 	for _, manifest := range manifests {
 		byID[manifest.ID] = manifest
@@ -179,13 +220,31 @@ func askCredentials(answers *setupAnswers, manifests []v1.PluginManifest) error 
 			}
 
 			value := answers.secrets[name]
-			bindings = append(bindings, binding{&value, func(v string) { answers.secrets[name] = v }})
-			fields = append(fields, huh.NewInput().
+
+			// A credential that already exists — in the secrets file, or in
+			// this environment — is kept by answering nothing, so it is not
+			// re-typed on every update.
+			description := "Stored in a file only you can read; never in the configuration. " + name
+			validate := requiredValue(title)
+			switch credentialStateOf(secret.Any, stored) {
+			case credentialStored:
+				description = "Already stored — leave empty to keep it, or enter a new value. " + name
+				validate = nil
+			case credentialInEnvironment:
+				description = "Set in this environment — leave empty to use it, or enter one for the file. " + name
+				validate = nil
+			}
+
+			field := huh.NewInput().
 				Title(title).
-				Description("Stored in a file only you can read; never in the configuration. "+name).
+				Description(description).
 				EchoMode(huh.EchoModePassword).
-				Value(&value).
-				Validate(requiredValue(title)))
+				Value(&value)
+			if validate != nil {
+				field = field.Validate(validate)
+			}
+			bindings = append(bindings, binding{&value, func(v string) { answers.secrets[name] = v }})
+			fields = append(fields, field)
 		}
 
 		for _, option := range manifest.Config.Options {
@@ -209,6 +268,22 @@ func askCredentials(answers *setupAnswers, manifests []v1.PluginManifest) error 
 				Value(&value).
 				Validate(requiredValue(option.Name)))
 		}
+
+		// An enabled transport nobody may use answers no one: unknown access is
+		// denied, so the ids go on the security list rather than into a
+		// transport section. The transport names the hint; the core writes the
+		// principals without knowing what an id looks like.
+		ids := answers.users[id]
+		description := "User ids the bot answers (comma-separated). Written to security.allowed_users as " + id + ":<id>."
+		if hint := manifest.Config.PrincipalHint; hint != "" {
+			description += " " + hint
+		}
+		bindings = append(bindings, binding{&ids, func(v string) { answers.users[id] = v }})
+		fields = append(fields, huh.NewInput().
+			Title("Allowed users").
+			Description(description).
+			Value(&ids).
+			Validate(requiredValue("an allowed user id")))
 
 		if len(fields) > 0 {
 			groups = append(groups, huh.NewGroup(fields...).Title(id))
@@ -269,7 +344,7 @@ func setupSummary(answers *setupAnswers, manifests []v1.PluginManifest) string {
 }
 
 // writeSetup writes the configuration and the credentials.
-func writeSetup(cfgPath string, agents []config.DiscoveredAgent, manifests []v1.PluginManifest, answers setupAnswers) error {
+func writeSetup(cfgPath string, agents []config.DiscoveredAgent, manifests []v1.PluginManifest, answers setupAnswers, opts initSetupOptions, dataDir string) error {
 	enabled := make([]config.EnabledTransport, 0, len(answers.transports))
 	for _, id := range answers.transports {
 		for _, manifest := range manifests {
@@ -288,6 +363,8 @@ func writeSetup(cfgPath string, agents []config.DiscoveredAgent, manifests []v1.
 		WorkspaceDir:      answers.workspace,
 		Transports:        manifests,
 		EnabledTransports: enabled,
+		AllowedUsers:      allowedUsers(answers),
+		AllowedChannels:   allowedChannels(opts),
 	})
 
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
@@ -302,19 +379,15 @@ func writeSetup(cfgPath string, agents []config.DiscoveredAgent, manifests []v1.
 		return nil
 	}
 
-	dir, err := config.Default().EffectiveDataDir()
-	if err != nil {
-		return err
-	}
 	// Merge rather than replace: a credential for a transport that was not part
 	// of this run is still needed by the configuration that is already there.
-	merged := readEnvFile(filepath.Join(dir, serviceEnvFile))
+	merged := readEnvFile(filepath.Join(dataDir, serviceEnvFile))
 	for name, value := range answers.secrets {
 		if value != "" {
 			merged[name] = value
 		}
 	}
-	if err := writeServiceEnv(dir, merged); err != nil {
+	if err := writeServiceEnv(dataDir, merged); err != nil {
 		return err
 	}
 
@@ -324,11 +397,58 @@ func writeSetup(cfgPath string, agents []config.DiscoveredAgent, manifests []v1.
 	}
 	sort.Strings(names)
 	fmt.Printf("hive: wrote credentials for %s to %s (%#o)\n",
-		strings.Join(names, ", "), filepath.Join(dir, serviceEnvFile), serviceEnvMode)
+		strings.Join(names, ", "), filepath.Join(dataDir, serviceEnvFile), serviceEnvMode)
 	fmt.Println("hive: the daemon reads them; an exported variable takes precedence")
 
 	printNextSteps()
 	return nil
+}
+
+// allowedUsers assembles the principal list the security section gets: what
+// the form did not ask about first, then each chosen transport's answer, then
+// the ids of transports this run did not select — a deselected transport is
+// off, but its principals are kept rather than forgotten.
+func allowedUsers(answers setupAnswers) []string {
+	principals := append([]string{}, answers.extraUsers...)
+	seen := map[string]bool{}
+	for _, principal := range principals {
+		seen[principal] = true
+	}
+	add := func(more []string) {
+		for _, principal := range more {
+			if !seen[principal] {
+				seen[principal] = true
+				principals = append(principals, principal)
+			}
+		}
+	}
+
+	selected := make(map[string]bool, len(answers.transports))
+	for _, id := range answers.transports {
+		selected[id] = true
+		add(principalsFor(id, answers.users[id]))
+	}
+
+	rest := make([]string, 0, len(answers.users))
+	for id := range answers.users {
+		if !selected[id] {
+			rest = append(rest, id)
+		}
+	}
+	sort.Strings(rest)
+	for _, id := range rest {
+		add(principalsFor(id, answers.users[id]))
+	}
+	return principals
+}
+
+// allowedChannels carries the configured channel list through a rewrite. Nil
+// for a fresh configuration leaves the default.
+func allowedChannels(opts initSetupOptions) []string {
+	if opts.base == nil {
+		return nil
+	}
+	return opts.base.Security.AllowedChannels
 }
 
 // printNextSteps is what to do now that a configuration exists.
@@ -419,6 +539,63 @@ func validateWorkspace(value string) error {
 		return errors.New("the home directory is not a project")
 	}
 	return nil
+}
+
+// credentialState is where a secret already lives, if anywhere.
+type credentialState int
+
+const (
+	credentialMissing credentialState = iota
+	// credentialStored is already in the secrets file.
+	credentialStored
+	// credentialInEnvironment is exported in this shell. It does not reach a
+	// service on its own, but it serves a terminal run and a service install
+	// collects it, so it counts as present.
+	credentialInEnvironment
+)
+
+// credentialStateOf reports whether one of a secret's variables already has a
+// value: in the secrets file first, then in this environment.
+func credentialStateOf(names []string, stored map[string]string) credentialState {
+	for _, name := range names {
+		if stored[name] != "" {
+			return credentialStored
+		}
+	}
+	for _, name := range names {
+		if os.Getenv(name) != "" {
+			return credentialInEnvironment
+		}
+	}
+	return credentialMissing
+}
+
+// joinIDs appends an id to a comma-separated list.
+func joinIDs(list, id string) string {
+	if list == "" {
+		return id
+	}
+	return list + ", " + id
+}
+
+// splitIDs reads a comma- or space-separated list of user ids.
+func splitIDs(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' })
+}
+
+// principalsFor turns one transport's id answer into principals. An id
+// already written as a principal — "<transport>:<id>", pasted whole — is kept
+// as given; a bare id gets its transport's prefix.
+func principalsFor(transport, raw string) []string {
+	var principals []string
+	for _, id := range splitIDs(raw) {
+		if strings.Contains(id, ":") {
+			principals = append(principals, id)
+		} else {
+			principals = append(principals, transport+":"+id)
+		}
+	}
+	return principals
 }
 
 // requiredValue refuses an empty answer.

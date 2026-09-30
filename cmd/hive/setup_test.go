@@ -40,9 +40,10 @@ func TestWriteSetupWritesTheConfigurationAndTheSecrets(t *testing.T) {
 		transports:   []string{"demo"},
 		options:      map[string]map[string]string{"demo": {"greeting": "hello"}},
 		secrets:      map[string]string{"DEMO_TOKEN": "s3cret"},
+		users:        map[string]string{"demo": "42"},
 		workspace:    filepath.Join(home, "work"),
 		confirmed:    true,
-	})
+	}, initSetupOptions{}, defaultDataDir(t))
 	if err != nil {
 		t.Fatalf("writeSetup: %v", err)
 	}
@@ -52,6 +53,7 @@ func TestWriteSetupWritesTheConfigurationAndTheSecrets(t *testing.T) {
 		"[transport.demo]\nenabled = true",
 		`greeting = "hello"`,
 		`default_agent = "alpha"`,
+		`allowed_users = ["demo:42"]`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the configuration does not contain %q:\n%s", want, body)
@@ -91,6 +93,103 @@ func TestWriteSetupWritesTheConfigurationAndTheSecrets(t *testing.T) {
 	if !strings.Contains(readFile(t, envPath), "DEMO_TOKEN") {
 		t.Error("the secrets file does not name the token")
 	}
+}
+
+// The ids a setup collects are written as principals on the security list;
+// principals the form never asked about — an uninstalled transport's, a
+// deselected one's — are kept rather than forgotten.
+func TestWriteSetupAssemblesAllowedUsers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfgPath := filepath.Join(home, ".hive", "config.toml")
+	err := writeSetup(cfgPath, nil, []v1.PluginManifest{demoManifest()}, setupAnswers{
+		transports: []string{"demo"},
+		users: map[string]string{
+			"demo":    "42, demo:7",
+			"gone":    "9",
+			"nothing": "",
+		},
+		extraUsers: []string{"oldtransport:1"},
+		workspace:  filepath.Join(home, "work"),
+		confirmed:  true,
+	}, initSetupOptions{}, defaultDataDir(t))
+	if err != nil {
+		t.Fatalf("writeSetup: %v", err)
+	}
+
+	body := readFile(t, cfgPath)
+	for _, want := range []string{`"demo:42"`, `"demo:7"`, `"gone:9"`, `"oldtransport:1"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("allowed_users is missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// A credential that already exists is not lost when the answer is empty: the
+// merge keeps the stored value.
+func TestWriteSetupKeepsAStoredSecretWhenTheAnswerIsEmpty(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dataDir := defaultDataDir(t)
+	if err := writeServiceEnv(dataDir, map[string]string{"DEMO_TOKEN": "stored"}); err != nil {
+		t.Fatalf("write secrets: %v", err)
+	}
+
+	cfgPath := filepath.Join(home, ".hive", "config.toml")
+	err := writeSetup(cfgPath, nil, []v1.PluginManifest{demoManifest()}, setupAnswers{
+		transports: []string{"demo"},
+		secrets:    map[string]string{"DEMO_TOKEN": ""},
+		workspace:  filepath.Join(home, "work"),
+		confirmed:  true,
+	}, initSetupOptions{}, dataDir)
+	if err != nil {
+		t.Fatalf("writeSetup: %v", err)
+	}
+
+	if got := readEnvFile(filepath.Join(dataDir, serviceEnvFile))["DEMO_TOKEN"]; got != "stored" {
+		t.Fatalf("DEMO_TOKEN = %q, want the stored value kept", got)
+	}
+}
+
+// The channel allow list survives a rewrite, like the user list does.
+func TestAllowedChannelsAreCarriedThrough(t *testing.T) {
+	base := config.Default()
+	base.Security.AllowedChannels = []string{"C1"}
+	if got := allowedChannels(initSetupOptions{base: &base}); len(got) != 1 || got[0] != "C1" {
+		t.Fatalf("allowedChannels = %v", got)
+	}
+	if got := allowedChannels(initSetupOptions{}); got != nil {
+		t.Fatalf("a fresh setup should leave the default, got %v", got)
+	}
+}
+
+// A secret is present when the file has it, next when only the environment
+// does, and missing otherwise.
+func TestCredentialStateOf(t *testing.T) {
+	stored := map[string]string{"DEMO_TOKEN": "x"}
+	if got := credentialStateOf([]string{"DEMO_TOKEN", "DEMO_ALIAS"}, stored); got != credentialStored {
+		t.Fatalf("stored alias = %v", got)
+	}
+
+	t.Setenv("DEMO_ONLY_ENV", "y")
+	if got := credentialStateOf([]string{"DEMO_ONLY_ENV"}, stored); got != credentialInEnvironment {
+		t.Fatalf("exported only = %v", got)
+	}
+	if got := credentialStateOf([]string{"DEMO_NOWHERE"}, stored); got != credentialMissing {
+		t.Fatalf("absent = %v", got)
+	}
+}
+
+// defaultDataDir is the data dir the default configuration resolves.
+func defaultDataDir(t *testing.T) string {
+	t.Helper()
+	dir, err := config.Default().EffectiveDataDir()
+	if err != nil {
+		t.Fatalf("data dir: %v", err)
+	}
+	return dir
 }
 
 // The daemon fills in what it does not already have, and an exported variable

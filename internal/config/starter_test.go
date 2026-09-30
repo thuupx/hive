@@ -228,6 +228,24 @@ func TestRenderStarterWithoutTransports(t *testing.T) {
 	}
 }
 
+// The security section renders what the caller collected rather than always
+// the empty default, so a rewrite can carry the lists through.
+func TestRenderStarterWritesTheSecurityLists(t *testing.T) {
+	rendered := RenderStarter(StarterOptions{
+		AllowedUsers:    []string{"telegram:123", "slack:U1"},
+		AllowedChannels: []string{"C789"},
+	})
+
+	for _, want := range []string{
+		`allowed_users = ["telegram:123", "slack:U1"]`,
+		`allowed_channels = ["C789"]`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("the generated file does not contain %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestRenderStarterIsStable(t *testing.T) {
 	opts := StarterOptions{
 		Agents:       []DiscoveredAgent{{Name: "alpha", Command: []string{"alpha-acp"}, Source: SourceAdapter}},

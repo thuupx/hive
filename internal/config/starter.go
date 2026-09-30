@@ -38,6 +38,15 @@ type StarterOptions struct {
 	// values the user gave. They are written as active sections, and are not
 	// repeated among the commented examples.
 	EnabledTransports []EnabledTransport
+
+	// AllowedUsers are the principals the security section permits, as
+	// "<transport>:<user id>". Nil keeps the configuration default, which is
+	// empty: unknown access is denied.
+	AllowedUsers []string
+
+	// AllowedChannels are the channel allow list the security section holds.
+	// Nil keeps the configuration default.
+	AllowedChannels []string
 }
 
 // EnabledTransport is one transport a user chose, and what they answered.
@@ -105,13 +114,21 @@ func RenderStarter(opts StarterOptions) string {
 	b.WriteString("#   ^ prunes durable events that have already been published. A client whose\n")
 	b.WriteString("#     cursor was pruned is told so, rather than silently losing history.\n\n")
 
+	allowedUsers := cfg.Security.AllowedUsers
+	if opts.AllowedUsers != nil {
+		allowedUsers = opts.AllowedUsers
+	}
+	allowedChannels := cfg.Security.AllowedChannels
+	if opts.AllowedChannels != nil {
+		allowedChannels = opts.AllowedChannels
+	}
 	b.WriteString("[security]\n")
-	fmt.Fprintf(&b, "allowed_users = %s\n", renderStrings(cfg.Security.AllowedUsers))
+	fmt.Fprintf(&b, "allowed_users = %s\n", renderStrings(allowedUsers))
 	b.WriteString("#   ^ principals a transport may assert, as \"<transport>:<user id>\", for\n")
 	b.WriteString("#     example \"slack:U123\" or \"zalo:<user id>\". Unknown access is denied by\n")
 	b.WriteString("#     default, so a transport message is refused until its sender is named\n")
 	b.WriteString("#     here. A refused message reports the principal to add.\n")
-	fmt.Fprintf(&b, "allowed_channels = %s\n", renderStrings(cfg.Security.AllowedChannels))
+	fmt.Fprintf(&b, "allowed_channels = %s\n", renderStrings(allowedChannels))
 	b.WriteString("#   ^ optional channel allow list, for a transport that has channels.\n\n")
 
 	renderAgents(&b, opts)

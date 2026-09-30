@@ -55,6 +55,12 @@ type PluginConfigManifest struct {
 	// Summary is a one-line description of what the plugin is.
 	Summary string `json:"summary,omitempty"`
 
+	// PrincipalHint tells a guided setup how a user finds the id a principal of
+	// this transport carries — "@userinfobot reports it", say. A principal is
+	// "<transport id>:<user id>" on the security.allowed_users list, and a
+	// transport nobody may use does nothing, so the setup asks for it.
+	PrincipalHint string `json:"principalHint,omitempty"`
+
 	// Options are the plugin's options, with the values it uses when unset.
 	Options []PluginOptionManifest `json:"options,omitempty"`
 
