@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/thuupx/hive/internal/config"
 )
@@ -86,6 +87,46 @@ func ensureRoleAliases(dir string, agents, transports []string) error {
 		}
 		if err := ensureAlias(alias.target, aliasPath(dir, alias.name)); err != nil {
 			return fmt.Errorf("alias %s: %w", alias.name, err)
+		}
+	}
+	return nil
+}
+
+// refreshRoleAliases re-links every role alias a directory already has.
+//
+// Binaries are replaced by staged rename — self-update does it, and the copies
+// installBinary makes do it — which gives the new file a new inode. An alias
+// made before the replacement still names the old one, so it keeps running the
+// build that was replaced. Re-linking by name needs no configuration: the alias
+// names its role, and the role names its binary. An alias whose binary is not
+// installed is left alone, the same way ensureRoleAliases skips one.
+func refreshRoleAliases(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		var target string
+		switch {
+		case name == aliasCoordinator || name == aliasNode:
+			target = "hive"
+		case strings.HasPrefix(name, aliasAgentPrefix):
+			target = "hive-plugin-acp"
+		case strings.HasPrefix(name, aliasTransportPrefix):
+			target = "hive-plugin-" + strings.TrimPrefix(name, aliasTransportPrefix)
+		default:
+			continue
+		}
+		targetPath := filepath.Join(dir, target)
+		if _, err := os.Stat(targetPath); err != nil {
+			continue
+		}
+		if err := ensureAlias(targetPath, filepath.Join(dir, name)); err != nil {
+			return fmt.Errorf("alias %s: %w", name, err)
 		}
 	}
 	return nil

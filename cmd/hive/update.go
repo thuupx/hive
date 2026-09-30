@@ -199,6 +199,14 @@ func performUpdate(ctx context.Context, opts releaseOptions) (bool, error) {
 		installed = append(installed, name)
 	}
 	fmt.Fprintf(opts.out, "hive: installed %s to %s\n", strings.Join(installed, ", "), opts.dir)
+
+	// Each binary landed under a new inode, so a role alias made before the
+	// update still names the build that was replaced. Re-link the ones the
+	// directory already has; a name is a convenience, so a failure here is a
+	// warning rather than a failed update.
+	if err := refreshRoleAliases(opts.dir); err != nil {
+		fmt.Fprintf(opts.out, "hive: could not re-link the role aliases: %v\n", err)
+	}
 	return true, nil
 }
 

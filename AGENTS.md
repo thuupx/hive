@@ -115,6 +115,12 @@ is an example of the internal form.
   because a process monitor resolves it back to the real binary. A hard link
   needs no privilege on any platform, and a platform that refuses it is not an
   error: the process keeps the real binary's name.
+- A hard link names an inode, so replacing a binary by staged rename leaves
+  every alias on the build that was replaced. After any replacement —
+  `hive update`, `installBinary`'s copies, `install.sh` — the aliases the
+  directory already has are re-linked by `refreshRoleAliases` (or its shell
+  equivalent); none are created there, because which roles exist is
+  configuration, not the installer's business.
 - A process name is fixed when the process starts, so the supervisor has to
   start the alias: the LaunchAgent and the systemd unit run `hive-coordinator`
   (or `hive-node` for a standalone node). `hive service restart` rewrites the

@@ -221,6 +221,23 @@ for name in hive hive-plugin-acp hive-plugin-slack hive-plugin-zalo hive-plugin-
 	install_bin "${tmp}/extract/${name}" "${BIN_DIR}/${name}"
 done
 
+# Each binary landed under a new inode, so a role alias made before this install
+# still names the build that was replaced. Re-link the aliases the directory
+# already has; none are created here, because which roles exist is the service's
+# business, not the installer's.
+for link in "${BIN_DIR}"/hive-coordinator "${BIN_DIR}"/hive-node "${BIN_DIR}"/hive-agent-* "${BIN_DIR}"/hive-transport-*; do
+	[ -e "$link" ] || continue
+	name=$(basename "$link")
+	case "$name" in
+	hive-coordinator | hive-node) target="hive" ;;
+	hive-agent-*) target="hive-plugin-acp" ;;
+	hive-transport-*) target="hive-plugin-${name#hive-transport-}" ;;
+	*) continue ;;
+	esac
+	[ -f "${BIN_DIR}/${target}" ] || continue
+	ln -f "${BIN_DIR}/${target}" "$link"
+done
+
 printf 'installed hive %s to %s\n' "$VERSION" "$BIN_DIR"
 
 case ":${PATH}:" in

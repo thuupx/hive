@@ -158,6 +158,13 @@ func installBinary(dir string) (string, error) {
 		return "", fmt.Errorf("hive: no binaries found next to %s", current)
 	}
 
+	// The copies landed under new inodes, so an alias already here still names
+	// the build it replaced. Re-link the ones present before the service runs
+	// them; the configured roles get their aliases from serviceRunPath after.
+	if err := refreshRoleAliases(binDir); err != nil {
+		return "", fmt.Errorf("re-link the role aliases: %w", err)
+	}
+
 	return filepath.Join(binDir, "hive"), nil
 }
 
