@@ -57,6 +57,31 @@ than failing on a missing download; a source build (`make build`) works there.
 `ubuntu-24.04-arm` needs arm64 hosted runners enabled for the repository. If the
 job cannot be scheduled, that is why.
 
+## Signing and notarization
+
+The darwin job signs every binary with a **Developer ID Application**
+certificate and submits them to Apple's notarization service, so a tarball
+downloaded through a browser clears Gatekeeper instead of being quarantined.
+`scripts/sign-macos.sh` imports the certificate into a temporary keychain and
+signs with the hardened runtime and a timestamp; `scripts/notarize-macos.sh`
+zips the binaries and waits for `notarytool`. A plain binary cannot be stapled,
+so the ticket lives with each binary's cdhash — the tarball does not need one.
+
+The job needs six repository secrets:
+
+| Secret | What it is |
+|---|---|
+| `APPLE_CERTIFICATE_P12` | base64 of the "Developer ID Application" certificate + private key, exported from Keychain as a .p12 (`base64 -i cert.p12`) |
+| `APPLE_CERTIFICATE_PASSWORD` | the .p12 export password |
+| `APPLE_KEYCHAIN_PASSWORD` | any password; guards only the throwaway keychain the build creates |
+| `APPLE_API_KEY` | base64 of an App Store Connect API .p8 private key |
+| `APPLE_API_KEY_ID` | the key's id |
+| `APPLE_API_ISSUER` | the issuer id, from App Store Connect → Users and Access → Integrations |
+
+The signing certificate requires a paid Apple Developer membership. The API key
+replaces an Apple-ID-plus-app-specific-password: it works the same for
+`notarytool`, and it is not tied to one person's account.
+
 ## Why the checksums are made in one place
 
 Each runner uploads only its tarball. `checksums.txt` is written by the single
@@ -86,13 +111,9 @@ verification, the extraction, and the placement are all exercised that way.
 
 ## Not done yet
 
-- **Signing and provenance.** There is no cosign signature, no SBOM, and no SLSA
-  provenance. `checksums.txt` proves integrity against the release, not who made
-  it. Adding cosign keyless signing is the next step that matters most.
-- **Notarization.** The macOS binary is unsigned, so one downloaded through a
-  browser is quarantined by Gatekeeper. A `curl | sh` install is not quarantined
-  and runs. A release that expects browser downloads needs signing and
-  notarization.
+- **Provenance.** There is no SBOM and no SLSA provenance, and the linux builds
+  are unsigned. `checksums.txt` proves integrity against the release, not who
+  made it. Adding cosign keyless signing is the next step that matters most.
 - **Homebrew.** No tap yet.
 - **Reproducibility.** The build is not bit-for-bit reproducible, and the
   release does not claim to be.

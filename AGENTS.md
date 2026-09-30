@@ -55,7 +55,9 @@ is an example of the internal form.
   The release matrix mirrors `ci.yml`; keep the two in step.
 - `make dist` packages exactly what a runner uploads. Its `VERSION` is stamped
   in with `-ldflags "-X main.Version=..."`, which is why `Version` in
-  `cmd/hive/main.go` is a variable rather than a constant.
+  `cmd/hive/main.go` is a variable rather than a constant. It is
+  `dist-binaries` + `dist-tar`, split so the darwin job can sign and notarize
+  between the two (`scripts/sign-macos.sh`, `scripts/notarize-macos.sh`).
 - A tarball holds `hive` and every plugin. The daemon resolves plugins from its
   own directory, so a tarball with `hive` alone is a gateway with no agents.
 - `checksums.txt` is written once, by the release job, after every artifact is

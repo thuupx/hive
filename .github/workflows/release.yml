@@ -39,12 +39,34 @@ jobs:
           go-version-file: go.mod
           check-latest: false
 
-      - name: build and package
+      - name: build binaries
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         # The tag is vX.Y.Z; the binary reports X.Y.Z.
-        run: make dist VERSION="${GITHUB_REF_NAME#v}"
+        run: make dist-binaries VERSION="${GITHUB_REF_NAME#v}"
+
+      # The darwin binaries ship signed and notarized, so a browser download
+      # clears Gatekeeper. The secrets live on the repository; the certificate
+      # and notarization key are documented in docs/releasing.md.
+      - name: sign and notarize
+        if: matrix.goos == 'darwin'
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          scripts/sign-macos.sh bin
+          scripts/notarize-macos.sh bin
+
+      - name: package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: make dist-tar VERSION="${GITHUB_REF_NAME#v}"
 
       - uses: actions/upload-artifact@v4
         with:

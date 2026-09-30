@@ -12,7 +12,7 @@ EXAMPLES := $(BINDIR)/example-client $(BINDIR)/plugin-echo
 # workflow passes the tag without its leading v; a local run gets the default.
 VERSION ?= 0.0.0-dev
 
-.PHONY: all build examples test test-race vet fmt tidy run clean ci release dist
+.PHONY: all build examples test test-race vet fmt tidy run clean ci release dist dist-binaries dist-tar
 
 all: build
 
@@ -60,19 +60,27 @@ release: build examples
 	@echo "built for $$(go env GOOS)/$$(go env GOARCH) with CGO_ENABLED=$$(go env CGO_ENABLED)"
 
 # dist packages this host's binaries as a release publishes them: one tarball
-# per platform, holding hive and both plugins side by side, which is where the
+# per platform, holding hive and the plugins side by side, which is where the
 # daemon looks for them.
 #
 # It is the same layout the install script expects, so `make dist` and a real
 # release can be tested the same way. Run it on a native runner per target; see
 # .github/workflows/release.yml.
-dist:
-	@mkdir -p $(DISTDIR)
+#
+# The build and the tar are separate targets — dist-binaries and dist-tar —
+# because the macOS release job signs and notarizes the binaries in between.
+dist: dist-binaries dist-tar
+
+dist-binaries:
+	@mkdir -p $(BINDIR)
 	$(GO) build -ldflags "-X main.Version=$(VERSION)" -o $(HIVE) ./cmd/hive
 	$(GO) build -o $(PLUGIN_ACP) ./cmd/hive-plugin-acp
 	$(GO) build -o $(PLUGIN_SLACK) ./cmd/hive-plugin-slack
 	$(GO) build -o $(PLUGIN_ZALO) ./cmd/hive-plugin-zalo
 	$(GO) build -o $(PLUGIN_TELEGRAM) ./cmd/hive-plugin-telegram
+
+dist-tar:
+	@mkdir -p $(DISTDIR)
 	tar -czf $(DISTDIR)/hive_$(VERSION)_$$($(GO) env GOOS)_$$($(GO) env GOARCH).tar.gz \
 		-C $(BINDIR) hive hive-plugin-acp hive-plugin-slack hive-plugin-zalo hive-plugin-telegram
 	@echo "$(DISTDIR)/hive_$(VERSION)_$$($(GO) env GOOS)_$$($(GO) env GOARCH).tar.gz"
